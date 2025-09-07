@@ -55,6 +55,15 @@ def setup_logging():
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    return os.path.join(base_path, relative_path)
+
 def main():
     try:
         if len(sys.argv) != 2:
@@ -105,8 +114,7 @@ def main():
         font_filename = render_config.get('font_path')
         if font_filename:
             # 构建完整的字体路径
-            font_full_path = os.path.join(os.path.dirname(__file__), '..', 'fonts', font_filename)
-            font_full_path = os.path.abspath(font_full_path)
+            font_full_path = resource_path(os.path.join('fonts', font_filename))
             if os.path.exists(font_full_path):
                 translator_params['font_path'] = font_full_path
                 flush_print(f"设置翻译器字体路径: {font_full_path}")

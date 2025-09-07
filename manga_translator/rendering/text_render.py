@@ -228,6 +228,7 @@ def set_font(path: str):
             logger.critical("Default font could not be loaded. Please check your installation.")
             FONT = None
         update_font_selection()
+        get_char_glyph.cache_clear()
         return
 
     try:
@@ -240,6 +241,7 @@ def set_font(path: str):
             logger.critical("Default font could not be loaded. Please check your installation.")
             FONT = None
     update_font_selection()
+    get_char_glyph.cache_clear()
 
 class namespace:
     pass
@@ -267,8 +269,17 @@ class Glyph:
 def get_char_glyph(cdpt: str, font_size: int, direction: int) -> Glyph:
     global FONT_SELECTION
     for i, face in enumerate(FONT_SELECTION):
-        if face.get_char_index(cdpt) == 0 and i != len(FONT_SELECTION) - 1:
+        char_index = face.get_char_index(cdpt)
+        if char_index == 0 and i != len(FONT_SELECTION) - 1:
+            # Log fallback only on the primary font for clarity
+            if i == 0:
+                try:
+                    font_name = face.family_name.decode('utf-8') if face.family_name else 'Unknown'
+                    logger.info(f"Character '{cdpt}' not found in primary font '{font_name}'. Trying fallbacks.")
+                except Exception:
+                    pass # Avoid logging errors within logging
             continue
+        
         if direction == 0:
             face.set_pixel_sizes(0, font_size)
         elif direction == 1:

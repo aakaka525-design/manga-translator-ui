@@ -34,7 +34,7 @@ pydantic
 pydensecrf
 PyHyphen
 PySide6
-pytest
+
 python-dotenv
 pytorch-lightning
 regex

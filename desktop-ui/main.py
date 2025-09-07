@@ -47,7 +47,7 @@ def get_async_services():
         _async_service_module = (get_async_service, shutdown_async_service)
     return _async_service_module
 
-if __name__ == "__main__":
+def main_ui():
     async_service = None
     try:
         # 快速启动：先创建UI，后台初始化服务
@@ -80,3 +80,20 @@ if __name__ == "__main__":
                 shutdown_async_service()
             except:
                 pass  # 静默处理关闭错误
+
+def main_worker():
+    from translation_worker import main as worker_main
+    # The worker expects the config file path at sys.argv[1]
+    # The command from app.py will be:
+    # [sys.executable, '--run-as-worker', temp_config_path]
+    # So, current sys.argv is ['.../main.py', '--run-as-worker', '.../config.json']
+    # We need to adjust sys.argv for the worker.
+    # The worker's script name doesn't matter, but the config path must be at index 1.
+    sys.argv = [sys.argv[0]] + sys.argv[2:]
+    worker_main()
+
+if __name__ == "__main__":
+    if '--run-as-worker' in sys.argv:
+        main_worker()
+    else:
+        main_ui()

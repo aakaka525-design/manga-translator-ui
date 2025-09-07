@@ -23,6 +23,17 @@ def get_bounding_box_center(unrotated_lines: List[List[List[float]]]) -> tuple:
     max_y = max(p[1] for p in all_points)
     return (min_x + max_x) / 2.0, (min_y + max_y) / 2.0
 
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    import sys
+    import os
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    return os.path.join(base_path, relative_path)
+
 class BackendTextRenderer:
     def __init__(self, canvas: ctk.CTkCanvas):
         self.canvas = canvas
@@ -70,8 +81,7 @@ class BackendTextRenderer:
             
         import os
         # 构建完整的字体路径
-        full_font_path = os.path.join(os.path.dirname(__file__), '..', '..', 'fonts', font_filename)
-        full_font_path = os.path.abspath(full_font_path)
+        full_font_path = resource_path(os.path.join('fonts', font_filename))
         
         if os.path.exists(full_font_path):
             # 导入后端渲染模块
