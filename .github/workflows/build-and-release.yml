@@ -33,7 +33,10 @@ jobs:
         pip install pyinstaller
     
     - name: Build CPU version
-      run: python build_packages.py ${{ github.ref_name#v }} --build cpu
+      run: |
+        VERSION_ONLY=${{ github.ref_name }}
+        python build_packages.py ${VERSION_ONLY#v} --build cpu
+      shell: bash
     
     - name: Upload CPU artifacts
       uses: actions/upload-artifact@v4
@@ -64,7 +67,10 @@ jobs:
         pip install pyinstaller
     
     - name: Build GPU version
-      run: python build_packages.py ${{ github.ref_name#v }} --build gpu
+      run: |
+        VERSION_ONLY=${{ github.ref_name }}
+        python build_packages.py ${VERSION_ONLY#v} --build gpu
+      shell: bash
     
     - name: Upload GPU artifacts
       uses: actions/upload-artifact@v4
