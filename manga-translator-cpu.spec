@@ -1,11 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_data_files
 
+# Collect data files dynamically instead of using a hardcoded path
+py3langid_datas = collect_data_files('py3langid')
+unidic_datas = collect_data_files('unidic_lite')
+
 a = Analysis(
     ['desktop-ui/main.py'],
     pathex=[],
     binaries=[],
-    datas=[('.venv_cpu/Lib/site-packages/py3langid/data', 'py3langid/data')],
+    datas=py3langid_datas + unidic_datas,
     hiddenimports=['pydensecrf.eigen'],
     hookspath=[],
     hooksconfig={},
@@ -14,7 +18,6 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
-a.datas += collect_data_files('unidic_lite')
 pyz = PYZ(a.pure)
 
 exe = EXE(
