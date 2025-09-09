@@ -1,5 +1,5 @@
---- a/Lib/site-packages/googletrans/client.py
-+++ b/Lib/site-packages/googletrans/client.py
+--- a/googletrans/client.py
++++ b/googletrans/client.py
 @@ -80,7 +80,7 @@
                   http2=True,
                   use_fallback=False):
