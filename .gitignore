@@ -77,3 +77,4 @@ logs/
 *_translations.json
 *.png
 temp_requirements.txt
+desktop_qt_ui/mypy.ini
