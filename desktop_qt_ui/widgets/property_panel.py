@@ -521,21 +521,14 @@ class PropertyPanel(QWidget):
         color_hex = default_color
         fg_colors = region_data.get('fg_colors')
         font_color = region_data.get("font_color")
-        
-        print(f"DEBUG: Color update - fg_colors: {fg_colors}, font_color: {font_color}")
-        
+
         # 优先使用用户设置的font_color，然后才是原始的fg_colors
-        if font_color: 
+        if font_color:
              color_hex = font_color
-             print(f"DEBUG: Using font_color: {color_hex}")
         elif isinstance(fg_colors, (list, tuple)) and len(fg_colors) == 3:
              color_hex = f"#{int(fg_colors[0]):02x}{int(fg_colors[1]):02x}{int(fg_colors[2]):02x}"
-             print(f"DEBUG: Using fg_colors, converted to: {color_hex}")
-        else:
-             print(f"DEBUG: Using default color: {color_hex}")
-             
+
         self.font_color_button.setStyleSheet(f"background-color: {color_hex};")
-        print(f"DEBUG: Button style set to: background-color: {color_hex};")
         
         alignment_map = {"auto": "自动", "left": "左对齐", "center": "居中", "right": "右对齐"}
         self.alignment_combo.setCurrentText(alignment_map.get(region_data.get("alignment", "auto"), "自动"))

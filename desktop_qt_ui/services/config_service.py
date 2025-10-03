@@ -36,12 +36,23 @@ class ConfigService(QObject):
         super().__init__()
         self.logger = logging.getLogger(__name__)
         self.root_dir = root_dir
-        self.env_path = os.path.join(self.root_dir, ".env")
-        
-        self.default_config_path = os.path.normpath(os.path.join(self.root_dir, "examples", "config-example.json"))
+        # .env文件应该在exe所在目录（root_dir的上一级，与exe同级）
+        # 打包后：root_dir = _internal，.env在_internal的上一级
+        # 开发时：root_dir = 项目根目录，.env也在项目根目录
+        if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+            self.env_path = os.path.join(self.root_dir, "..", ".env")
+        else:
+            self.env_path = os.path.join(self.root_dir, ".env")
+
+        # Use get_default_config_path() for PyInstaller compatibility
+        # Temporarily set a placeholder, will be properly set after initialization
+        self.default_config_path = None
 
         self.config_path = None # This will hold the path of a loaded file
         self.current_config: AppSettings = AppSettings()
+
+        # Set the correct default config path
+        self.default_config_path = self.get_default_config_path()
 
         # Try to load the default config on startup
         if os.path.exists(self.default_config_path):

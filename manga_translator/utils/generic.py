@@ -22,7 +22,14 @@ except AttributeError: # Supports Python versions below 3.8
     functools.cached_property = cached_property
 
 MODULE_PATH = os.path.dirname(os.path.realpath(__file__))
-BASE_PATH = os.path.abspath(os.path.join(MODULE_PATH, '..', '..'))
+
+# PyInstaller compatibility: use sys._MEIPASS if available
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    # Running in PyInstaller bundle
+    BASE_PATH = sys._MEIPASS
+else:
+    # Running in normal Python environment
+    BASE_PATH = os.path.abspath(os.path.join(MODULE_PATH, '..', '..'))
 
 # Adapted from argparse.Namespace
 class Context(dict):

@@ -68,7 +68,7 @@ jobs:
         GH_TOKEN: ${{ github.token }}
       run: |
         echo "Downloading models from release assets..."
-        gh release download v1.4.6 -p "models.7z"
+        gh release download v1.6.0 -p "models.7z"
 
         echo "Decompressing models..."
         7z x "models.7z" -o./extracted_models

@@ -34,9 +34,8 @@ def update_font_config(font_filename: str):
     if os.path.exists(font_path):
         try:
             set_font(font_path)
-            print(f"[BackendTextRenderer] Font updated: {font_path}")
         except Exception as e:
-            print(f"[BackendTextRenderer] Failed to update font: {e}")
+            pass  # Silently ignore font update errors
 
 def render_text_for_region(text_block: TextBlock, dst_points: np.ndarray, transform, render_params: dict, pure_zoom: float = 1.0, total_regions: int = 1):
     """

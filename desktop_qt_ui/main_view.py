@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
 
 from services import get_config_service
 from widgets.file_list_view import FileListView
+from utils.resource_helper import resource_path
 
 
 class MainView(QWidget):
@@ -190,7 +191,7 @@ class MainView(QWidget):
                 hbox.setContentsMargins(0, 0, 0, 0)
                 combo = QComboBox()
                 try:
-                    fonts_dir = os.path.join(os.path.dirname(__file__), '..', 'fonts')
+                    fonts_dir = resource_path('fonts')
                     if os.path.isdir(fonts_dir):
                         font_files = sorted([f for f in os.listdir(fonts_dir) if f.lower().endswith(('.ttf', '.otf', '.ttc'))])
                         combo.addItems(font_files)

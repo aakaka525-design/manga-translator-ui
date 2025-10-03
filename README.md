@@ -122,6 +122,7 @@
 - `ocr48px`: 48像素OCR模型
 - `ocr48px_ctc`: CTC OCR模型
 - `mocr`: Manga OCR专用模型
+- `paddleocr`: PaddleOCR (基于PaddlePaddle的OCR引擎)
 
 ## 安装和运行
 

@@ -197,6 +197,7 @@ class MainAppLogic(QObject):
     def open_font_directory(self):
         import subprocess
         import sys
+        # fonts目录在_internal里（打包后）或项目根目录（开发时）
         fonts_dir = os.path.join(self.config_service.root_dir, 'fonts')
         try:
             if not os.path.exists(fonts_dir):
@@ -213,6 +214,7 @@ class MainAppLogic(QObject):
     def open_dict_directory(self):
         import subprocess
         import sys
+        # dict目录在_internal里（打包后）或项目根目录（开发时）
         dict_dir = os.path.join(self.config_service.root_dir, 'dict')
         try:
             if not os.path.exists(dict_dir):
@@ -228,13 +230,14 @@ class MainAppLogic(QObject):
 
     def get_hq_prompt_options(self) -> List[str]:
         try:
+            # dict目录在_internal里（打包后）或项目根目录（开发时）
             dict_dir = os.path.join(self.config_service.root_dir, 'dict')
             if not os.path.isdir(dict_dir):
                 return []
             prompt_files = sorted([
-                f for f in os.listdir(dict_dir) 
+                f for f in os.listdir(dict_dir)
                 if f.lower().endswith('.json') and f not in [
-                    'system_prompt_hq.json', 
+                    'system_prompt_hq.json',
                     'system_prompt_line_break.json'
                 ]
             ])

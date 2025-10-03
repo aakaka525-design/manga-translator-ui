@@ -41,7 +41,14 @@ def main():
     app = QApplication(sys.argv)
 
     # 2. 初始化所有服务
-    root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    # 设置正确的根目录：打包后指向_internal，开发时指向项目根目录
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        # PyInstaller打包环境：所有资源在_internal目录
+        root_dir = sys._MEIPASS
+    else:
+        # 开发环境：资源在项目根目录
+        root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+
     if not init_services(root_dir):
         logging.fatal("Fatal: Service initialization failed.")
         sys.exit(1)

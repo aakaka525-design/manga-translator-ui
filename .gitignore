@@ -32,6 +32,13 @@ result/
 # Wheel files
 *.whl
 
+# Archive files
+*.7z
+
+# Model files
+models/ocr/*.onnx
+models/ocr/*.txt
+
 # Backup files
 *.bak
 *.backup
@@ -51,6 +58,7 @@ desktop-ui/temp/
 19_translations.json
 desktop-ui/user_data/
 manga-image-translator-main/
+PaddleOCR-main/
 
 # Ignore temporary clone check directory
 temp_clone_check/

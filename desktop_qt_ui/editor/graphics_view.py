@@ -457,7 +457,6 @@ class GraphicsView(QGraphicsView):
 
     def _perform_render_update(self):
         """执行实际的渲染更新，由防抖计时器调用。"""
-        print(f"[_perform_render_update] 开始完全更新")
         # Clear old region items safely
         for item in self._region_items:
             try:
@@ -470,11 +469,9 @@ class GraphicsView(QGraphicsView):
 
         # Add a new item for each REGION
         regions = self.model.get_regions()
-        print(f"[_perform_render_update] regions 数量: {len(regions)}")
         for i, region_data in enumerate(regions):
             if not region_data.get('lines'):
                 continue
-            print(f"[_perform_render_update] 创建 item {i}")
             item = RegionTextItem(
                 region_data,
                 i,
@@ -483,7 +480,6 @@ class GraphicsView(QGraphicsView):
             item.setZValue(100)
             self.scene.addItem(item)
             self._region_items.append(item)
-        print(f"[_perform_render_update] 完成,共创建 {len(self._region_items)} 个 items")
 
         # After updating items, recalculate all rendering data
         self.recalculate_render_data()
@@ -598,9 +594,6 @@ class GraphicsView(QGraphicsView):
                 item.update_text_pixmap(QPixmap(), QPointF(0, 0))
 
             # 无论是否有渲染结果,都设置绿框数据(即使 translation 为空)
-            print(f"[_update_single_region_text_visual] region {i}: 设置绿框, dst_points is None: {self._dst_points_cache[i] is None}")
-            if self._dst_points_cache[i] is not None:
-                print(f"[_update_single_region_text_visual] region {i}: dst_points shape: {self._dst_points_cache[i].shape}")
             item.set_dst_points(self._dst_points_cache[i])
 
     def _recalculate_single_region_render_data(self, index):
@@ -937,7 +930,6 @@ class GraphicsView(QGraphicsView):
                 # 如果有 item 处理了事件，event 会被 accept
                 # 只有真正点击空白时，event 才不会被 accept
                 if not event.isAccepted():
-                    print(f"[VIEW] Click on empty area (event not accepted), clearing selection")
                     self.model.set_selection([])
 
     def mouseMoveEvent(self, event):
@@ -1109,7 +1101,11 @@ class GraphicsView(QGraphicsView):
         # Convert final mask to numpy and update model
         ptr = mask_image.constBits()
         ptr.setsize(mask_image.sizeInBytes())
-        new_mask_np = np.array(ptr).reshape(mask_image.height(), mask_image.width())
+        # Use bytesPerLine to handle row padding correctly
+        bytes_per_line = mask_image.bytesPerLine()
+        new_mask_np = np.array(ptr).reshape(mask_image.height(), bytes_per_line)
+        # Crop to actual width if there's padding
+        new_mask_np = new_mask_np[:, :mask_image.width()].copy()
 
         # --- Refactored to Command Pattern ---
         from .commands import MaskEditCommand
@@ -1160,7 +1156,6 @@ class GraphicsView(QGraphicsView):
 
     def _on_selection_changed(self, selected_indices: list):
         """同步model的selection到Qt item的selected状态"""
-        print(f"[VIEW] _on_selection_changed called: selected_indices={selected_indices}")
 
         # 先清除所有item的selection
         for item in self._region_items:
@@ -1170,9 +1165,7 @@ class GraphicsView(QGraphicsView):
         # 设置新选中的items
         for idx in selected_indices:
             if 0 <= idx < len(self._region_items):
-                print(f"[VIEW] Setting item {idx} selected=True")
                 self._region_items[idx].setSelected(True)
-                print(f"[VIEW] After setSelected, item.isSelected()={self._region_items[idx].isSelected()}")
 
     def _update_cursor(self):
         """Updates the cursor to match the selected tool and brush size."""

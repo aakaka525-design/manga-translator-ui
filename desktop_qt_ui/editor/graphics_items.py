@@ -482,48 +482,7 @@ class RegionTextItem(QGraphicsItemGroup):
         local_pos = event.pos()
 
         # 限制日志频率：每秒最多打印一次
-        import time
-        current_time = time.time()
-        if not hasattr(self, '_last_mouse_log_time'):
-            self._last_mouse_log_time = 0
-
-        should_log = current_time - self._last_mouse_log_time >= 1.0
-
-        if should_log:
-            print(f"\n[MOUSE DEBUG] Region {self.region_index}")
-            print(f"  scenePos={event.scenePos()}")
-            print(f"  self.pos()={self.pos()}")
-            print(f"  local_pos={local_pos}")
-            print(f"  isSelected={self.isSelected()}")
-            print(f"  zValue={self.zValue()}")
-            print(f"  boundingRect={self.boundingRect()}")
-
-            # 检查Qt在这个位置找到了哪些items
-            if self.scene():
-                items_at_pos = self.scene().items(event.scenePos())
-                print(f"  Qt found {len(items_at_pos)} items at click position:")
-                for idx, item in enumerate(items_at_pos):
-                    is_self = (item == self)
-                    item_type = type(item).__name__
-                    z = item.zValue() if hasattr(item, 'zValue') else 'N/A'
-                    region_idx = item.region_index if hasattr(item, 'region_index') else 'N/A'
-                    print(f"    [{idx}] {item_type} (region={region_idx}, z={z}) {'<-- THIS' if is_self else ''}")
-
-            print(f"  polygons count={len(self.polygons)}")
-            for i, poly in enumerate(self.polygons):
-                if poly.containsPoint(local_pos, Qt.FillRule.WindingFill):
-                    print(f"    polygon {i}: CONTAINS local_pos!")
-
-            # 测试shape()是否包含点击点
-            test_shape = self.shape()
-            shape_contains = test_shape.contains(local_pos)
-            print(f"  shape().contains(local_pos)={shape_contains}")
-            print(f"  shape().boundingRect()={test_shape.boundingRect()}")
-
-            self._last_mouse_log_time = current_time
-
         if event.button() == Qt.MouseButton.LeftButton:
-            print(f"[ITEM] RegionTextItem.mousePressEvent: region={self.region_index}, isSelected={self.isSelected()}")
             if self.isSelected():
                 self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
 
@@ -540,7 +499,6 @@ class RegionTextItem(QGraphicsItemGroup):
                 # --- End Snapshot ---
 
                 handle, indices = self._get_handle_at(local_pos)
-                print(f"[HANDLE DEBUG] 检测到 handle='{handle}', indices={indices}, isSelected={self.isSelected()}, show_white_box={self._show_white_box}, white_frame_rect_local={self._white_frame_rect_local}")
                 if handle:
                     self._interaction_mode = handle
                     self._drag_handle_indices = indices
@@ -576,12 +534,10 @@ class RegionTextItem(QGraphicsItemGroup):
                 if self.scene() and self.scene().views():
                     view = self.scene().views()[0]
                     if hasattr(view, 'model'):
-                        print(f"[ITEM] Region {self.region_index} not selected, calling model.set_selection directly")
                         view.model.set_selection([self.region_index])
                         event.accept()  # Accept 事件，阻止传播到 GraphicsView
                         return
                 # 如果无法获取 model，fallback 到原来的行为
-                print(f"[ITEM] Region {self.region_index} not selected, letting GraphicsView handle selection")
                 super().mousePressEvent(event)
                 event.ignore()
                 return
