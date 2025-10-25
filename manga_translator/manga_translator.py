@@ -3095,6 +3095,10 @@ class MangaTranslator:
         """
         await self._report_progress('after-translating')
 
+        # Colorize Only Mode: Skip validation, ctx.result should already be set
+        if self.colorize_only:
+            return ctx
+
         if not ctx.text_regions:
             await self._report_progress('error-translating', True)
             ctx.result = ctx.upscaled
@@ -3565,7 +3569,9 @@ class MangaTranslator:
                         if not self._restore_image_context(image_md5):
                             self._set_image_context(config, ctx.input)
                     
-                    ctx = await self._complete_translation_pipeline(ctx, config)
+                    # Colorize Only Mode: Skip rendering pipeline
+                    if not self.colorize_only:
+                        ctx = await self._complete_translation_pipeline(ctx, config)
 
                     # --- BEGIN SAVE LOGIC ---
                     if save_info and ctx.result:

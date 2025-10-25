@@ -69,7 +69,7 @@
     "revert_upscaling": false
   },
   "colorizer": {
-    "colorization_size": 576,
+    "colorization_size": 2048,
     "denoise_sigma": 30,
     "colorizer": "none"
   },
