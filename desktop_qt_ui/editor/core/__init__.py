@@ -6,6 +6,7 @@
 from .types import (
     EditorState,
     JobState,
+    JobPriority,
     MaskType,
     ResourceType,
 )
@@ -22,6 +23,7 @@ __all__ = [
     # Types
     "EditorState",
     "JobState",
+    "JobPriority",
     "MaskType",
     "ResourceType",
     # Resources
