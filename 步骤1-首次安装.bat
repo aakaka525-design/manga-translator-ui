@@ -587,6 +587,11 @@ if %CONDA_ENV_EXISTS% == 0 (
     echo 位置: %CONDA_ENV_PATH%
     echo Python版本: 3.12
     echo.
+    
+    REM 接受Conda服务条款（避免交互式提示）
+    call conda config --set channel_priority flexible >nul 2>&1
+    call conda tos accept >nul 2>&1
+    
     call conda create --prefix "%CONDA_ENV_PATH%" python=3.12 -y
     if !ERRORLEVEL! neq 0 (
         echo [ERROR] Conda环境创建失败
