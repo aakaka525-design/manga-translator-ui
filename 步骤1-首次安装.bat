@@ -45,14 +45,16 @@ if %ERRORLEVEL% == 0 (
     echo [OK] 检测到系统已安装 Conda
     for /f "delims=" %%i in ('where conda') do echo 位置: %%i
     conda --version
+    goto :check_git
 )
 
 REM 检查本地Miniconda
-if !CONDA_INSTALLED!==0 if exist "%MINICONDA_ROOT%\Scripts\conda.exe" (
+if exist "%MINICONDA_ROOT%\Scripts\conda.exe" (
     set CONDA_INSTALLED=1
     echo [OK] 检测到本地 Miniconda 已安装
     echo 位置: %MINICONDA_ROOT%
     call "%MINICONDA_ROOT%\Scripts\conda.exe" --version
+    goto :check_git
 )
 
 REM 如果已检测到Conda，跳过安装步骤
