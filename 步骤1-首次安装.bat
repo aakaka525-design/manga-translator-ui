@@ -48,15 +48,23 @@ REM 提示：需要安装本地Miniconda
 echo [INFO] 未检测到本地 Miniconda
 echo.
 echo 本项目需要 Python 3.12 环境
-echo 将安装 Miniconda 到项目目录
 echo.
         echo Miniconda 特点:
         echo   - 体积小 (约50MB)
         echo   - 可管理多个Python版本
         echo   - 环境隔离,互不干扰
         echo   - 自带pip包管理
-        echo   - 安装位置: %CD%\Miniconda3
+        echo   - 安装位置: %MINICONDA_ROOT%
         echo.
+if not "%MINICONDA_ROOT%"=="%CD%\Miniconda3" (
+    echo [提示] 检测到当前路径包含中文字符
+    echo        Miniconda 不支持中文路径
+    echo        将自动安装到: %MINICONDA_ROOT%
+    echo.
+    echo        建议: 将项目移动到纯英文路径（如 D:\manga-translator\）
+    echo             以获得更好的兼容性
+    echo.
+)
 echo 是否安装 Miniconda?
 echo [1] 是 (推荐) - 自动下载安装
 echo [2] 否 - 手动安装后重新运行脚本
