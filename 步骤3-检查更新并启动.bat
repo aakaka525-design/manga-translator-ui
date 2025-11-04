@@ -46,5 +46,5 @@ REM 启动 Qt 界面
 echo 正在启动...
 echo ========================================
 echo.
-python "%CD%\desktop_qt_ui\main.py"
+python -m desktop_qt_ui.main
 pause

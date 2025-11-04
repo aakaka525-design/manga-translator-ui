@@ -29,6 +29,6 @@ if exist "PortableGit\cmd\git.exe" (
 REM 切换到项目根目录(确保Python能正确找到模块)
 cd /d "%~dp0"
 
-REM 直接启动 Qt 界面
-python "%CD%\desktop_qt_ui\main.py"
+REM 直接启动 Qt 界面（使用模块方式运行）
+python -m desktop_qt_ui.main
 pause
