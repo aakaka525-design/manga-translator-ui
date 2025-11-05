@@ -142,34 +142,8 @@ class RealCUGANUpscaler(OfflineUpscaler):
         logger.info(f'Loading Real-CUGAN model from {model_path}')
         
         try:
-            # Import from project root models directory using BASE_PATH
-            import sys
-            import importlib.util
-            from ..utils.generic import BASE_PATH
-            
-            logger.info(f'BASE_PATH: {BASE_PATH}')
-            
-            models_path = os.path.join(BASE_PATH, 'models')
-            logger.info(f'Models path: {models_path}')
-            logger.info(f'Models path exists: {os.path.exists(models_path)}')
-            
-            upcunet_path = os.path.join(models_path, 'RealCUGAN', 'upcunet_v3.py')
-            logger.info(f'Upcunet path: {upcunet_path}')
-            logger.info(f'Upcunet path exists: {os.path.exists(upcunet_path)}')
-            
-            if not os.path.exists(upcunet_path):
-                raise FileNotFoundError(f'upcunet_v3.py not found at {upcunet_path}')
-            
-            # Load module dynamically
-            logger.info('Loading upcunet_v3 module dynamically...')
-            spec = importlib.util.spec_from_file_location("upcunet_v3", upcunet_path)
-            if spec is None:
-                raise ImportError(f'Failed to create spec for {upcunet_path}')
-            
-            upcunet_v3 = importlib.util.module_from_spec(spec)
-            sys.modules['upcunet_v3'] = upcunet_v3  # Add to sys.modules
-            spec.loader.exec_module(upcunet_v3)
-            logger.info('Successfully loaded upcunet_v3 module')
+            # Import Real-CUGAN model architecture
+            from .realcugan_arch import upcunet_v3
             
             # Create model based on scale
             if self.scale == 2:
