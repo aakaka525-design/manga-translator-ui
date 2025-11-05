@@ -144,13 +144,17 @@ class RealCUGANUpscaler(OfflineUpscaler):
         try:
             # Import from project root models directory
             import sys
+            import importlib.util
             from pathlib import Path
+            
             project_root = Path(__file__).parent.parent.parent
             models_path = project_root / 'models'
-            if str(models_path) not in sys.path:
-                sys.path.insert(0, str(models_path))
+            upcunet_path = models_path / 'RealCUGAN' / 'upcunet_v3.py'
             
-            from RealCUGAN import upcunet_v3
+            # Load module dynamically
+            spec = importlib.util.spec_from_file_location("upcunet_v3", upcunet_path)
+            upcunet_v3 = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(upcunet_v3)
             
             # Create model based on scale
             if self.scale == 2:
