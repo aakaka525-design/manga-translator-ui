@@ -523,9 +523,23 @@ class Quadrilateral(object):
         y1 = np.clip(y1, 0, im_h)
         x2 = np.clip(x2, 0, im_w)
         y2 = np.clip(y2, 0, im_h)
+        
+        # 检查裁剪区域是否有效，避免超出边界导致空图像
+        if x1 >= x2 or y1 >= y2:
+            # 返回一个小的空白图像以避免错误
+            if direction == 'h':
+                h = max(int(textheight), 2)
+                w = max(int(textheight / 8), 2)
+                return np.ones((h, w, 3), dtype=np.uint8) * 255
+            else:
+                w = max(int(textheight), 2)
+                h = max(int(textheight * 8), 2)
+                region = np.ones((h, w, 3), dtype=np.uint8) * 255
+                region = cv2.rotate(region, cv2.ROTATE_90_COUNTERCLOCKWISE)
+                return region
+        
         # cv2.warpPerspective could overflow if image size is too large, better crop it here
         img_croped = img[y1: y2, x1: x2]
-
         
         src_pts[:, 0] -= x1
         src_pts[:, 1] -= y1

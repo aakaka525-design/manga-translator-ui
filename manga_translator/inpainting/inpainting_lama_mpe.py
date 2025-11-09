@@ -262,34 +262,13 @@ class LamaMPEInpainter(OfflineInpainter):
 
         if isinstance(self.model, LamaFourier):
             img_inpainted_torch = img_inpainted_torch.to(torch.float32)
-            # ✅ 立即删除GPU tensor防止累积
             img_inpainted = (img_inpainted_torch.cpu().squeeze_(0).permute(1, 2, 0).numpy() * 255.).astype(np.uint8)
-            del img_inpainted_torch  # 删除GPU tensor
         else:
             img_inpainted_torch = img_inpainted_torch.to(torch.float32)
-            # ✅ 立即删除GPU tensor防止累积
             img_inpainted = ((img_inpainted_torch.cpu().squeeze_(0).permute(1, 2, 0).numpy() + 1.0) * 127.5).astype(np.uint8)
-            del img_inpainted_torch  # 删除GPU tensor
         if new_h != height or new_w != width:
             img_inpainted = cv2.resize(img_inpainted, (width, height), interpolation = cv2.INTER_LINEAR)
         ans = img_inpainted * mask_original + img_original * (1 - mask_original)
-        
-        # ✅ Inpainting完成后立即清理GPU内存和numpy数组（不删除输入参数）
-        del img_torch, mask_torch, img_inpainted, img_original, mask_original
-        
-        # ✅ 强制清理CUDA缓存（多次确保彻底）
-        if (self.device.startswith('cuda') or self.device == 'mps') and torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-            # 多次清理确保彻底释放
-            import gc
-            for _ in range(3):
-                gc.collect()
-                torch.cuda.empty_cache()
-        else:
-            import gc
-            gc.collect()
-
         
         return ans
     
@@ -364,11 +343,6 @@ class LamaMPEInpainter(OfflineInpainter):
         
         ans = img_inpainted * mask_original_resized + img_original * (1 - mask_original_resized)
         
-        # ✅ ONNX内存清理
-        import gc
-        del img, mask_input, rel_pos_input, direct_input, ort_inputs, img_inpainted, img_original, mask_original, mask_original_resized
-        gc.collect()
-        
         return ans
     
     async def _infer_onnx_mpe(self, image: np.ndarray, mask: np.ndarray, inpainting_size: int = 1024, verbose: bool = False) -> np.ndarray:
@@ -442,12 +416,8 @@ class LamaMPEInpainter(OfflineInpainter):
         
         ans = img_inpainted * mask_original_resized + img_original * (1 - mask_original_resized)
         
-        # ✅ ONNX内存清理
-        import gc
-        del img, mask_input, rel_pos_input, direct_input, ort_inputs, img_inpainted, img_original, mask_original, mask_original_resized
-        gc.collect()
-        
         return ans
+
 
 class LamaLargeInpainter(LamaMPEInpainter):
 
@@ -638,11 +608,6 @@ class LamaLargeInpainter(LamaMPEInpainter):
             img_inpainted = cv2.resize(img_inpainted, (width, height), interpolation=cv2.INTER_LINEAR)
         
         ans = img_inpainted * mask_original + img_original * (1 - mask_original)
-        
-        # ✅ ONNX内存清理
-        import gc
-        del img, mask_input, ort_inputs, img_inpainted, img_original, mask_original
-        gc.collect()
         
         return ans
 

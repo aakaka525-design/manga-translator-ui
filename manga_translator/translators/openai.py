@@ -270,8 +270,19 @@ This is an incorrect response because it includes extra text and explanations.
                             line = line.replace('\\n', '\n').replace('↵', '\n')
                             translations.append(line)
                     
-                    while len(translations) < len(texts):
-                        translations.append(texts[len(translations)] if len(translations) < len(texts) else "")
+                    # Strict validation: must match input count
+                    if len(translations) != len(texts):
+                        attempt += 1
+                        log_attempt = f"{attempt}/{max_retries}" if not is_infinite else f"Attempt {attempt}"
+                        self.logger.warning(f"[{log_attempt}] Translation count mismatch: expected {len(texts)}, got {len(translations)}. Retrying...")
+                        self.logger.warning(f"Expected texts: {texts}")
+                        self.logger.warning(f"Got translations: {translations}")
+                        
+                        if not is_infinite and attempt >= max_retries:
+                            raise Exception(f"Translation count mismatch after {max_retries} attempts: expected {len(texts)}, got {len(translations)}")
+                        
+                        await asyncio.sleep(2)
+                        continue
 
                     self.logger.info("--- Translation Results ---")
                     for original, translated in zip(texts, translations):

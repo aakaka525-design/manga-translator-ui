@@ -18,119 +18,124 @@ Miniconda3/
 
 # Build output
 dist/
+*.egg-info/
 
-# Build artifacts
-build/
-result/
-
-
-
-# Batch files and executables
-*.exe
-*.sh
-
-# Wheel files
-*.whl
-
-# Archive files
-*.7z
-
-# Model files
-models/ocr/*.onnx
-models/ocr/*.txt
-
-# Backup files
-*.bak
-*.backup
-
-# Tufup auto-update
-.tufup-repo-config
-keys/
-
-# Vendored projects
-Saber-Translator-2.5.1/
-
-# Temp files
-desktop-ui/temp/
-
-# User-specified ignores
-14_translations.json
-19_translations.json
-desktop-ui/user_data/
-manga-image-translator-main/
-PaddleOCR-main/
-X-AnyLabeling-main/
-
-# Ignore temporary clone check directory
-temp_clone_check/
-
-# User-requested ignores
-.gitignore11
-.qoderignore
-.vscode/
-models/ocr/ocr-ctc.ckpt
-高质量翻译实现文档.md
-dict/high_quality_translation_prompt.txt
-dict/wyxxl.json
-03.png
-03_translations.json
-123.txt
-gemini_key_validator.py
-gemini_key_validator_ui.py30cadb668d2efc5c432fd2939130df0d_translations.json 
-新建文件夹/
-manga-translator-ui-1.5.1/
-manga-translator-ui-1.7.6/
-BallonsTranslator-dev/*
-# Added by Gemini to ignore untracked files
-.cunzhi-memory/
-logs/
-*_translations.json
-*.png
-temp_requirements.txt
-desktop_qt_ui/mypy.ini
-# Ignore tool-specific caches in desktop_qt_ui
-desktop_qt_ui/.ruff_cache/
-desktop_qt_ui/.claude/
-desktop_qt_ui/.mypy_cache/
-desktop_qt_ui/logs/
-.qoder/
-
-# Ignore user-added images
-4535423.jpg
-profile.svg
-
-# Ignore model files
+# Models directory (large binary files - use git-lfs or separate download)
 models/
 
-# Ignore test files
-test_colorize_only_mode.py
+# Output directories
+result/
+logs/
 
-# Ignore temporary files
-123.jpg
+# macOS
+.DS_Store
 
-# Ignore .kiro directory
-.kiro/
+# Temporary files
+*.tmp
+*.log
+tmp/
+.cache/
 
-# Ignore .cursor directory
-.cursor/
+# Windows
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
 
-# Ignore specific font file
-/fonts/字魂白鸽天行体(商用需授权).ttf
-
-# Ignore test directory
+# Tests
 test/
+tests/__pycache__/
 
-# Ignore portable Git (users will download it)
-PortableGit/
-!PortableGit/.gitkeep
-!PortableGit/README.md
+# Python eggs
+*.egg
 
-# Ignore portable Python (users will download it)
-Python-3.12.12/
-python-3.12.12-win64/
+# Pytest
+.pytest_cache/
 
-# Ignore portable 7-Zip (auto-downloaded)
-Portable7z/
+# Coverage
+.coverage
+htmlcov/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS-generated files
+*.dmg
+*.iso
+
+# Debug tools (本地调试工具)
+debug_memory_pympler.py
+analyze_pympler.py
+
+# BallonsTranslator temp and debug
+BallonsTranslator-dev/icons/__pycache__
+
+# Ignore all output results (翻译结果文件大，每次测试都生成新的)
+result/
+logs/
+
+# Ignore user config (这是用户自己的配置，防止推送到git)
+examples/config.json
+
+# ---------- Below from old .gitignore ----------
+
+# Pycharm
+.idea/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 结果输出
+result/
+test/result/
 
 # Ignore launch script temp files
 tmp/
@@ -138,6 +143,7 @@ tmp/
 # Ignore virtual environment
 venv/
 .venv/
+venv_wsl/
 
 gen_scripts.py
 
@@ -148,3 +154,22 @@ examples/config.json
 
 # Ignore local build directories
 pydensecrf/
+
+# Ignore IDE directories
+.idea/
+
+# Ignore memory profiler outputs
+memory_profiles/
+
+# Ignore other UI projects/versions
+BallonsTranslator-dev/
+manga-translator-ui-1.7.6/
+desktop-ui/
+
+# Ignore local dictionaries and fonts (user configuration files)
+# Only affects new untracked files, existing tracked files remain tracked
+dict/
+fonts/
+
+# Ignore local wheels
+*.whl

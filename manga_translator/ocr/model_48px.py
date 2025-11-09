@@ -214,11 +214,6 @@ class Model48pxOCR(OfflineOCR):
 
                 out_regions.append(cur_region)
 
-        # ✅ OCR完成后立即清理内存
-        del image_tensor, region
-        if self.use_gpu and torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        
         if is_quadrilaterals:
             return out_regions
         return out_regions
@@ -717,6 +712,7 @@ class OCR(nn.Module):
                 self.color_pred_fg_ind(color_feats), \
                 self.color_pred_bg_ind(color_feats)
             result.append((cur_hypo.out_idx[1:], cur_hypo.prob(), fg_pred[0], bg_pred[0], fg_ind_pred[0], bg_ind_pred[0]))
+        
         return result
 
     def infer_beam_batch_tensor(self, img: torch.FloatTensor, img_widths: List[int], beams_k: int = 5, start_tok = 1, end_tok = 2, pad_tok = 0, max_finished_hypos: int = 2, max_seq_length = 384):
@@ -743,6 +739,7 @@ class OCR(nn.Module):
 
         out_idx = torch.cat([out_idx.unsqueeze(1).expand(-1, beams_k, -1), pred_chars_index.unsqueeze(-1)], dim=-1).reshape(-1, 2)  # Shape [N * k, 2]
         log_probs = pred_chars_values.view(-1, 1)  # Shape [N * k, 1]
+        
         memory = memory.repeat_interleave(beams_k, dim=0)
         input_mask = input_mask.repeat_interleave(beams_k, dim=0)
         cached_activations = cached_activations.repeat_interleave(beams_k, dim=0)
@@ -775,6 +772,7 @@ class OCR(nn.Module):
             
             # Gather the top-k hypotheses based on log probabilities
             expanded_topk_indices = batch_topk_indices.unsqueeze(-1).expand(-1, -1, new_out_idx.shape[-1])  # Shape [N, k, seq_len + 1]
+            
             out_idx = torch.gather(new_out_idx, 1, expanded_topk_indices).reshape(-1, step + 2)  # [N * k, seq_len + 1]
             log_probs = batch_topk_log_probs.view(-1, 1)  # Reshape to [N * k, 1]
 
@@ -808,12 +806,14 @@ class OCR(nn.Module):
                 break
 
             N_remaining = int(len(remaining_indexs) / beams_k)
-            out_idx = out_idx.index_select(0, torch.tensor(remaining_indexs, device=img.device))
-            log_probs = log_probs.index_select(0, torch.tensor(remaining_indexs, device=img.device))
-            memory = memory.index_select(0, torch.tensor(remaining_indexs, device=img.device))
-            cached_activations = cached_activations.index_select(0, torch.tensor(remaining_indexs, device=img.device))
-            input_mask = input_mask.index_select(0, torch.tensor(remaining_indexs, device=img.device))
-            batch_index = batch_index.index_select(0, torch.tensor(remaining_indexs, device=img.device))
+            remaining_tensor = torch.tensor(remaining_indexs, device=img.device)
+            
+            out_idx = out_idx.index_select(0, remaining_tensor)
+            log_probs = log_probs.index_select(0, remaining_tensor)
+            memory = memory.index_select(0, remaining_tensor)
+            cached_activations = cached_activations.index_select(0, remaining_tensor)
+            input_mask = input_mask.index_select(0, remaining_tensor)
+            batch_index = batch_index.index_select(0, remaining_tensor)
 
         # Ensure we have the correct number of finished hypotheses for each sample
         if len(finished_hypos) < N: # Fallback if not enough finished hypos

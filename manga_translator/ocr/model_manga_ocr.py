@@ -194,11 +194,6 @@ class ModelMangaOCR(OfflineOCR):
             with torch.no_grad():
                 ret = self.model.infer_beam_batch(image_tensor, widths, beams_k = 5, max_seq_length = 255)
             
-            # ✅ 处理完一个chunk后立即清理
-            del image_tensor, region
-            if self.use_gpu and torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            
             for i, (pred_chars_index, prob, fg_pred, bg_pred, fg_ind_pred, bg_ind_pred) in enumerate(ret):
                 if prob < 0.2:
                     # Decode text first to log it

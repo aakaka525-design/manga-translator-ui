@@ -410,9 +410,19 @@ class GeminiHighQualityTranslator(CommonTranslator):
                         line = line.replace('\\n', '\n').replace('↵', '\n')
                         translations.append(line)
                 
-                # 确保翻译数量匹配 - 用空字符串填充而不是原文
-                while len(translations) < len(texts):
-                    translations.append("")
+                # Strict validation: must match input count
+                if len(translations) != len(texts):
+                    attempt += 1
+                    log_attempt = f"{attempt}/{max_retries}" if not is_infinite else f"Attempt {attempt}"
+                    self.logger.warning(f"[{log_attempt}] Translation count mismatch: expected {len(texts)}, got {len(translations)}. Retrying...")
+                    self.logger.warning(f"Expected texts: {texts}")
+                    self.logger.warning(f"Got translations: {translations}")
+                    
+                    if not is_infinite and attempt >= max_retries:
+                        raise Exception(f"Translation count mismatch after {max_retries} attempts: expected {len(texts)}, got {len(translations)}")
+                    
+                    await asyncio.sleep(2)
+                    continue
                 
                 # 打印原文和译文的对应关系
                 self.logger.info("--- Translation Results ---")
@@ -552,11 +562,15 @@ class GeminiHighQualityTranslator(CommonTranslator):
                 translations = result.split('\n')
                 translations = [t.strip() for t in translations if t.strip()]
                 
-                # 确保数量匹配
-                while len(translations) < len(queries):
-                    translations.append(queries[len(translations)] if len(translations) < len(queries) else "")
+                # Strict validation: must match input count
+                if len(translations) != len(queries):
+                    error_msg = f"Translation count mismatch: expected {len(queries)}, got {len(translations)}"
+                    self.logger.error(error_msg)
+                    self.logger.error(f"Queries: {queries}")
+                    self.logger.error(f"Translations: {translations}")
+                    raise Exception(error_msg)
                 
-                return translations[:len(queries)]
+                return translations
                 
         except Exception as e:
             self.logger.error(f"Gemini翻译出错: {e}")

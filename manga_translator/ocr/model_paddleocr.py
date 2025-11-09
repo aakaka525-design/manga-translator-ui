@@ -239,15 +239,6 @@ class ModelPaddleOCR(OfflineOCR):
 
             except Exception as e:
                 self.logger.error(f"Inference failed: {e}")
-        
-        # ✅ 清理临时numpy数组
-        if regions:
-            try:
-                del regions, batch, predictions
-            except:
-                pass  # 如果变量不存在则忽略
-        import gc
-        gc.collect()
 
         return textlines
 

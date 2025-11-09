@@ -163,11 +163,6 @@ class AotInpainter(LamaMPEInpainter):
         
         ans = img_inpainted * mask_original_resized + img_original * (1 - mask_original_resized)
         
-        # ✅ ONNX内存清理
-        import gc
-        del img, mask_input, ort_inputs, img_inpainted, img_original, mask_original, mask_original_resized
-        gc.collect()
-        
         return ans
 
 

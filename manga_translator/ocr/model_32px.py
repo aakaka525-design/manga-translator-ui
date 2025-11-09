@@ -165,11 +165,6 @@ class Model32pxOCR(OfflineOCR):
 
                 out_regions.append(cur_region)
 
-        # ✅ OCR完成后立即清理内存
-        del image_tensor, region
-        if self.use_gpu and torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        
         if is_quadrilaterals:
             return out_regions
         return textlines
@@ -627,6 +622,20 @@ class OCR(nn.Module):
                 self.bg_g_pred(color_feats), \
                 self.bg_b_pred(color_feats)
             result.append((cur_hypo.out_idx, cur_hypo.prob(), fg_r, fg_g, fg_b, bg_r, bg_g, bg_b))
+        
+        # ✅ 清理beam search的大张量,防止内存泄漏
+        del memory, finished_hypos
+        if 'input_mask' in locals():
+            del input_mask
+        if 'hypos' in locals():
+            del hypos
+        if 'hypos_per_sample' in locals():
+            del hypos_per_sample
+        if 'feats' in locals():
+            del feats
+        if img.device.type == 'cuda' and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
         return result
 
     def infer_beam(self, img: torch.FloatTensor, beams_k: int = 5, start_tok = 1, end_tok = 2, pad_tok = 0, max_seq_length = 384):

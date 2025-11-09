@@ -1485,6 +1485,23 @@ class MangaTranslator:
                         textlines[i] = result_tl # Replace the failed textline with the new result
                     
                     logger.info("Secondary OCR processing finished.")
+                    
+                    # ✅ 混合OCR完成后清理,防止两次OCR调用累积
+                    import gc
+                    if 'secondary_results' in locals():
+                        del secondary_results
+                    if 'failed_textlines' in locals():
+                        del failed_textlines
+                    if 'failed_indices' in locals():
+                        del failed_indices
+                    gc.collect()
+                    if hasattr(self, 'device') and (self.device == 'cuda' or self.device == 'mps'):
+                        try:
+                            import torch
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
+                        except Exception:
+                            pass
             # --- END: HYBRID OCR LOGIC ---
 
         finally:

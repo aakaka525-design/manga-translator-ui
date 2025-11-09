@@ -323,11 +323,13 @@ class CommonTranslator(InfererModule):
             # Translate
             _translations = await self._translate(*self.parse_language_codes(from_lang, to_lang, fatal=True), queries, ctx=ctx)
 
-            # Extend returned translations list to have the same size as queries
-            if len(_translations) < len(queries):
-                _translations.extend([''] * (len(queries) - len(_translations)))
-            elif len(_translations) > len(queries):
-                _translations = _translations[:len(queries)]
+            # Strict validation: translation count must match query count
+            if len(_translations) != len(queries):
+                error_msg = f"Translation count mismatch: expected {len(queries)}, got {len(_translations)}"
+                self.logger.error(error_msg)
+                self.logger.error(f"Queries: {queries}")
+                self.logger.error(f"Translations: {_translations}")
+                raise InvalidServerResponse(error_msg)
 
             # Only overwrite yet untranslated indices
             for j in untranslated_indices:

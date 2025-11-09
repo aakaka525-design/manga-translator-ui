@@ -364,6 +364,11 @@ class YOLOOBBDetector(OfflineDetector):
         if len(boxes_xywhr) > 0:
             boxes_corners = self.xywhr2xyxyxyxy(boxes_xywhr)
             
+            # ✅ 裁剪角点坐标到图像边界内
+            img_h, img_w = img_shape
+            boxes_corners[:, :, 0] = np.clip(boxes_corners[:, :, 0], 0, img_w)
+            boxes_corners[:, :, 1] = np.clip(boxes_corners[:, :, 1], 0, img_h)
+            
             # 内部去重
             boxes_corners, scores, class_ids = self.deduplicate_boxes(
                 boxes_corners, scores, class_ids,

@@ -54,7 +54,8 @@ class OfflineOCR(CommonOCR, ModelWrapper):
     _MODEL_SUB_DIR = 'ocr'
 
     async def _recognize(self, *args, **kwargs):
-        return await self.infer(*args, **kwargs)
+        result = await self.infer(*args, **kwargs)
+        return result
 
     @abstractmethod
     async def _infer(self, image: np.ndarray, textlines: List[Quadrilateral], args: OcrConfig, verbose: bool = False) -> List[Quadrilateral]:
