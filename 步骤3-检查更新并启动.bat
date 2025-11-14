@@ -37,7 +37,8 @@ REM 尝试获取实际的Miniconda路径（处理system32情况）
 for /f "delims=" %%i in ('conda info --base 2^>nul') do set "MINICONDA_ROOT=%%i"
 
 REM 检查环境是否存在（优先命名环境）
-call conda info --envs 2>nul | findstr /C:"%CONDA_ENV_NAME%" >nul 2>&1
+REM 使用 /B 选项进行精确匹配行首，避免误匹配路径中的文本
+call conda info --envs 2>nul | findstr /B /C:"%CONDA_ENV_NAME%" >nul 2>&1
 if %ERRORLEVEL% == 0 (
     echo [INFO] 检测到命名环境: %CONDA_ENV_NAME%
     goto :env_check_ok

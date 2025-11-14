@@ -656,7 +656,8 @@ set CONDA_ENV_EXISTS=0
 
 REM 检查环境是否存在 - 使用 conda info --envs 避免编码错误
 echo 正在检查环境...
-call conda info --envs 2>nul | findstr /C:"%CONDA_ENV_NAME%" >nul 2>nul
+REM 使用 /B 选项进行精确匹配行首，避免误匹配路径中的文本
+call conda info --envs 2>nul | findstr /B /C:"%CONDA_ENV_NAME%" >nul 2>nul
 if !ERRORLEVEL! == 0 (
     set CONDA_ENV_EXISTS=1
     echo [OK] 检测到现有conda环境: %CONDA_ENV_NAME%

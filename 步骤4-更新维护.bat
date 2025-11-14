@@ -44,7 +44,8 @@ REM 检查环境是否存在（优先检查命名环境）
 set ENV_FOUND=0
 
 REM 方法1: 检查命名环境
-call conda info --envs 2>nul | findstr /C:"%CONDA_ENV_NAME%" >nul 2>&1
+REM 使用 /B 选项进行精确匹配行首，避免误匹配路径中的文本
+call conda info --envs 2>nul | findstr /B /C:"%CONDA_ENV_NAME%" >nul 2>&1
 if %ERRORLEVEL% == 0 (
     set ENV_FOUND=1
     set USE_NAMED_ENV=1
