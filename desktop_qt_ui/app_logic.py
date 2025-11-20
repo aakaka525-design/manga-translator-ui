@@ -343,6 +343,12 @@ class MainAppLogic(QObject):
             self.display_name_maps = {
                 "alignment": {"auto": "自动", "left": "左对齐", "center": "居中", "right": "右对齐"},
                 "direction": {"auto": "自动", "h": "横排", "v": "竖排"},
+                "upscaler": {
+                    "waifu2x": "Waifu2x",
+                    "esrgan": "ESRGAN",
+                    "4xultrasharp": "4x UltraSharp",
+                    "realcugan": "Real-CUGAN"
+                },
                 "layout_mode": {
                     'default': "默认模式 (有Bug)",
                     'smart_scaling': "智能缩放 (推荐)",
@@ -512,12 +518,54 @@ class MainAppLogic(QObject):
     def remove_file(self, file_path: str):
         try:
             norm_file_path = os.path.normpath(file_path)
+            
+            # 情况1：直接在 source_files 中（文件夹或单独添加的文件）
             if norm_file_path in self.source_files:
                 self.source_files.remove(norm_file_path)
                 self.file_removed.emit(file_path)
-                self.logger.info(f"Removed path {os.path.basename(file_path)} from list.")
-            else:
-                self.logger.warning(f"Path not found in list for removal: {file_path}")
+                return
+            
+            # 情况2：文件夹内的单个文件（只处理文件，不处理文件夹）
+            if os.path.isfile(norm_file_path):
+                # 检查这个文件是否来自某个文件夹
+                parent_folder = None
+                for folder in self.source_files:
+                    if os.path.isdir(folder):
+                        # 检查文件是否在这个文件夹内
+                        try:
+                            common = os.path.commonpath([folder, norm_file_path])
+                            # 确保文件在文件夹内，而不是文件夹本身
+                            if common == os.path.normpath(folder) and norm_file_path != os.path.normpath(folder):
+                                parent_folder = folder
+                                break
+                        except ValueError:
+                            # 不同驱动器，跳过
+                            continue
+                
+                if parent_folder:
+                    # 这是文件夹内的文件，需要将其添加到排除列表
+                    # 由于当前架构不支持排除单个文件，我们需要：
+                    # 1. 移除整个文件夹
+                    # 2. 添加文件夹内的其他文件
+                    
+                    # 获取文件夹内的所有图片文件
+                    folder_files = self.file_service.get_image_files_from_folder(parent_folder, recursive=True)
+                    
+                    # 移除要删除的文件
+                    remaining_files = [f for f in folder_files if os.path.normpath(f) != norm_file_path]
+                    
+                    # 从 source_files 中移除文件夹
+                    self.source_files.remove(parent_folder)
+                    
+                    # 如果还有剩余文件，将它们作为单独的文件添加回去
+                    if remaining_files:
+                        self.source_files.extend(remaining_files)
+                    
+                    self.file_removed.emit(file_path)
+                    return
+            
+            # 如果到这里还没有处理，说明路径不存在
+            self.logger.warning(f"Path not found in list for removal: {file_path}")
         except Exception as e:
             self.logger.error(f"移除路径时发生异常: {e}")
 
@@ -552,22 +600,20 @@ class MainAppLogic(QObject):
                 if self.file_service.validate_image_file(path):
                     individual_files.append(path)
         
-        # 对文件夹进行排序
-        folders.sort()
+        # 对文件夹进行自然排序
+        folders.sort(key=self.file_service._natural_sort_key)
         
         # 按文件夹分组处理
         for folder in folders:
-            # 获取文件夹中的所有图片
+            # 获取文件夹中的所有图片（已经使用自然排序）
             folder_files = self.file_service.get_image_files_from_folder(folder, recursive=True)
-            # 对文件夹内的图片进行排序
-            folder_files.sort()
             resolved_files.extend(folder_files)
             # 记录这些文件来自这个文件夹
             for file_path in folder_files:
                 self.file_to_folder_map[file_path] = folder
         
-        # 处理单独添加的文件
-        individual_files.sort()
+        # 处理单独添加的文件（使用自然排序）
+        individual_files.sort(key=self.file_service._natural_sort_key)
         for file_path in individual_files:
             resolved_files.append(file_path)
             # 单独添加的文件，不属于任何文件夹

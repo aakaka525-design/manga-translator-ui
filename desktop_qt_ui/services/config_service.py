@@ -218,11 +218,13 @@ class ConfigService(QObject):
                     if 'cli' in config_dict:
                         config_dict['cli']['verbose'] = False
                 else:
-                    # 用户配置保留favorite_folders
+                    # 用户配置保留favorite_folders（但如果当前配置已经有新值，就不覆盖）
                     if existing_favorites is not None:
                         if 'app' not in config_dict:
                             config_dict['app'] = {}
-                        config_dict['app']['favorite_folders'] = existing_favorites
+                        # 只有当前配置中没有 favorite_folders 时，才使用旧值
+                        if 'favorite_folders' not in config_dict.get('app', {}):
+                            config_dict['app']['favorite_folders'] = existing_favorites
                 
                 try:
                     os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -230,8 +232,6 @@ class ConfigService(QObject):
                     with open(save_path, 'w', encoding='utf-8') as f:
                         json.dump(config_dict, f, indent=2, ensure_ascii=False)
                     
-                    filename = os.path.basename(save_path)
-                    self.logger.info(f"配置已保存: {save_path}")
                     success_count += 1
                 except Exception as e:
                     self.logger.error(f"保存配置失败 ({os.path.basename(save_path)}): {e}")

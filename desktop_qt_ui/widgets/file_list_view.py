@@ -1,4 +1,5 @@
 import os
+import re
 from typing import Dict, List, Optional
 
 from PIL import Image
@@ -14,6 +15,21 @@ from PyQt6.QtWidgets import (
     QTreeWidgetItem,
     QWidget,
 )
+
+
+def natural_sort_key(path: str):
+    """
+    生成自然排序的键，支持数字排序
+    例如: file1.jpg, file2.jpg, file10.jpg 会按 1, 2, 10 排序
+    """
+    filename = os.path.basename(path)
+    parts = []
+    for part in re.split(r'(\d+)', filename):
+        if part.isdigit():
+            parts.append(int(part))
+        else:
+            parts.append(part.lower())
+    return parts
 
 
 class FileItemWidget(QWidget):
@@ -173,7 +189,7 @@ class FileListView(QTreeWidget):
                         if os.path.splitext(f)[1].lower() in image_extensions
                     ]
                     if files:
-                        folder_groups[norm_path] = sorted(files)
+                        folder_groups[norm_path] = sorted(files, key=natural_sort_key)
                 except Exception as e:
                     print(f"Error loading files from folder {norm_path}: {e}")
             else:
@@ -237,7 +253,7 @@ class FileListView(QTreeWidget):
                 if os.path.splitext(f)[1].lower() in image_extensions
             ]
             
-            for file_path in sorted(files):
+            for file_path in sorted(files, key=natural_sort_key):
                 self._add_file_to_folder(file_path, folder_item)
         except Exception as e:
             print(f"Error loading files from folder {folder_path}: {e}")
@@ -272,7 +288,7 @@ class FileListView(QTreeWidget):
         self.folder_nodes[folder_path] = folder_item
         
         # 添加文件列表
-        for file_path in sorted(files):
+        for file_path in sorted(files, key=natural_sort_key):
             self._add_file_to_folder(file_path, folder_item)
 
     def _add_file_to_folder(self, file_path: str, parent_item: QTreeWidgetItem):

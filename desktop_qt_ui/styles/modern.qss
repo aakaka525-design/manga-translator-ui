@@ -116,11 +116,9 @@ QComboBox::drop-down {
 }
 
 QComboBox::down-arrow {
-    image: url(none);
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 5px solid #546E7A;
-    margin-right: 8px;
+    image: url(desktop_qt_ui/styles/icons/down-arrow-light.svg);
+    width: 12px;
+    height: 8px;
 }
 
 QComboBox QAbstractItemView {
@@ -161,7 +159,7 @@ QCheckBox::indicator:hover {
 QCheckBox::indicator:checked {
     background-color: #2196F3;
     border-color: #2196F3;
-    image: url(none);
+    image: url(desktop_qt_ui/styles/icons/checkmark.svg);
 }
 
 QCheckBox::indicator:checked:hover {

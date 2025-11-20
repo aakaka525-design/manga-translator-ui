@@ -180,16 +180,25 @@ class MainView(QWidget):
                 self.setting_changed.emit("upscale.upscale_ratio", None)
                 self.setting_changed.emit("upscale.realcugan_model", None)
             else:
-                # text 是模型名称，从中提取倍率
-                scale_str = text.split('x')[0] if 'x' in text else None
+                # text 可能是中文显示名称，需要转换回英文值
+                display_map = self.controller.get_display_mapping("realcugan_model")
+                model_value = text
+                
+                # 如果有display_map，进行反向查找
+                if display_map:
+                    reverse_map = {v: k for k, v in display_map.items()}
+                    model_value = reverse_map.get(text, text)
+                
+                # 从模型名称中提取倍率
+                scale_str = model_value.split('x')[0] if 'x' in model_value else None
                 if scale_str and scale_str.isdigit():
                     scale = int(scale_str)
                     # 同时更新 realcugan_model 和 upscale_ratio
-                    self.setting_changed.emit("upscale.realcugan_model", text)
+                    self.setting_changed.emit("upscale.realcugan_model", model_value)
                     self.setting_changed.emit("upscale.upscale_ratio", scale)
                 else:
                     # 无法解析倍率，只更新模型
-                    self.setting_changed.emit("upscale.realcugan_model", text)
+                    self.setting_changed.emit("upscale.realcugan_model", model_value)
         else:
             # 当前是其他超分模型，text 是倍率
             if text == "不使用":
@@ -228,20 +237,36 @@ class MainView(QWidget):
         upscale_ratio_widget.clear()
         
         if upscaler == "realcugan":
-            # 显示 Real-CUGAN 模型列表
+            # 显示 Real-CUGAN 模型列表（使用中文显示）
             realcugan_models = self.controller.get_options_for_key("realcugan_model")
+            display_map = self.controller.get_display_mapping("realcugan_model")
+            
             if realcugan_models:
-                # 添加"不使用"选项
-                all_options = ["不使用"] + realcugan_models
+                # 如果有display_map，使用中文名称
+                if display_map:
+                    display_options = [display_map.get(model, model) for model in realcugan_models]
+                    all_options = ["不使用"] + display_options
+                else:
+                    all_options = ["不使用"] + realcugan_models
+                
                 upscale_ratio_widget.addItems(all_options)
+            
             # 设置默认值
             config = self.config_service.get_config()
             if config.upscale.realcugan_model:
-                upscale_ratio_widget.setCurrentText(config.upscale.realcugan_model)
+                # 如果有display_map，显示中文名称
+                if display_map:
+                    display_name = display_map.get(config.upscale.realcugan_model, config.upscale.realcugan_model)
+                    upscale_ratio_widget.setCurrentText(display_name)
+                else:
+                    upscale_ratio_widget.setCurrentText(config.upscale.realcugan_model)
             elif config.upscale.upscale_ratio is None:
                 upscale_ratio_widget.setCurrentText("不使用")
             elif realcugan_models:
-                upscale_ratio_widget.setCurrentText(realcugan_models[0])
+                if display_map:
+                    upscale_ratio_widget.setCurrentText(display_map.get(realcugan_models[0], realcugan_models[0]))
+                else:
+                    upscale_ratio_widget.setCurrentText(realcugan_models[0])
         else:
             # 显示普通倍率选项
             ratio_options = ["不使用", "2", "3", "4"]
@@ -352,16 +377,28 @@ class MainView(QWidget):
                 current_upscaler = config.upscale.upscaler
                 
                 if current_upscaler == "realcugan":
-                    # 显示 Real-CUGAN 模型列表
+                    # 显示 Real-CUGAN 模型列表（使用中文显示）
                     realcugan_models = self.controller.get_options_for_key("realcugan_model")
+                    display_map = self.controller.get_display_mapping("realcugan_model")
+                    
                     if realcugan_models:
-                        # 添加"不使用"选项
-                        all_options = ["不使用"] + realcugan_models
+                        # 如果有display_map，使用中文名称
+                        if display_map:
+                            display_options = [display_map.get(model, model) for model in realcugan_models]
+                            all_options = ["不使用"] + display_options
+                        else:
+                            all_options = ["不使用"] + realcugan_models
                         widget.addItems(all_options)
+                    
                     # 设置当前值（从 realcugan_model 获取）
                     current_model = config.upscale.realcugan_model
                     if current_model:
-                        widget.setCurrentText(current_model)
+                        # 如果有display_map，显示中文名称
+                        if display_map:
+                            display_name = display_map.get(current_model, current_model)
+                            widget.setCurrentText(display_name)
+                        else:
+                            widget.setCurrentText(current_model)
                     elif value is None:
                         widget.setCurrentText("不使用")
                     elif realcugan_models:

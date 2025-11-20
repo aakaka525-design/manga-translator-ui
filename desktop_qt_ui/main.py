@@ -114,10 +114,24 @@ def main():
     
     main_window.show()
     
-    # Windows特殊处理：显示后再次设置图标，强制刷新任务栏
-    if sys.platform == 'win32' and app_icon and not app_icon.isNull():
-        main_window.setWindowIcon(app_icon)
-        app.processEvents()  # 强制处理事件，刷新任务栏图标
+    # Windows特殊处理：强制窗口显示在最前面
+    if sys.platform == 'win32':
+        # 设置窗口标志，使其显示在最前面
+        from PyQt6.QtCore import Qt
+        main_window.setWindowFlags(main_window.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        main_window.show()  # 重新显示以应用标志
+        # 立即取消置顶，避免一直在最前面
+        main_window.setWindowFlags(main_window.windowFlags() & ~Qt.WindowType.WindowStaysOnTopHint)
+        main_window.show()  # 再次显示以应用标志
+        
+        # 设置图标并刷新
+        if app_icon and not app_icon.isNull():
+            main_window.setWindowIcon(app_icon)
+            app.processEvents()  # 强制处理事件，刷新任务栏图标
+    
+    main_window.raise_()  # 将窗口提升到最前面
+    main_window.activateWindow()  # 激活窗口
+    app.processEvents()  # 处理所有待处理事件
 
     # 4. 启动事件循环
     sys.exit(app.exec())

@@ -267,6 +267,12 @@ class FolderDialog(QDialog):
         self.setWindowTitle("选择文件夹" + (" (可多选)" if multi_select else ""))
         self.setMinimumSize(1000, 650)
         self.resize(1000, 650)
+        
+        # 设置对话框使用系统调色板背景
+        from PyQt6.QtGui import QPalette
+        palette = self.palette()
+        self.setAutoFillBackground(True)
+        self.setPalette(palette)
 
         # 初始化文件系统模型
         self.fs_model = QFileSystemModel()
@@ -297,30 +303,35 @@ class FolderDialog(QDialog):
         layout.setSpacing(8)
         layout.setContentsMargins(0, 0, 0, 0)
 
+        # 获取系统调色板
+        from PyQt6.QtGui import QPalette
+        palette = self.palette()
+        
         # 创建工具栏区域（后退/前进/上级目录）
         toolbar_widget = QWidget()
-        toolbar_widget.setStyleSheet("""
-            QWidget {
-                background-color: #f0f0f0;
-                border-bottom: 1px solid #c0c0c0;
-            }
-            QToolButton {
+        toolbar_widget.setStyleSheet(f"""
+            QWidget {{
+                background-color: {palette.color(QPalette.ColorRole.Window).name()};
+                border-bottom: 1px solid {palette.color(QPalette.ColorRole.Mid).name()};
+            }}
+            QToolButton {{
                 background-color: transparent;
                 border: 1px solid transparent;
                 border-radius: 3px;
                 padding: 4px;
                 margin: 2px;
-            }
-            QToolButton:hover {
-                background-color: #e0e0e0;
-                border: 1px solid #b0b0b0;
-            }
-            QToolButton:pressed {
-                background-color: #d0d0d0;
-            }
-            QToolButton:disabled {
-                color: #a0a0a0;
-            }
+                color: {palette.color(QPalette.ColorRole.WindowText).name()};
+            }}
+            QToolButton:hover {{
+                background-color: {palette.color(QPalette.ColorRole.Light).name()};
+                border: 1px solid {palette.color(QPalette.ColorRole.Mid).name()};
+            }}
+            QToolButton:pressed {{
+                background-color: {palette.color(QPalette.ColorRole.Midlight).name()};
+            }}
+            QToolButton:disabled {{
+                color: {palette.color(QPalette.ColorRole.PlaceholderText).name()};
+            }}
         """)
         toolbar_layout = QHBoxLayout(toolbar_widget)
         toolbar_layout.setContentsMargins(8, 4, 8, 4)
@@ -366,35 +377,36 @@ class FolderDialog(QDialog):
 
         # 排序选项
         sort_label = QLabel("排序:")
-        sort_label.setStyleSheet("color: #666; font-size: 12px; margin-right: 4px;")
+        sort_label.setStyleSheet(f"color: {palette.color(QPalette.ColorRole.WindowText).name()}; font-size: 12px; margin-right: 4px;")
         toolbar_layout.addWidget(sort_label)
 
         self.sort_combo = QComboBox()
         self.sort_combo.addItems(["名称 ↑", "名称 ↓", "修改时间 ↑", "修改时间 ↓", "大小 ↑", "大小 ↓"])
         self.sort_combo.setCurrentIndex(0)
-        self.sort_combo.setStyleSheet("""
-            QComboBox {
-                background-color: white;
-                border: 1px solid #c0c0c0;
+        self.sort_combo.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {palette.color(QPalette.ColorRole.Base).name()};
+                border: 1px solid {palette.color(QPalette.ColorRole.Mid).name()};
                 border-radius: 3px;
                 padding: 4px 8px;
                 min-width: 100px;
                 font-size: 12px;
-            }
-            QComboBox:hover {
+                color: {palette.color(QPalette.ColorRole.Text).name()};
+            }}
+            QComboBox:hover {{
                 border: 1px solid #0078d4;
-            }
-            QComboBox::drop-down {
+            }}
+            QComboBox::drop-down {{
                 border: none;
                 width: 20px;
-            }
-            QComboBox::down-arrow {
+            }}
+            QComboBox::down-arrow {{
                 image: none;
                 border-left: 4px solid transparent;
                 border-right: 4px solid transparent;
-                border-top: 5px solid #666;
+                border-top: 5px solid {palette.color(QPalette.ColorRole.Text).name()};
                 margin-right: 5px;
-            }
+            }}
         """)
         toolbar_layout.addWidget(self.sort_combo)
 
@@ -402,12 +414,12 @@ class FolderDialog(QDialog):
 
         # 创建地址栏区域（面包屑导航）
         address_widget = QWidget()
-        address_widget.setStyleSheet("""
-            QWidget {
-                background-color: white;
-                border: 1px solid #c0c0c0;
+        address_widget.setStyleSheet(f"""
+            QWidget {{
+                background-color: {palette.color(QPalette.ColorRole.Base).name()};
+                border: 1px solid {palette.color(QPalette.ColorRole.Mid).name()};
                 border-radius: 2px;
-            }
+            }}
         """)
         address_layout = QHBoxLayout(address_widget)
         address_layout.setContentsMargins(8, 8, 8, 8)
@@ -445,30 +457,31 @@ class FolderDialog(QDialog):
         self.edit_path_button = QToolButton()
         self.edit_path_button.setText("✏️")
         self.edit_path_button.setToolTip("编辑路径")
-        self.edit_path_button.setStyleSheet("""
-            QToolButton {
+        self.edit_path_button.setStyleSheet(f"""
+            QToolButton {{
                 background-color: transparent;
                 border: none;
                 padding: 2px;
-            }
-            QToolButton:hover {
-                background-color: #e0e0e0;
+            }}
+            QToolButton:hover {{
+                background-color: {palette.color(QPalette.ColorRole.Light).name()};
                 border-radius: 2px;
-            }
+            }}
         """)
         address_layout.addWidget(self.edit_path_button)
 
         # 路径输入框（初始隐藏，点击编辑按钮时显示）
         self.path_edit = QLineEdit()
         self.path_edit.setPlaceholderText("输入路径后按回车跳转，或按 Esc 取消")
-        self.path_edit.setStyleSheet("""
-            QLineEdit {
+        self.path_edit.setStyleSheet(f"""
+            QLineEdit {{
                 padding: 8px;
                 border: 2px solid #0078d4;
                 border-radius: 3px;
                 font-size: 13px;
-                background-color: white;
-            }
+                background-color: {palette.color(QPalette.ColorRole.Base).name()};
+                color: {palette.color(QPalette.ColorRole.Text).name()};
+            }}
         """)
 
         # 创建一个容器来包含面包屑和输入框，它们互斥显示
@@ -498,11 +511,11 @@ class FolderDialog(QDialog):
 
         # 主内容区域：左侧快捷栏 + 右侧文件夹树
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setStyleSheet("""
-            QSplitter::handle {
-                background-color: #e0e0e0;
+        splitter.setStyleSheet(f"""
+            QSplitter::handle {{
+                background-color: {palette.color(QPalette.ColorRole.Mid).name()};
                 width: 1px;
-            }
+            }}
         """)
 
         # 左侧快捷栏
@@ -512,25 +525,26 @@ class FolderDialog(QDialog):
         # 右侧文件夹树形视图
         self.folder_tree = QTreeView()
         self.folder_tree.setModel(self.proxy_model)
-        self.folder_tree.setStyleSheet("""
-            QTreeView {
+        self.folder_tree.setStyleSheet(f"""
+            QTreeView {{
                 border: none;
-                background-color: white;
+                background-color: {palette.color(QPalette.ColorRole.Base).name()};
                 selection-background-color: #0078d4;
                 selection-color: white;
                 font-size: 13px;
-            }
-            QTreeView::item {
+                color: {palette.color(QPalette.ColorRole.Text).name()};
+            }}
+            QTreeView::item {{
                 padding: 4px;
                 border: none;
-            }
-            QTreeView::item:hover {
-                background-color: #f0f0f0;
-            }
-            QTreeView::item:selected {
+            }}
+            QTreeView::item:hover {{
+                background-color: {palette.color(QPalette.ColorRole.AlternateBase).name()};
+            }}
+            QTreeView::item:selected {{
                 background-color: #0078d4;
                 color: white;
-            }
+            }}
         """)
 
         # 只显示名称列
@@ -566,13 +580,13 @@ class FolderDialog(QDialog):
 
         if self.multi_select:
             tip_label = QLabel("💡 提示：按住 Ctrl 或 Shift 可以多选文件夹")
-            tip_label.setStyleSheet("color: #666; font-size: 12px;")
+            tip_label.setStyleSheet(f"color: {palette.color(QPalette.ColorRole.PlaceholderText).name()}; font-size: 12px;")
             info_layout.addWidget(tip_label)
 
         info_layout.addStretch()
 
         self.selection_label = QLabel("未选择")
-        self.selection_label.setStyleSheet("color: #0078d4; font-weight: bold; font-size: 12px;")
+        self.selection_label.setStyleSheet(f"color: #0078d4; font-weight: bold; font-size: 12px;")
         info_layout.addWidget(self.selection_label)
 
         layout.addLayout(info_layout)
@@ -612,22 +626,22 @@ class FolderDialog(QDialog):
         self.cancel_button = QPushButton("取消")
         self.cancel_button.setMinimumWidth(100)
         self.cancel_button.setMinimumHeight(32)
-        self.cancel_button.setStyleSheet("""
-            QPushButton {
-                background-color: #f0f0f0;
-                color: #333333;
-                border: 1px solid #c0c0c0;
+        self.cancel_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {palette.color(QPalette.ColorRole.Button).name()};
+                color: {palette.color(QPalette.ColorRole.ButtonText).name()};
+                border: 1px solid {palette.color(QPalette.ColorRole.Mid).name()};
                 border-radius: 3px;
                 padding: 6px 20px;
                 font-size: 13px;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-                border-color: #b0b0b0;
-            }
-            QPushButton:pressed {
-                background-color: #d0d0d0;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {palette.color(QPalette.ColorRole.Light).name()};
+                border-color: {palette.color(QPalette.ColorRole.Dark).name()};
+            }}
+            QPushButton:pressed {{
+                background-color: {palette.color(QPalette.ColorRole.Midlight).name()};
+            }}
         """)
         button_layout.addWidget(self.cancel_button)
 
@@ -635,14 +649,18 @@ class FolderDialog(QDialog):
 
     def _create_shortcuts_panel(self) -> QWidget:
         """创建左侧快捷栏 - 树形结构"""
+        from PyQt6.QtGui import QPalette
+        palette = self.palette()
+        
         widget = QWidget()
         widget.setMinimumWidth(180)
         widget.setMaximumWidth(280)
-        widget.setStyleSheet("""
-            QWidget {
-                background-color: #fafafa;
-                border-right: 1px solid #e0e0e0;
-            }
+        # 使用 Window 颜色作为背景，确保与系统主题一致
+        widget.setStyleSheet(f"""
+            QWidget {{
+                background-color: {palette.color(QPalette.ColorRole.Window).name()};
+                border-right: 1px solid {palette.color(QPalette.ColorRole.Mid).name()};
+            }}
         """)
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -654,39 +672,40 @@ class FolderDialog(QDialog):
         self.shortcuts_tree.setIndentation(12)
         self.shortcuts_tree.setAnimated(True)
         self.shortcuts_tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.shortcuts_tree.setStyleSheet("""
-            QTreeView {
+        self.shortcuts_tree.setStyleSheet(f"""
+            QTreeView {{
                 border: none;
                 background-color: transparent;
-                selection-background-color: #e5f3ff;
-                selection-color: #000000;
+                selection-background-color: {palette.color(QPalette.ColorRole.Highlight).name()};
+                selection-color: {palette.color(QPalette.ColorRole.HighlightedText).name()};
                 font-size: 13px;
                 outline: none;
-            }
-            QTreeView::item {
+                color: {palette.color(QPalette.ColorRole.Text).name()};
+            }}
+            QTreeView::item {{
                 padding: 6px 8px;
                 border: none;
-            }
-            QTreeView::item:hover {
-                background-color: #f0f0f0;
-            }
-            QTreeView::item:selected {
-                background-color: #e5f3ff;
-                color: #000000;
-            }
-            QTreeView::branch {
+            }}
+            QTreeView::item:hover {{
+                background-color: {palette.color(QPalette.ColorRole.Light).name()};
+            }}
+            QTreeView::item:selected {{
+                background-color: {palette.color(QPalette.ColorRole.Highlight).name()};
+                color: {palette.color(QPalette.ColorRole.HighlightedText).name()};
+            }}
+            QTreeView::branch {{
                 background-color: transparent;
-            }
+            }}
             QTreeView::branch:has-children:!has-siblings:closed,
-            QTreeView::branch:closed:has-children:has-siblings {
+            QTreeView::branch:closed:has-children:has-siblings {{
                 image: url(none);
                 border: none;
-            }
+            }}
             QTreeView::branch:open:has-children:!has-siblings,
-            QTreeView::branch:open:has-children:has-siblings {
+            QTreeView::branch:open:has-children:has-siblings {{
                 image: url(none);
                 border: none;
-            }
+            }}
         """)
 
         self.shortcuts_tree_model = QStandardItemModel()
@@ -971,23 +990,26 @@ class FolderDialog(QDialog):
         # 创建面包屑按钮
         for i, (full_path, name) in enumerate(parts):
             # 路径按钮
+            from PyQt6.QtGui import QPalette
+            palette = self.palette()
+            
             btn = QPushButton(name if name else full_path)
-            btn.setStyleSheet("""
-                QPushButton {
+            btn.setStyleSheet(f"""
+                QPushButton {{
                     background-color: transparent;
                     border: none;
                     color: #0078d4;
                     text-align: left;
                     padding: 4px 8px;
                     font-size: 13px;
-                }
-                QPushButton:hover {
-                    background-color: #e5f3ff;
+                }}
+                QPushButton:hover {{
+                    background-color: {palette.color(QPalette.ColorRole.Light).name()};
                     border-radius: 3px;
-                }
-                QPushButton:pressed {
-                    background-color: #cce8ff;
-                }
+                }}
+                QPushButton:pressed {{
+                    background-color: {palette.color(QPalette.ColorRole.Midlight).name()};
+                }}
             """)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(lambda checked, p=full_path: self.navigate_to(p, add_to_history=True))
@@ -995,8 +1017,10 @@ class FolderDialog(QDialog):
 
             # 分隔符（最后一个不加）
             if i < len(parts) - 1:
+                from PyQt6.QtGui import QPalette
+                palette = self.palette()
                 separator = QLabel(" > ")
-                separator.setStyleSheet("color: #666; font-size: 12px;")
+                separator.setStyleSheet(f"color: {palette.color(QPalette.ColorRole.PlaceholderText).name()}; font-size: 12px;")
                 self.breadcrumb_layout.insertWidget(self.breadcrumb_layout.count() - 1, separator)
 
     def _update_navigation_buttons(self):
@@ -1250,7 +1274,7 @@ class FolderDialog(QDialog):
         if folder_path not in self.favorite_folders:
             self.favorite_folders.append(folder_path)
             self._save_favorite_folders()
-            self._refresh_shortcuts_tree()
+            self._update_favorites_in_tree()
         
     def _remove_favorite(self, item):
         """从收藏中移除指定项（通过树项）"""
@@ -1262,7 +1286,7 @@ class FolderDialog(QDialog):
         if folder_path in self.favorite_folders:
             self.favorite_folders.remove(folder_path)
             self._save_favorite_folders()
-            self._refresh_shortcuts_tree()
+            self._update_favorites_in_tree()
             
     def _refresh_shortcuts_tree(self):
         """刷新快捷栏树"""
@@ -1270,6 +1294,56 @@ class FolderDialog(QDialog):
         self._build_shortcuts_tree()
         self.shortcuts_tree.expandAll()
         # 刷新视图以更新星星显示
+        self.shortcuts_tree.viewport().update()
+        self.folder_tree.viewport().update()
+    
+    def _update_favorites_in_tree(self):
+        """只更新收藏夹部分，不重建整个树"""
+        # 查找收藏夹根节点
+        favorite_root = None
+        favorite_root_index = -1
+        for i in range(self.shortcuts_tree_model.rowCount()):
+            item = self.shortcuts_tree_model.item(i)
+            if item and item.text() == "⭐ 收藏夹":
+                favorite_root = item
+                favorite_root_index = i
+                break
+        
+        # 如果有收藏夹，更新它
+        if self.favorite_folders:
+            if favorite_root:
+                # 清空现有的收藏项
+                favorite_root.removeRows(0, favorite_root.rowCount())
+            else:
+                # 创建收藏夹根节点（插入到第一个位置，快速访问之后）
+                favorite_root = QStandardItem("⭐ 收藏夹")
+                favorite_root.setSelectable(False)
+                font = favorite_root.font()
+                font.setBold(True)
+                favorite_root.setFont(font)
+                # 插入到快速访问之后（如果有的话）
+                insert_index = 1 if self.shortcuts_tree_model.rowCount() > 0 else 0
+                self.shortcuts_tree_model.insertRow(insert_index, favorite_root)
+            
+            # 添加收藏项
+            for path in self.favorite_folders:
+                if os.path.exists(path):
+                    folder_name = os.path.basename(path) or path
+                    item = QStandardItem(f"📁 {folder_name}")
+                    item.setData(path, Qt.ItemDataRole.UserRole)
+                    item.setData("favorite", Qt.ItemDataRole.UserRole + 1)
+                    item.setToolTip(path)
+                    favorite_root.appendRow(item)
+            
+            # 展开收藏夹
+            if favorite_root:
+                self.shortcuts_tree.expand(self.shortcuts_tree_model.indexFromItem(favorite_root))
+        else:
+            # 如果没有收藏了，删除收藏夹节点
+            if favorite_root and favorite_root_index >= 0:
+                self.shortcuts_tree_model.removeRow(favorite_root_index)
+        
+        # 刷新视图
         self.shortcuts_tree.viewport().update()
         self.folder_tree.viewport().update()
 

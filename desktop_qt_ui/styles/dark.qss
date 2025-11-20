@@ -99,11 +99,9 @@ QComboBox::drop-down {
 }
 
 QComboBox::down-arrow {
-    image: url(none);
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-top: 5px solid #D4D4D4;
-    margin-right: 8px;
+    image: url(desktop_qt_ui/styles/icons/down-arrow-dark.svg);
+    width: 12px;
+    height: 8px;
 }
 
 QComboBox QAbstractItemView {
@@ -146,6 +144,7 @@ QCheckBox::indicator:hover {
 QCheckBox::indicator:checked {
     background-color: #0E639C;
     border-color: #0E639C;
+    image: url(desktop_qt_ui/styles/icons/checkmark.svg);
 }
 
 /* ===== 滚动条样式 ===== */

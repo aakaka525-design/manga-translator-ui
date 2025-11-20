@@ -23,6 +23,13 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Manga Translator")
         self.resize(1280, 800) # 设置默认窗口大小
         
+        # 窗口居中显示
+        from PyQt6.QtGui import QScreen
+        screen = QScreen.availableGeometry(self.screen())
+        x = (screen.width() - self.width()) // 2
+        y = (screen.height() - self.height()) // 2
+        self.move(x, y)
+        
         # 窗口图标已在 main.py 中设置，这里不需要重复设置
 
         self.logger = get_logger(__name__)
@@ -278,6 +285,5 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """处理窗口关闭事件"""
-        self.logger.info("Shutting down application...")
         self.app_logic.shutdown()
         event.accept()

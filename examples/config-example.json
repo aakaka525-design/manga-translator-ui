@@ -66,7 +66,7 @@
     "font_size": null,
     "auto_rotate_symbols": false,
     "rtl": true,
-    "layout_mode": "smart_scaling",
+    "layout_mode": "default",
     "max_font_size": 0,
     "font_scale_ratio": 1.0,
     "center_text_in_bubble": false,
@@ -103,7 +103,7 @@
     "save_quality": 100,
     "batch_size": 3,
     "batch_concurrent": false,
-    "generate_and_export": false,
+    "generate_and_export": true,
     "colorize_only": false,
     "upscale_only": false
   }
