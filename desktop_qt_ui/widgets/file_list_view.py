@@ -110,6 +110,23 @@ class FileItemWidget(QWidget):
                 FileItemWidget._signals.thumbnail_loaded.connect(FileItemWidget._dispatch_thumbnail)
                 FileItemWidget._signals_connected = True
             self._load_thumbnail()
+
+        # File Name
+        display_name = os.path.basename(file_path)
+        if is_folder:
+            # 统计文件夹下的文件数量
+            file_count = self._count_files(file_path)
+            display_name = f"{display_name} ({file_count}个文件)"
+        
+        self.name_label = QLabel(display_name)
+        self.name_label.setWordWrap(True)
+        self.layout.addWidget(self.name_label, 1)  # Stretch factor
+
+        # Remove Button
+        self.remove_button = QPushButton("✕")
+        self.remove_button.setFixedSize(20, 20)
+        self.remove_button.clicked.connect(self._emit_remove_request)
+        self.layout.addWidget(self.remove_button)
     
     def __del__(self):
         """析构时从活动实例列表中移除"""
@@ -127,23 +144,6 @@ class FileItemWidget(QWidget):
         if file_path in cls._active_instances:
             for instance in cls._active_instances[file_path]:
                 instance._on_thumbnail_loaded(file_path, pixmap)
-
-        # File Name
-        display_name = os.path.basename(file_path)
-        if is_folder:
-            # 统计文件夹下的文件数量
-            file_count = self._count_files(file_path)
-            display_name = f"{display_name} ({file_count}个文件)"
-        
-        self.name_label = QLabel(display_name)
-        self.name_label.setWordWrap(True)
-        self.layout.addWidget(self.name_label, 1) # Stretch factor
-
-        # Remove Button
-        self.remove_button = QPushButton("✕")
-        self.remove_button.setFixedSize(20, 20)
-        self.remove_button.clicked.connect(self._emit_remove_request)
-        self.layout.addWidget(self.remove_button)
 
     def _count_files(self, folder_path: str) -> int:
         """统计文件夹中的图片文件数量"""
