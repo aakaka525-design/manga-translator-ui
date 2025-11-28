@@ -14,12 +14,14 @@
 #   - gfx1151:      RX 7800 XT, RX 7700 XT, RX 7600 (Navi 32/33)
 #   - gfx110X-all:  通用 RX 7000 系列支持
 #
-# RDNA 2 架构 (RX 6000 系列):
+# RDNA 2 架构 (RX 6000 系列): ⚠️ 不支持，请使用 CPU 版本
 #   - gfx103X-dgpu: RX 6900 XT, RX 6800 XT, RX 6800, RX 6700 XT, 
 #                   RX 6600 XT, RX 6600, RX 6500 XT, RX 6400
+#   注意：这些显卡不支持 AMD ROCm PyTorch，请使用 requirements_cpu.txt
 #
-# RDNA 1 架构 (RX 5000 系列):
+# RDNA 1 架构 (RX 5000 系列): ⚠️ 不支持，请使用 CPU 版本
 #   - gfx101X-dgpu: RX 5700 XT, RX 5700, RX 5600 XT, RX 5600, RX 5500 XT
+#   注意：这些显卡不支持 AMD ROCm PyTorch，请使用 requirements_cpu.txt
 #
 # Vega 架构:
 #   - gfx90X-dcgpu: Radeon VII, Radeon Vega 64/56, MI25, MI50, MI60
@@ -34,13 +36,15 @@
 # ===================================================================================
 # 示例安装命令:
 #
-# RX 6800 XT (RDNA 2):
-#   python -m pip install torch torchvision torchaudio \
-#     --index-url https://d2awnip2yjpvqn.cloudfront.net/v2/gfx103X-dgpu/
-#
 # RX 7900 XTX (RDNA 3):
 #   python -m pip install torch torchvision torchaudio \
 #     --index-url https://d2awnip2yjpvqn.cloudfront.net/v2/gfx1150/
+#
+# RX 7800 XT (RDNA 3):
+#   python -m pip install torch torchvision torchaudio \
+#     --index-url https://d2awnip2yjpvqn.cloudfront.net/v2/gfx1151/
+#
+# ⚠️ RX 6000/5000 系列不支持，请使用 requirements_cpu.txt
 #
 # ===================================================================================
 # 注意事项:

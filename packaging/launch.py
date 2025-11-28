@@ -321,17 +321,17 @@ def detect_amd_gfx_version(gpu_name):
             'name': 'RDNA 3 (RX 7000 系列)'
         },
         
-        # RDNA 2 架构 (RX 6000 系列)
-        'gfx103X-dgpu': {
-            'keywords': ['RX 6', '6900', '6800', '6700', '6600', '6500', '6400'],
-            'name': 'RDNA 2 (RX 6000 系列)'
-        },
+        # RDNA 2 架构 (RX 6000 系列) - 不支持，使用CPU
+        # 'gfx103X-dgpu': {
+        #     'keywords': ['RX 6', '6900', '6800', '6700', '6600', '6500', '6400'],
+        #     'name': 'RDNA 2 (RX 6000 系列) - 不支持，请使用CPU版本'
+        # },
         
-        # RDNA 1 架构 (RX 5000 系列)
-        'gfx101X-dgpu': {
-            'keywords': ['RX 5', '5700', '5600', '5500'],
-            'name': 'RDNA 1 (RX 5000 系列)'
-        },
+        # RDNA 1 架构 (RX 5000 系列) - 不支持，使用CPU
+        # 'gfx101X-dgpu': {
+        #     'keywords': ['RX 5', '5700', '5600', '5500'],
+        #     'name': 'RDNA 1 (RX 5000 系列) - 不支持，请使用CPU版本'
+        # },
         
         # Vega 架构
         'gfx90X-dcgpu': {

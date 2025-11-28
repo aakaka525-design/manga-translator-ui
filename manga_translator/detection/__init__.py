@@ -66,7 +66,7 @@ async def dispatch(detector_key: Detector, image: np.ndarray, detect_size: int, 
         # YOLO OBB检测（使用yolo_obb_conf作为text_threshold）
         yolo_textlines, _, _ = await yolo_detector.detect(
             image, detect_size, yolo_obb_conf, box_threshold, unclip_ratio,
-            invert, gamma_correct, rotate, auto_rotate, verbose
+            invert, gamma_correct, rotate, auto_rotate, verbose, min_box_area_ratio
         )
         
         # 智能合并：YOLO框可以替换过小的主检测器框，或添加新框

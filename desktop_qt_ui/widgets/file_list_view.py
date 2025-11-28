@@ -185,13 +185,18 @@ class FileItemWidget(QWidget):
         """在主线程中接收缩略图加载完成的信号"""
         self._thumbnail_loading = False
         
-        if pixmap:
-            self.thumbnail_label.setPixmap(pixmap)
-            # 缓存缩略图（只缓存一次）
-            if file_path not in FileItemWidget._thumbnail_cache:
-                FileItemWidget._thumbnail_cache[file_path] = pixmap
-        else:
-            self.thumbnail_label.setText("ERR")
+        # 检查 widget 是否还存在
+        try:
+            if pixmap:
+                self.thumbnail_label.setPixmap(pixmap)
+                # 缓存缩略图（只缓存一次）
+                if file_path not in FileItemWidget._thumbnail_cache:
+                    FileItemWidget._thumbnail_cache[file_path] = pixmap
+            else:
+                self.thumbnail_label.setText("ERR")
+        except RuntimeError:
+            # Widget 已被删除，忽略
+            pass
 
     def _emit_remove_request(self):
         self.remove_requested.emit(self.file_path)
