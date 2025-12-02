@@ -117,6 +117,15 @@ class DeleteRegionCommand(Command):
         """执行删除操作"""
         if 0 <= self._index < len(self._model._regions):
             self._model._regions.pop(self._index)
+            
+            # 【关键修复】同时更新resource_manager中的regions
+            # 由于ResourceManager使用字典存储，需要重新同步整个列表
+            from services import get_resource_manager
+            resource_manager = get_resource_manager()
+            resource_manager.clear_regions()
+            for region_data in self._model._regions:
+                resource_manager.add_region(region_data)
+            
             # 删除操作会改变后续区域的索引,必须触发完全更新
             # 通过直接调用 regions_changed 信号(而不是 region_style_updated)来确保完全更新
             self._model.regions_changed.emit(self._model._regions)
@@ -127,6 +136,15 @@ class DeleteRegionCommand(Command):
         """撤销删除操作:在原位置插入回区域"""
         if 0 <= self._index <= len(self._model._regions):
             self._model._regions.insert(self._index, copy.deepcopy(self._deleted_data))
+            
+            # 【关键修复】同时更新resource_manager中的regions
+            # 由于ResourceManager使用字典存储，需要重新同步整个列表
+            from services import get_resource_manager
+            resource_manager = get_resource_manager()
+            resource_manager.clear_regions()
+            for region_data in self._model._regions:
+                resource_manager.add_region(region_data)
+            
             # 插入操作会改变后续区域的索引,必须触发完全更新
             self._model.regions_changed.emit(self._model._regions)
             # 恢复选择到被恢复的区域

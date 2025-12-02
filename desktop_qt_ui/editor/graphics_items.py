@@ -82,7 +82,9 @@ class RegionTextItem(QGraphicsItemGroup):
         # 设置 text_item 的 Z-order 为负数,让它在父 item 的绘制内容(绿框、白框)之下
         self.text_item.setZValue(-1)
 
-        self.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable | QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
+        # 保留 ItemIsSelectable 以支持 setSelected()，但在 mousePressEvent 中手动控制选择
+        # ItemIsMovable 会在需要时动态设置
+        self.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
         self.setAcceptHoverEvents(True)
         self._interaction_mode = 'none'
         self._is_dragging = False  # 拖动状态标志
@@ -529,7 +531,60 @@ class RegionTextItem(QGraphicsItemGroup):
         local_pos = event.pos()
 
         if event.button() == Qt.MouseButton.LeftButton:
-            if self.isSelected():
+            # 获取 view 和 model
+            view = self.scene().views()[0] if self.scene() and self.scene().views() else None
+            if not view or not hasattr(view, 'model'):
+                # 没有 view/model，使用默认行为
+                super().mousePressEvent(event)
+                return
+            
+            # 检查 Ctrl 键
+            ctrl_pressed = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+            current_selection = view.model.get_selection()
+            is_selected = self.region_index in current_selection
+            
+            # === 处理选择逻辑 ===
+            # 临时禁用 Qt 的自动选择，避免与我们的手动选择冲突
+            was_selectable = bool(self.flags() & QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+            if was_selectable:
+                self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+            
+            if ctrl_pressed:
+                # Ctrl+点击：切换选择
+                if is_selected:
+                    # 取消选择
+                    new_selection = [idx for idx in current_selection if idx != self.region_index]
+                else:
+                    # 添加到选择
+                    new_selection = current_selection + [self.region_index]
+                view.model.set_selection(new_selection)
+                
+                # 恢复 selectable 标志
+                if was_selectable:
+                    self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+                
+                event.accept()
+                return  # Ctrl+点击只处理选择，不进入拖动模式
+            else:
+                # 普通点击（无 Ctrl）
+                if not is_selected:
+                    # 点击未选中的：单选
+                    view.model.set_selection([self.region_index])
+                    
+                    # 恢复 selectable 标志
+                    if was_selectable:
+                        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+                    
+                    event.accept()
+                    return
+                # 点击已选中的：继续处理拖动/编辑（不改变选择）
+                # 恢复 selectable 标志
+                if was_selectable:
+                    self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+            
+            # === 处理拖动/编辑逻辑（仅当已选中时） ===
+            if is_selected:
+                
                 self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
 
                 # --- CRITICAL: Snapshot all initial state for the drag operation ---
@@ -573,23 +628,15 @@ class RegionTextItem(QGraphicsItemGroup):
                     # 点击多边形时进入移动模式
                     self._interaction_mode = 'move'
                     self._is_dragging = True
-
+                
+                # 处理拖动，但禁用 Qt 的选择行为避免干扰
+                self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
                 super().mousePressEvent(event)
+                self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
                 event.accept()
                 return
-            else:
-                # 未选中状态：直接通过 model 设置选中（避免依赖 GraphicsView 的空间索引）
-                # 获取 view 和 model
-                if self.scene() and self.scene().views():
-                    view = self.scene().views()[0]
-                    if hasattr(view, 'model'):
-                        view.model.set_selection([self.region_index])
-                        event.accept()  # Accept 事件，阻止传播到 GraphicsView
-                        return
-                # 如果无法获取 model，fallback 到原来的行为
-                super().mousePressEvent(event)
-                event.ignore()
-                return
+        
+        # 其他按钮的默认行为
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QGraphicsSceneMouseEvent):

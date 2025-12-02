@@ -65,6 +65,9 @@ class EditorController(QObject):
         # 缓存键常量
         self.CACHE_LAST_INPAINTED = "last_inpainted_image"
         self.CACHE_LAST_MASK = "last_processed_mask"
+        
+        # 用户透明度调整标志
+        self._user_adjusted_alpha = False
 
         # Connect internal signals for thread-safe updates
         self._update_refined_mask.connect(self.model.set_refined_mask)
@@ -383,9 +386,11 @@ class EditorController(QObject):
                 self.logger.info(f"Detected translated image, loading as viewer only: {image_path}")
                 self.model.set_source_image_path(image_path)
 
-                # 先设置透明度，再设置图片
-                # 翻译后的图片本身就是最终结果，所以原图alpha应该是1.0（完全显示）
-                self.model.set_original_image_alpha(1.0)  # 完全不透明，显示翻译后的图片
+                # 只在首次加载或用户未手动调整时设置透明度
+                # 如果用户已经调整过透明度，保持当前值
+                if not hasattr(self, '_user_adjusted_alpha') or not self._user_adjusted_alpha:
+                    # 翻译后的图片本身就是最终结果，所以原图alpha应该是1.0（完全显示）
+                    self.model.set_original_image_alpha(1.0)  # 完全不透明，显示翻译后的图片
 
                 # 同步Model状态（View仍然监听Model的信号）
                 self.model.set_image(image)
@@ -410,9 +415,11 @@ class EditorController(QObject):
             # Update model with the data from the service
             self.model.set_source_image_path(image_path) # Save the path
 
-            # 先设置透明度，再设置图片（因为set_image会触发on_image_changed，需要正确的透明度值）
-            # 原图alpha = 0.0 -> 原图完全透明（不可见）-> 显示inpainted
-            self.model.set_original_image_alpha(0.0) # 完全透明，显示inpainted图片
+            # 只在首次加载或用户未手动调整时设置透明度
+            # 如果用户已经调整过透明度，保持当前值
+            if not hasattr(self, '_user_adjusted_alpha') or not self._user_adjusted_alpha:
+                # 原图alpha = 0.0 -> 原图完全透明（不可见）-> 显示inpainted
+                self.model.set_original_image_alpha(0.0) # 完全透明，显示inpainted图片
 
             # 同步Model状态（View仍然监听Model的信号）
             self.model.set_image(image)
@@ -1716,6 +1723,8 @@ class EditorController(QObject):
         # slider = 100 -> alpha = 1.0（完全不透明，显示原图）
         alpha_float = alpha / 100.0
         self.model.set_original_image_alpha(alpha_float)
+        # 标记用户已手动调整透明度
+        self._user_adjusted_alpha = True
 
     @pyqtSlot(int)
     def set_preview_alpha(self, alpha: int):

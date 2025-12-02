@@ -107,6 +107,9 @@ class MainWindow(QMainWindow):
         self.main_view = MainView(self.app_logic, self)
         self.editor_view = EditorView(self.app_logic, self.editor_model, self.editor_controller, self.editor_logic, self)
 
+        # 设置 app_logic 对 main_view 的引用，用于更新进度条
+        self.app_logic.main_view = self.main_view
+
         self.stacked_widget.addWidget(self.main_view)
         self.stacked_widget.addWidget(self.editor_view)
 

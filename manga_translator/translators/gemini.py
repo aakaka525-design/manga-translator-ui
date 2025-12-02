@@ -106,36 +106,21 @@ class GeminiTranslator(CommonTranslator):
                 client_options=client_options
             )
             
-            # Apply different configs for different API types
-            # 判断是否为官方 API：未设置 base_url 或 base_url 是官方地址
-            is_official_api = not self.base_url or self.base_url == 'https://generativelanguage.googleapis.com' or self.base_url.startswith('https://generativelanguage.googleapis.com')
-
-            if is_official_api:
-                # Official Google API - full config
-                generation_config = {
-                    "temperature": self.temperature,
-                    "top_p": 0.95,
-                    "top_k": 64,
-                    "max_output_tokens": self.max_tokens,
-                    "response_mime_type": "text/plain",
-                }
-                model_args = {
-                    "model_name": self.model_name,
-                    "generation_config": generation_config,
-                    "safety_settings": self.safety_settings
-                }
-                self.logger.info(f"使用官方Google API，应用完整配置（包含安全设置）。Base URL: {self.base_url or '默认'}")
-            else:
-                # Third-party API - minimal config to avoid format issues
-                generation_config = {
-                    "temperature": self.temperature,
-                    "max_output_tokens": self.max_tokens,
-                }
-                model_args = {
-                    "model_name": self.model_name,
-                    "generation_config": generation_config,
-                }
-                self.logger.info(f"检测到第三方API，使用简化配置（不发送安全设置）。Base URL: {self.base_url}")
+            # 统一配置（不在客户端初始化时包含安全设置）
+            # 安全设置将在每次请求时动态添加，如果报错则自动回退
+            generation_config = {
+                "temperature": self.temperature,
+                "top_p": 0.95,
+                "top_k": 64,
+                "max_output_tokens": self.max_tokens,
+                "response_mime_type": "text/plain",
+            }
+            model_args = {
+                "model_name": self.model_name,
+                "generation_config": generation_config,
+            }
+            self.logger.info(f"Gemini客户端初始化完成。Base URL: {self.base_url or '默认'}")
+            self.logger.info(f"安全设置策略：默认发送 BLOCK_NONE，如遇错误自动回退")
 
             self.client = genai.GenerativeModel(**model_args)
     
@@ -268,15 +253,14 @@ This is an incorrect response because it includes extra text and explanations.
         is_infinite = max_retries == -1
         local_attempt = 0  # 本次批次的尝试次数
 
-        # Dynamically construct arguments for generate_content
+        # 动态构建请求参数 - 默认总是发送安全设置
         request_args = {
-            "contents": combined_prompt
+            "contents": combined_prompt,
+            "safety_settings": self.safety_settings
         }
-        is_third_party_api = self.base_url and self.base_url != 'https://generativelanguage.googleapis.com'
-        if is_third_party_api:
-            self.logger.warning("Omitting safety settings for third-party API request.")
-        else:
-            request_args["safety_settings"] = self.safety_settings
+        
+        # 标记是否需要回退（不发送安全设置）
+        should_retry_without_safety = False
 
         def generate_content_with_logging(**kwargs):
             return self.client.generate_content(**kwargs)
@@ -309,6 +293,11 @@ This is an incorrect response because it includes extra text and explanations.
                         sleep_time = delay - elapsed
                         self.logger.info(f'Ratelimit sleep: {sleep_time:.2f}s')
                         await asyncio.sleep(sleep_time)
+                
+                # 如果需要回退，移除安全设置
+                if should_retry_without_safety and "safety_settings" in request_args:
+                    self.logger.warning("回退模式：移除安全设置参数")
+                    request_args = {k: v for k, v in request_args.items() if k != "safety_settings"}
                 
                 response = await asyncio.to_thread(
                     generate_content_with_logging,
@@ -422,12 +411,27 @@ This is an incorrect response because it includes extra text and explanations.
                 return translations[:len(texts)]
 
             except Exception as e:
+                error_message = str(e)
+                
+                # 检查是否是安全设置相关的错误
+                is_safety_error = any(keyword in error_message.lower() for keyword in [
+                    'safety_settings', 'safetysettings', 'harm', 'block', 'safety'
+                ]) or "400" in error_message
+                
+                # 如果是安全设置错误且还没有尝试回退，则标记回退
+                if is_safety_error and not should_retry_without_safety:
+                    self.logger.warning(f"检测到安全设置相关错误，将在下次重试时移除安全设置参数: {error_message}")
+                    should_retry_without_safety = True
+                    # 不增加attempt计数，直接重试
+                    await asyncio.sleep(1)
+                    continue
+                
                 attempt += 1
                 log_attempt = f"{attempt}/{max_retries}" if not is_infinite else f"Attempt {attempt}"
                 self.logger.warning(f"Gemini翻译出错 ({log_attempt}): {e}")
 
-                if "finish_reason: 2" in str(e) or "finish_reason is 2" in str(e):
-                    self.logger.warning("检测到Gemini安全设置拦截。正在重试...")
+                if "finish_reason: 2" in error_message or "finish_reason is 2" in error_message:
+                    self.logger.warning("检测到Gemini安全策略拦截。正在重试...")
                 
                 # 检查是否达到最大重试次数（注意：attempt已经+1了）
                 if not is_infinite and attempt >= max_retries:

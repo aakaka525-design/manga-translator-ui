@@ -112,10 +112,10 @@ websockets==14.2
 # xformers - AMD ROCm 支持有限,暂不包含
 google-generativeai==0.8.5
 # pydensecrf - 预编译 wheel 文件 (Python 3.12 Windows)
-# 国内用户推荐使用镜像站,下载速度更快
-pydensecrf @ https://gh-proxy.com/https://github.com/hgmzhn/manga-translator-ui/releases/download/v1.7.6/pydensecrf-1.0-cp312-cp312-win_amd64.whl
-# 如果镜像站失效,可使用官方源:
-# pydensecrf @ https://github.com/hgmzhn/manga-translator-ui/releases/download/v1.7.6/pydensecrf-1.0-cp312-cp312-win_amd64.whl
+# 使用官方 GitHub 源
+pydensecrf @ https://github.com/hgmzhn/manga-translator-ui/releases/download/v1.7.6/pydensecrf-1.0-cp312-cp312-win_amd64.whl
+# 如果下载失败,可尝试镜像站:
+# pydensecrf @ https://gh-proxy.com/https://github.com/hgmzhn/manga-translator-ui/releases/download/v1.7.6/pydensecrf-1.0-cp312-cp312-win_amd64.whl
 # 或从源码安装(需要 C++ 编译工具):
 # pydensecrf @ git+https://github.com/lucasb-eyer/pydensecrf.git
 deepl==1.22.0

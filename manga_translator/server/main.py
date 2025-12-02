@@ -836,7 +836,7 @@ async def setup_admin_password(password: str = Form(...)):
     
     # 保存密码到 admin_settings
     admin_settings['admin_password'] = password
-    save_admin_settings()
+    save_admin_settings(admin_settings)  # 修复：传入 admin_settings 参数
     
     # 同时保存到 server_config（运行时使用）
     server_config['admin_password'] = password
@@ -987,7 +987,7 @@ async def update_server_config(config: dict, token: str = Header(alias="X-Admin-
         # 保存到 admin_config.json（持久化）
         try:
             admin_settings['max_concurrent_tasks'] = new_value
-            save_admin_settings()
+            save_admin_settings(admin_settings)
             logger.info(f"并发数已保存到配置文件: {new_value}")
         except Exception as e:
             logger.error(f"保存并发数到配置文件失败: {e}")
@@ -1010,7 +1010,7 @@ async def get_announcement():
 async def update_announcement(announcement: dict, token: str = Header(alias="X-Admin-Token")):
     """更新公告（管理员）"""
     admin_settings['announcement'] = announcement
-    save_admin_settings()
+    save_admin_settings(admin_settings)
     logger.info(f"公告已更新: enabled={announcement.get('enabled')}, type={announcement.get('type')}")
     return {"success": True}
 

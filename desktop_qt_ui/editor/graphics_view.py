@@ -7,6 +7,7 @@ from manga_translator.utils import TextBlock
 from PIL.ImageQt import ImageQt
 from PyQt6.QtCore import QPointF, Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import (
+    QBrush,
     QColor,
     QCursor,
     QImage,
@@ -17,6 +18,7 @@ from PyQt6.QtGui import (
     QPolygonF,
     QTransform,
 )
+from PyQt6.QtCore import QRectF
 from PyQt6.QtWidgets import QGraphicsItem, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QMenu
 
 # --- 新增Imports for Refactoring ---
@@ -73,6 +75,11 @@ class GraphicsView(QGraphicsView):
         self._drag_start_pos = None  # 拖动起始位置
         self._drag_threshold = 5  # 拖动阈值（像素）
 
+        # --- 框选状态 ---
+        self._is_box_selecting = False  # 是否正在框选
+        self._box_select_start_pos = None  # 框选起始位置
+        self._box_select_rect_item = None  # 框选矩形显示
+
         # --- Text Box Drawing State ---
         self._is_drawing_textbox = False
         self._textbox_start_pos = None
@@ -104,8 +111,9 @@ class GraphicsView(QGraphicsView):
 
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # 启用滚动条
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
         self.scene.setBackgroundBrush(Qt.GlobalColor.darkGray)
 
@@ -238,7 +246,7 @@ class GraphicsView(QGraphicsView):
         # 设置原图透明度（从模型获取）
         alpha = self.model.get_original_image_alpha()
         self._image_item.setOpacity(alpha)
-        self.scene.setSceneRect(self._image_item.boundingRect())
+        # 不设置场景矩形，让它自动管理
         self.fitInView(self._image_item, Qt.AspectRatioMode.KeepAspectRatio)
 
         # 竞态条件修复：图片加载后，强制触发一次区域重绘和渲染数据计算
@@ -935,9 +943,8 @@ class GraphicsView(QGraphicsView):
 
 
     def resizeEvent(self, event):
-        """处理视图大小改变事件，保持图片适应视图。"""
-        if self._image_item:
-            self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        """处理视图大小改变事件"""
+        # 不自动适应视图，保持用户的缩放级别
         super().resizeEvent(event)
 
     def wheelEvent(self, event):
@@ -1014,61 +1021,61 @@ class GraphicsView(QGraphicsView):
         elif event.button() == Qt.MouseButton.LeftButton:
             # 检查是否点击在空白区域
             item_at_pos = self.itemAt(event.pos())
+            
+            # 检查是否点击在 RegionTextItem 上（包括其子元素）
+            clicked_region_item = False
+            if item_at_pos:
+                # 向上查找父元素，看是否是 RegionTextItem
+                check_item = item_at_pos
+                while check_item:
+                    if isinstance(check_item, RegionTextItem):
+                        clicked_region_item = True
+                        break
+                    check_item = check_item.parentItem()
 
-            # 如果点击在空白区域（没有 item 或只有图片），记录为潜在拖动
+            # 如果点击在空白区域（没有 item 或只有图片），开始框选
             if item_at_pos is None or item_at_pos == self._image_item:
-                self._potential_drag = True
-                self._drag_start_pos = event.pos()
+                self._is_box_selecting = True
+                self._box_select_start_pos = self.mapToScene(event.pos())
+                
+                # 创建框选矩形
+                if self._box_select_rect_item is None:
+                    pen = QPen(QColor(0, 120, 215, 180))  # 蓝色半透明
+                    pen.setWidth(2)
+                    pen.setStyle(Qt.PenStyle.DashLine)
+                    brush = QBrush(QColor(0, 120, 215, 30))  # 浅蓝色填充
+                    self._box_select_rect_item = self.scene.addRect(0, 0, 0, 0, pen, brush)
+                    self._box_select_rect_item.setZValue(300)  # 在最上层
+                
+                self._box_select_rect_item.setVisible(True)
                 event.accept()
                 return
 
-            # 先记录当前选择
-            old_selection = self.model.get_selection().copy()
-
-            super().mousePressEvent(event)
-
-            # 如果点击后选择没变化且事件未被accept，说明点击了空白
-            new_selection = self.model.get_selection()
-            if self._active_tool == 'select' and old_selection == new_selection and len(old_selection) > 0:
-                # 如果有 item 处理了事件，event 会被 accept
-                # 只有真正点击空白时，event 才不会被 accept
+            # 如果点击在 RegionTextItem 上，让 item 处理事件
+            if clicked_region_item:
+                super().mousePressEvent(event)
+                # 不要在这里清除选择，让 RegionTextItem 自己处理
+            else:
+                super().mousePressEvent(event)
+                
+                # 如果点击空白且不是 Ctrl，清除选择
                 if not event.isAccepted():
-                    self.model.set_selection([])
+                    ctrl_pressed = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+                    if not ctrl_pressed:
+                        self.model.set_selection([])
         else:
             super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
         """Handle mouse move for drawing."""
-        # 检查是否应该开始拖动
-        if self._potential_drag and self._drag_start_pos:
-            # 计算移动距离
-            delta = event.pos() - self._drag_start_pos
-            distance = (delta.x() ** 2 + delta.y() ** 2) ** 0.5
-            
-            if distance > self._drag_threshold:
-                # 超过阈值，开始拖动
-                self._potential_drag = False
-                self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
-                # 创建一个从起始位置开始的鼠标事件
-                from PyQt6.QtGui import QMouseEvent
-                from PyQt6.QtCore import QEvent
-                # QPointF已在文件顶部导入，无需重复导入
-                press_event = QMouseEvent(
-                    QEvent.Type.MouseButtonPress,
-                    QPointF(self._drag_start_pos),
-                    QPointF(self.mapToGlobal(self._drag_start_pos)),
-                    Qt.MouseButton.LeftButton,
-                    Qt.MouseButton.LeftButton,
-                    Qt.KeyboardModifier.NoModifier
-                )
-                super().mousePressEvent(press_event)
-                # 然后发送移动事件
-                super().mouseMoveEvent(event)
-                return
-            else:
-                # 还没超过阈值，不做任何事
-                event.accept()
-                return
+        # 处理框选
+        if self._is_box_selecting and self._box_select_start_pos:
+            current_pos = self.mapToScene(event.pos())
+            # 更新框选矩形
+            rect = QRectF(self._box_select_start_pos, current_pos).normalized()
+            self._box_select_rect_item.setRect(rect)
+            event.accept()
+            return
         
         if self._is_drawing_textbox:
             self._update_textbox_drawing(event.pos())
@@ -1105,13 +1112,35 @@ class GraphicsView(QGraphicsView):
 
     def mouseReleaseEvent(self, event):
         """处理鼠标释放事件"""
-        # 清除潜在拖动状态
-        if self._potential_drag and event.button() == Qt.MouseButton.LeftButton:
-            self._potential_drag = False
-            self._drag_start_pos = None
-            # 如果是单击空白处（没有拖动），清除选择
-            if self._active_tool == 'select':
-                self.model.set_selection([])
+        # 处理框选完成
+        if self._is_box_selecting and event.button() == Qt.MouseButton.LeftButton:
+            self._is_box_selecting = False
+            
+            # 隐藏框选矩形
+            if self._box_select_rect_item:
+                select_rect = self._box_select_rect_item.rect()
+                self._box_select_rect_item.setVisible(False)
+                
+                # 查找框内的所有 RegionTextItem
+                selected_indices = []
+                for i, item in enumerate(self._region_items):
+                    if isinstance(item, RegionTextItem):
+                        # 检查 item 的边界是否与选择框相交
+                        item_rect = item.sceneBoundingRect()
+                        if select_rect.intersects(item_rect):
+                            selected_indices.append(i)
+                
+                # 更新选择
+                ctrl_pressed = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+                if ctrl_pressed:
+                    # Ctrl+框选：添加到现有选择
+                    current_selection = self.model.get_selection()
+                    new_selection = list(set(current_selection + selected_indices))
+                    self.model.set_selection(new_selection)
+                else:
+                    # 普通框选：替换选择
+                    self.model.set_selection(selected_indices)
+            
             event.accept()
             return
         
@@ -1306,16 +1335,21 @@ class GraphicsView(QGraphicsView):
 
     def _on_selection_changed(self, selected_indices: list):
         """同步model的selection到Qt item的selected状态"""
-
         # 先清除所有item的selection
         for item in self._region_items:
             if item.isSelected():
                 item.setSelected(False)
+                item.update()  # 强制重绘
 
         # 设置新选中的items
         for idx in selected_indices:
             if 0 <= idx < len(self._region_items):
                 self._region_items[idx].setSelected(True)
+                self._region_items[idx].update()  # 强制重绘
+        
+        # 强制场景更新
+        self.scene.update()
+        self.viewport().update()
 
     def _update_cursor(self):
         """Updates the cursor to match the selected tool and brush size."""

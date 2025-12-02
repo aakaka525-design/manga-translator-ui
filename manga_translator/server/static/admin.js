@@ -1063,22 +1063,38 @@ window.addEventListener('DOMContentLoaded', async () => {
         const setupRes = await fetch('/admin/need-setup');
         const setupData = await setupRes.json();
         
+        console.log('Setup check result:', setupData);  // 调试日志
+        
         if (setupData.need_setup) {
             // 显示首次设置界面
+            console.log('Showing setup screen');  // 调试日志
             document.getElementById('setup-screen').style.display = 'flex';
             document.getElementById('login-screen').style.display = 'none';
+            document.getElementById('admin-panel').style.display = 'none';
             return;
         }
     } catch (e) {
         console.error('Failed to check setup status:', e);
+        // 如果检查失败，默认显示登录界面
+        document.getElementById('login-screen').style.display = 'flex';
+        document.getElementById('setup-screen').style.display = 'none';
+        document.getElementById('admin-panel').style.display = 'none';
+        return;
     }
     
+    // 如果不需要设置，检查是否有保存的 token
     const savedToken = localStorage.getItem('adminToken');
     if (savedToken) {
         adminToken = savedToken;
         document.getElementById('login-screen').style.display = 'none';
+        document.getElementById('setup-screen').style.display = 'none';
         document.getElementById('admin-panel').style.display = 'block';
         loadAdminData();
+    } else {
+        // 显示登录界面
+        document.getElementById('login-screen').style.display = 'flex';
+        document.getElementById('setup-screen').style.display = 'none';
+        document.getElementById('admin-panel').style.display = 'none';
     }
 });
 

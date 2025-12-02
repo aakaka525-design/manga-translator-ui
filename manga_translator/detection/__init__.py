@@ -141,6 +141,7 @@ def merge_detection_boxes(yolo_boxes: List[Quadrilateral], main_boxes: List[Quad
         can_replace = False
         max_overlap_ratio_with_others = 0.0  # 与其他未替换主框的最大重叠率
         replaced_main_indices = set()  # 被这个YOLO框替换的主框索引
+        contained_main_boxes_total_area = 0.0  # 被完全包含的主框总面积
         
         for main_idx, main_box in enumerate(main_boxes):
             # 计算主检测器框的AABB和面积
@@ -167,30 +168,38 @@ def merge_detection_boxes(yolo_boxes: List[Quadrilateral], main_boxes: List[Quad
                 contains = (yolo_min_x <= main_min_x and yolo_max_x >= main_max_x and
                            yolo_min_y <= main_min_y and yolo_max_y >= main_max_y)
                 
-                # 检查面积条件
-                area_ratio = yolo_area / main_area if main_area > 0 else 0
-                
-                if contains and area_ratio >= 2.0:
-                    # 满足替换条件：标记主检测器框为待删除，记录索引
+                if contains:
+                    # YOLO框完全包含这个主检测器框
                     replaced_main_indices.add(main_idx)
-                    can_replace = True
+                    contained_main_boxes_total_area += main_area
                 else:
-                    # 不满足替换条件，记录与其他主框的重叠率
+                    # 不完全包含，记录与其他主框的重叠率
                     max_overlap_ratio_with_others = max(max_overlap_ratio_with_others, overlap_ratio)
         
+        # 检查面积条件：YOLO框面积 >= 所有被包含的主框总面积 × 2
+        if len(replaced_main_indices) > 0:
+            area_ratio = yolo_area / contained_main_boxes_total_area if contained_main_boxes_total_area > 0 else 0
+            if area_ratio >= 2.0:
+                can_replace = True
+        
         # 决定这个YOLO框的命运
-        if can_replace:
-            # 满足了替换条件，但还需要检查与其他未替换主框的重叠率
-            if max_overlap_ratio_with_others >= overlap_threshold:
-                # 与其他主框重叠率过高，删除这个YOLO框，不进行替换
-                yolo_boxes_to_remove.add(yolo_idx)
+        if len(replaced_main_indices) > 0:
+            # YOLO框包含了至少一个主检测器框
+            if can_replace:
+                # 满足了替换条件（面积 >= 2倍），但还需要检查与其他未包含主框的重叠率
+                if max_overlap_ratio_with_others >= overlap_threshold:
+                    # 与其他主框重叠率过高，删除这个YOLO框，不进行替换
+                    yolo_boxes_to_remove.add(yolo_idx)
+                else:
+                    # 可以安全替换：删除被替换的主框，添加YOLO框
+                    for main_idx in replaced_main_indices:
+                        main_boxes_to_remove.add(main_idx)
+                    yolo_boxes_to_add_set.add(yolo_idx)
             else:
-                # 可以安全替换：删除被替换的主框，添加YOLO框
-                for main_idx in replaced_main_indices:
-                    main_boxes_to_remove.add(main_idx)
-                yolo_boxes_to_add_set.add(yolo_idx)
+                # 包含了主框但面积条件不满足（< 2倍），说明YOLO框可能检测错了，删除
+                yolo_boxes_to_remove.add(yolo_idx)
         else:
-            # 不满足替换条件，按原有逻辑处理
+            # YOLO框没有完全包含任何主检测器框，按原有逻辑处理
             if max_overlap_ratio_with_others >= overlap_threshold:
                 # 有重叠且重叠率 >= 阈值，删除这个YOLO框
                 yolo_boxes_to_remove.add(yolo_idx)

@@ -137,6 +137,44 @@ async function init() {
 
 async function checkUserAccess() {
     try {
+        // 首先检查管理员是否已设置密码
+        const setupRes = await fetch('/admin/need-setup');
+        const setupData = await setupRes.json();
+        
+        if (setupData.need_setup) {
+            // 管理员还没设置密码，提示用户先设置
+            const setupPrompt = document.createElement('div');
+            setupPrompt.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0, 0, 0, 0.8);
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                z-index: 10000;
+            `;
+            setupPrompt.innerHTML = `
+                <div style="background: white; padding: 40px; border-radius: 8px; max-width: 500px; text-align: center;">
+                    <h2 style="color: #2196F3; margin-bottom: 20px;">⚠️ 首次使用提示</h2>
+                    <p style="font-size: 16px; color: #333; margin-bottom: 30px;">
+                        检测到管理员密码尚未设置。<br>
+                        为了系统安全，请先设置管理员密码。
+                    </p>
+                    <button onclick="window.location.href='/admin'" 
+                            style="background: #2196F3; color: white; border: none; padding: 12px 30px; 
+                                   font-size: 16px; border-radius: 4px; cursor: pointer;">
+                        前往设置管理员密码
+                    </button>
+                </div>
+            `;
+            document.body.appendChild(setupPrompt);
+            throw new Error('Admin password not set');
+        }
+        
+        // 管理员密码已设置，检查用户端访问权限
         const res = await fetch('/user/access');
         const data = await res.json();
         
@@ -154,6 +192,10 @@ async function checkUserAccess() {
         }
     } catch (e) {
         console.error('Failed to check user access:', e);
+        // 如果是管理员密码未设置的错误，不继续执行
+        if (e.message === 'Admin password not set') {
+            throw e;
+        }
     }
 }
 

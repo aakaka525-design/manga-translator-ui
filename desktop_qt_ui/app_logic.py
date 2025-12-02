@@ -516,7 +516,7 @@ class MainAppLogic(QObject):
                     "OPENAI_API_KEY": self._t("label_OPENAI_API_KEY"),
                     "OPENAI_MODEL": self._t("label_OPENAI_MODEL"),
                     "OPENAI_API_BASE": self._t("label_OPENAI_API_BASE"),
-                    "OPENAI_HTTP_PROXY": self._t("label_OPENAI_HTTP_PROXY"),
+                    # "OPENAI_HTTP_PROXY": self._t("label_OPENAI_HTTP_PROXY"),  # 已废弃，不在UI中显示
                     "OPENAI_GLOSSARY_PATH": self._t("label_OPENAI_GLOSSARY_PATH"),
                     "DEEPSEEK_API_KEY": self._t("label_DEEPSEEK_API_KEY"),
                     "DEEPSEEK_API_BASE": self._t("label_DEEPSEEK_API_BASE"),
@@ -1241,6 +1241,19 @@ class MainAppLogic(QObject):
         try:
             self.state_manager.set_translating(False)
             self.state_manager.set_status_message(f"任务完成，成功处理 {self.saved_files_count} 个文件。")
+            
+            # 重置主视图的进度条
+            if hasattr(self, 'main_view') and self.main_view:
+                self.main_view.reset_progress()
+            
+            # 播放系统提示音
+            try:
+                from PyQt6.QtWidgets import QApplication
+                QApplication.beep()
+                self.logger.info("播放系统提示音")
+            except Exception as sound_error:
+                self.logger.warning(f"播放提示音失败: {sound_error}")
+            
             self.task_completed.emit(saved_files)
         except Exception as e:
             self.logger.error(f"完成任务状态更新或信号发射时发生致命错误: {e}", exc_info=True)
@@ -1265,6 +1278,10 @@ class MainAppLogic(QObject):
         self.state_manager.set_translating(False)
         self.state_manager.set_status_message(f"任务失败: {error_message}")
         
+        # 重置主视图的进度条
+        if hasattr(self, 'main_view') and self.main_view:
+            self.main_view.reset_progress()
+        
         # 清理线程
         if self.thread and self.thread.isRunning():
             self.logger.warning("错误发生但线程仍在运行，请求退出...")
@@ -1281,6 +1298,10 @@ class MainAppLogic(QObject):
         percentage = (current / total) * 100 if total > 0 else 0
         self.state_manager.set_translation_progress(percentage)
         self.state_manager.set_status_message(f"[{current}/{total}] {message}")
+        
+        # 更新主视图的进度条
+        if hasattr(self, 'main_view') and self.main_view:
+            self.main_view.update_progress(current, total, message)
 
     def stop_task(self) -> bool:
         """停止翻译任务（优雅停止，不使用 terminate）"""
@@ -1529,10 +1550,7 @@ class TranslationWorker(QObject):
             friendly_msg += "💡 解决方案：\n"
             friendly_msg += "   1. 检查网络连接\n"
             friendly_msg += "      - 确认电脑可以正常访问互联网\n\n"
-            friendly_msg += "   2. 配置代理（如果需要）\n"
-            friendly_msg += "      - 位置：翻译设置 → 环境变量 → OPENAI_HTTP_PROXY\n"
-            friendly_msg += "      - 格式：http://127.0.0.1:7890 或 socks5://127.0.0.1:7890\n\n"
-            friendly_msg += "   3. 检查API地址是否正确\n"
+            friendly_msg += "   2. 检查API地址是否正确\n"
             friendly_msg += "      - 位置：翻译设置 → 环境变量 → API_BASE\n"
             friendly_msg += "      - 默认值：https://api.openai.com/v1\n\n"
         
@@ -1560,9 +1578,7 @@ class TranslationWorker(QObject):
             friendly_msg += "      - 确认API密钥有访问该服务的权限\n\n"
             friendly_msg += "   2. 检查账户状态\n"
             friendly_msg += "      - 确认账户未被封禁或限制\n\n"
-            friendly_msg += "   3. 配置代理\n"
-            friendly_msg += "      - 某些API在特定地区被限制，需要使用代理\n"
-            friendly_msg += "      - 位置：翻译设置 → 环境变量 → OPENAI_HTTP_PROXY\n\n"
+
         
         # 检查是否是404未找到错误
         elif "404" in error_message or "not found" in error_message.lower():
@@ -1718,6 +1734,10 @@ class TranslationWorker(QObject):
             translator_params = self.config_dict.get('cli', {})
             translator_params.update(self.config_dict)
             
+            # 根据 verbose 设置设置日志级别
+            verbose = translator_params.get('verbose', False)
+            if hasattr(self, 'log_service') and self.log_service:
+                self.log_service.set_console_log_level(verbose)
             
             font_filename = self.config_dict.get('render', {}).get('font_path')
             if font_filename:

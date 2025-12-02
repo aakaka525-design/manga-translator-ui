@@ -1284,8 +1284,23 @@ class MangaTranslator:
             if require_rearrange:
                 pw_num = max(int(np.floor(2 * tgt_size / w)), 2)
                 patch_size = ph = pw_num * w
-                tile_pixels = patch_size * w  # 每个切割块的像素数
-                logger.info(f'检测到极端长宽比图片 (长宽比={asp_ratio:.2f}), 使用切割块面积 ({patch_size}x{w}={tile_pixels}像素) 进行过滤')
+                
+                # 限制切割后块的最大长宽比（不超过 3:1）
+                # 注意：ph = pw_num * w，所以 ph/w = pw_num
+                max_patch_aspect_ratio = 3.0
+                original_pw_num = pw_num
+                if pw_num > max_patch_aspect_ratio:
+                    # pw_num 太大，说明切割块太高，需要减小
+                    # 但是不能直接减小 pw_num，因为这是检测器的逻辑
+                    # 我们只是用来计算面积过滤的参考值
+                    # 所以这里使用限制后的 pw_num 来计算 tile_pixels
+                    adjusted_pw_num = max_patch_aspect_ratio
+                    adjusted_ph = adjusted_pw_num * w
+                    tile_pixels = adjusted_ph * w
+                    logger.info(f'检测到极端长宽比图片 (长宽比={asp_ratio:.2f}), 限制面积过滤参考块长宽比: 原始切割块={patch_size}x{w} (长宽比={pw_num:.2f}), 过滤参考块={adjusted_ph:.0f}x{w} (长宽比={adjusted_pw_num:.2f}), 面积={tile_pixels:.0f}像素')
+                else:
+                    tile_pixels = patch_size * w
+                    logger.info(f'检测到极端长宽比图片 (长宽比={asp_ratio:.2f}), 使用切割块面积 ({patch_size}x{w}={tile_pixels}像素) 进行过滤')
             else:
                 tile_pixels = img_total_pixels  # 不切割，使用整图
             
@@ -1321,7 +1336,7 @@ class MangaTranslator:
                 # Info级别：只显示摘要
                 logger.info(f'合并后面积过滤: 参考={reference_desc}, 最小面积比例={config.detector.min_box_area_ratio:.4f} ({config.detector.min_box_area_ratio*100:.2f}%), '
                            f'过滤前={before_filter_count}, 过滤后={after_filter_count}, 移除={len(filtered_out_regions)} ({filter_ratio:.1f}%, 仅单框区域)')
-                # Debug级别：显示详细信息
+                # Verbose模式：显示详细信息
                 if self.verbose:
                     for idx, (region, ratio, num_lines, was_rearranged) in enumerate(filtered_out_regions):
                         # 获取框的宽高

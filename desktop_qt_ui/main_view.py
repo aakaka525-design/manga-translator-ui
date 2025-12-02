@@ -665,14 +665,46 @@ class MainView(QWidget):
             self.tab_frames[f"{tab_key}_left"] = left_scroll_content
             self.tab_frames[f"{tab_key}_right"] = right_scroll_content
 
+        # 日志框和进度条容器
+        log_container = QWidget()
+        log_container_layout = QVBoxLayout(log_container)
+        log_container_layout.setContentsMargins(0, 0, 0, 0)
+        log_container_layout.setSpacing(5)
+        
         # 日志框
         self.log_box = QTextEdit()
         self.log_box.setReadOnly(True)
         self.log_box.setPlaceholderText(self._t("Log output..."))
-        right_splitter.addWidget(self.log_box)
+        log_container_layout.addWidget(self.log_box)
+        
+        # 进度条（常态显示）
+        from PyQt6.QtWidgets import QProgressBar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFormat("0/0 (0%)")
+        self.progress_bar.setFixedHeight(25)
+        # 设置样式：默认灰色，翻译时蓝色
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #ccc;
+                border-radius: 3px;
+                text-align: center;
+                background-color: #f0f0f0;
+            }
+            QProgressBar::chunk {
+                background-color: #d0d0d0;
+            }
+        """)
+        log_container_layout.addWidget(self.progress_bar)
+        
+        right_splitter.addWidget(log_container)
 
         right_splitter.setStretchFactor(0, 2) # 让设置面板占据更多空间
-        right_splitter.setStretchFactor(1, 1)
+        right_splitter.setStretchFactor(1, 1) # 日志输出占据较少空间
+        right_splitter.setSizes([400, 400]) # 设置初始高度：设置面板400px，日志输出400px
 
         return right_panel
 
@@ -680,6 +712,67 @@ class MainView(QWidget):
         """安全地将消息追加到日志框。"""
         self.log_box.append(message.strip())
         self.log_box.verticalScrollBar().setValue(self.log_box.verticalScrollBar().maximum())
+    
+    def update_progress(self, current: int, total: int, message: str = ""):
+        """更新进度条
+        
+        Args:
+            current: 当前进度值
+            total: 总进度值
+            message: 可选的进度消息
+        """
+        if total > 0:
+            self.progress_bar.setMaximum(total)
+            self.progress_bar.setValue(current)
+            percentage = int((current / total) * 100) if total > 0 else 0
+            self.progress_bar.setFormat(f"{current}/{total} ({percentage}%)")
+            
+            # 翻译中：蓝色进度条
+            if current > 0:
+                self.progress_bar.setStyleSheet("""
+                    QProgressBar {
+                        border: 1px solid #0078d4;
+                        border-radius: 3px;
+                        text-align: center;
+                        background-color: #f0f0f0;
+                    }
+                    QProgressBar::chunk {
+                        background-color: #0078d4;
+                    }
+                """)
+        else:
+            # 重置为灰色
+            self.progress_bar.setMaximum(100)
+            self.progress_bar.setValue(0)
+            self.progress_bar.setFormat("0/0 (0%)")
+            self.progress_bar.setStyleSheet("""
+                QProgressBar {
+                    border: 1px solid #ccc;
+                    border-radius: 3px;
+                    text-align: center;
+                    background-color: #f0f0f0;
+                }
+                QProgressBar::chunk {
+                    background-color: #d0d0d0;
+                }
+            """)
+    
+    def reset_progress(self):
+        """重置进度条为初始状态（灰色）"""
+        self.progress_bar.setMaximum(100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("0/0 (0%)")
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #ccc;
+                border-radius: 3px;
+                text-align: center;
+                background-color: #f0f0f0;
+            }
+            QProgressBar::chunk {
+                background-color: #d0d0d0;
+            }
+        """)
     
     def refresh_tab_titles(self):
         """刷新标签页标题（用于语言切换）"""

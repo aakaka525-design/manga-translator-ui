@@ -61,15 +61,15 @@ class EditorView(QWidget):
         # --- 左侧面板 (标签页) ---
         left_panel = self._create_left_panel()
 
-        # --- 中心画布 ---
-        self.graphics_view = GraphicsView(self.model, self)
+        # --- 中心画布区域（包含画布和缩放滑块） ---
+        center_panel = self._create_center_panel()
 
         # --- 右侧面板 (文件列表) ---
         right_panel = self._create_right_panel()
 
         # --- 组合布局 ---
         main_splitter.addWidget(left_panel)
-        main_splitter.addWidget(self.graphics_view)
+        main_splitter.addWidget(center_panel)
         main_splitter.addWidget(right_panel)
         main_splitter.setStretchFactor(1, 1)  # 让中心画布拉伸
         main_splitter.setSizes([345, 800, 250])  # 左侧面板345px，适应属性面板内容
@@ -365,6 +365,19 @@ class EditorView(QWidget):
         # --- Global App Logic to Controller ---
         self.app_logic.render_setting_changed.connect(self.controller.handle_global_render_setting_change)
 
+    def _create_center_panel(self) -> QWidget:
+        """创建中心画布区域"""
+        center_widget = QWidget()
+        center_layout = QVBoxLayout(center_widget)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(0)
+        
+        # 画布（滚动条已在 GraphicsView 中配置）
+        self.graphics_view = GraphicsView(self.model, self)
+        center_layout.addWidget(self.graphics_view)
+        
+        return center_widget
+
     def _create_right_panel(self) -> QWidget:
         """创建右侧的文件列表面板"""
         right_panel = QWidget()
@@ -416,3 +429,5 @@ class EditorView(QWidget):
         """使用树形结构更新文件列表"""
         self.file_list.clear()
         self.file_list.add_files_from_tree(folder_tree)
+
+
