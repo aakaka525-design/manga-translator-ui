@@ -101,9 +101,8 @@
 #### 方式三：Docker 部署（实验性）
 
 **镜像地址**：
-- CPU 版本：`hgmzhn/manga-translator:1.9.2-cpu`
-- GPU 版本：`hgmzhn/manga-translator:1.9.2-gpu`
-- 或使用 `latest-cpu` / `latest-gpu` 获取最新版本
+- CPU 版本：`hgmzhn/manga-translator:latest-cpu`
+- GPU 版本：`hgmzhn/manga-translator:latest-gpu`
 
 **访问地址**（默认端口 8000）：
 - 🌐 用户界面：`http://localhost:8000`
