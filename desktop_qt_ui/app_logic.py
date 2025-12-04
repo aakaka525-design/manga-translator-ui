@@ -1993,7 +1993,7 @@ class TranslationWorker(QObject):
                             image.load()  # 立即加载图片数据，避免文件句柄关闭后无法访问
                         image.name = file_path
 
-                        ctx = await translator.translate(image, config, image_name=image.name)
+                        ctx = await translator.translate(image, config, image_name=image.name, save_info=save_info)
 
                         if ctx and ctx.result:
                             self.file_processed.emit({'success': True, 'original_path': file_path, 'image_data': ctx.result})

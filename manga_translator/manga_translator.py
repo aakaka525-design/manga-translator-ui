@@ -321,7 +321,7 @@ class MangaTranslator:
     def using_gpu(self):
         return self.device.startswith('cuda') or self.device == 'mps'
 
-    async def translate(self, image: Image.Image, config: Config, image_name: str = None, skip_context_save: bool = False) -> Context:
+    async def translate(self, image: Image.Image, config: Config, image_name: str = None, skip_context_save: bool = False, save_info: dict = None) -> Context:
         """
         Translates a single image by calling translate_batch with batch_size=1.
         
@@ -330,6 +330,7 @@ class MangaTranslator:
         :param image: Input image.
         :param config: Translation config.
         :param image_name: Image file name for saving results.
+        :param save_info: Save configuration (output_folder, format, etc.)
         :return: Translation context.
         """
         # Attach image_name to image object for batch processing
@@ -339,7 +340,8 @@ class MangaTranslator:
         # Call unified batch translation with single image
         results = await self.translate_batch(
             images_with_configs=[(image, config)],
-            batch_size=1
+            batch_size=1,
+            save_info=save_info
         )
         
         # Return the single result
@@ -719,7 +721,7 @@ class MangaTranslator:
         if mask_raw is not None:
             logger.info(f"Loaded mask_raw from {text_file_path}")
 
-        return regions if regions else None, mask_raw, mask_is_refined
+        return regions, mask_raw, mask_is_refined
 
     def _load_text_and_regions_from_txt_file(self, image_path: str) -> Optional[List[TextBlock]]:
         """
@@ -831,6 +833,7 @@ class MangaTranslator:
             await self._report_progress('skip-no-regions', True)
             # If no text was found result is intermediate image product
             ctx.result = ctx.upscaled
+            ctx.text_regions = []  # 设置为空列表，以便保存空的JSON
             return await self._revert_upscale(config, ctx)
 
         if self.verbose:
@@ -853,6 +856,7 @@ class MangaTranslator:
             await self._report_progress('skip-no-text', True)
             # If no text was found result is intermediate image product
             ctx.result = ctx.upscaled
+            ctx.text_regions = []  # 设置为空列表，以便保存空的JSON
             return await self._revert_upscale(config, ctx)
 
         # -- Textline merge
@@ -2555,9 +2559,13 @@ class MangaTranslator:
                         
                         # 加载翻译数据
                         loaded_regions, loaded_mask, mask_is_refined = self._load_text_and_regions_from_file(image_name, config)
-                        if not loaded_regions:
+                        if loaded_regions is None:
                             json_path = os.path.splitext(image_name)[0] + '_translations.json' if image_name else 'unknown'
                             raise FileNotFoundError(f"Translation file not found or invalid: {json_path}")
+                        
+                        # 如果regions是空列表，记录日志但继续处理（渲染原图）
+                        if not loaded_regions:
+                            logger.info(f"No text regions found in JSON for {os.path.basename(image_name)}, will render original image")
                         
                         # 设置字体大小和默认translation
                         for region in loaded_regions:
@@ -2613,22 +2621,29 @@ class MangaTranslator:
                                 if hasattr(region, 'font_size') and region.font_size:
                                     region.font_size = int(region.font_size * upscale_ratio)
                         
-                        # Mask refinement
-                        if ctx.mask is None:
-                            await self._report_progress('mask-generation')
-                            ctx.mask = await self._run_mask_refinement(config, ctx)
-                        
-                        # Inpainting
-                        await self._report_progress('inpainting')
-                        ctx.img_inpainted = await self._run_inpainting(config, ctx)
-                        
-                        # Rendering
-                        await self._report_progress('rendering')
-                        ctx.img_rendered = await self._run_text_rendering(config, ctx)
-                        
-                        await self._report_progress('finished', True)
-                        ctx.result = dump_image(ctx.input, ctx.img_rendered, ctx.img_alpha)
-                        ctx = await self._revert_upscale(config, ctx)
+                        # 如果没有文本区域，跳过mask refinement、inpainting和rendering，直接返回原图
+                        if not ctx.text_regions:
+                            logger.info(f"No text regions to render for {os.path.basename(image_name)}, returning original image")
+                            await self._report_progress('finished', True)
+                            ctx.result = ctx.upscaled  # 返回上采样后的原图
+                            ctx = await self._revert_upscale(config, ctx)
+                        else:
+                            # Mask refinement
+                            if ctx.mask is None:
+                                await self._report_progress('mask-generation')
+                                ctx.mask = await self._run_mask_refinement(config, ctx)
+                            
+                            # Inpainting
+                            await self._report_progress('inpainting')
+                            ctx.img_inpainted = await self._run_inpainting(config, ctx)
+                            
+                            # Rendering
+                            await self._report_progress('rendering')
+                            ctx.img_rendered = await self._run_text_rendering(config, ctx)
+                            
+                            await self._report_progress('finished', True)
+                            ctx.result = dump_image(ctx.input, ctx.img_rendered, ctx.img_alpha)
+                            ctx = await self._revert_upscale(config, ctx)
                         
                         preprocessed_contexts.append((ctx, config))
                     except Exception as e:
@@ -2704,7 +2719,7 @@ class MangaTranslator:
             if is_template_save_mode:
                 logger.info("Template+SaveText mode: Skipping rendering, exporting original text only.")
                 for ctx, config in translated_contexts:
-                    if ctx.text_regions and hasattr(ctx, 'image_name') and ctx.image_name:
+                    if hasattr(ctx, 'text_regions') and ctx.text_regions is not None and hasattr(ctx, 'image_name') and ctx.image_name:
                         # 保存JSON文件
                         self._save_text_to_file(ctx.image_name, ctx, config)
                         try:
@@ -2785,8 +2800,6 @@ class MangaTranslator:
                     # Colorize Only Mode: Skip rendering pipeline
                     if not self.colorize_only:
                         ctx = await self._complete_translation_pipeline(ctx, config)
-
-                    logger.info(f"[DEBUG] save_info={save_info is not None}, ctx.result={ctx.result is not None}")
                     if save_info and ctx.result:
                         try:
                             overwrite = save_info.get('overwrite', True)
@@ -2795,8 +2808,8 @@ class MangaTranslator:
                         except Exception as save_err:
                             logger.error(f"Error saving standard batch result for {os.path.basename(ctx.image_name)}: {save_err}")
 
-                    # 只在save_text或text_output_file启用时保存JSON
-                    if (self.save_text or self.text_output_file) and ctx.text_regions and hasattr(ctx, 'image_name') and ctx.image_name:
+                    # 只在save_text或text_output_file启用时保存JSON（包括空的text_regions）
+                    if (self.save_text or self.text_output_file) and hasattr(ctx, 'text_regions') and ctx.text_regions is not None and hasattr(ctx, 'image_name') and ctx.image_name:
                         # 使用循环变量中的config，而不是从ctx中获取
                         self._save_text_to_file(ctx.image_name, ctx, config)
 
@@ -3057,6 +3070,7 @@ class MangaTranslator:
         if not ctx.textlines:
             await self._report_progress('skip-no-regions', True)
             ctx.result = ctx.upscaled
+            ctx.text_regions = []  # 设置为空列表，以便保存空的JSON
             return await self._revert_upscale(config, ctx)
 
         if self.verbose:
@@ -3078,6 +3092,7 @@ class MangaTranslator:
         if not ctx.textlines:
             await self._report_progress('skip-no-text', True)
             ctx.result = ctx.upscaled
+            ctx.text_regions = []  # 设置为空列表，以便保存空的JSON
             return await self._revert_upscale(config, ctx)
 
         # -- Textline merge
@@ -4507,8 +4522,8 @@ class MangaTranslator:
                             logger.error(traceback.format_exc())
                     # --- END SAVE LOGIC ---
 
-                    # 只在save_text或text_output_file启用时保存JSON
-                    if (self.save_text or self.text_output_file) and ctx.text_regions and hasattr(ctx, 'image_name') and ctx.image_name:
+                    # 只在save_text或text_output_file启用时保存JSON（包括空的text_regions）
+                    if (self.save_text or self.text_output_file) and hasattr(ctx, 'text_regions') and ctx.text_regions is not None and hasattr(ctx, 'image_name') and ctx.image_name:
                         # 使用循环变量中的config，而不是从ctx中获取
                         self._save_text_to_file(ctx.image_name, ctx, config)
 
