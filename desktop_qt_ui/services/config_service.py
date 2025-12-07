@@ -37,8 +37,8 @@ class ConfigService(QObject):
         self.logger = logging.getLogger(__name__)
         self.root_dir = root_dir
         # .env文件应该在exe所在目录（可写位置）
-        # 打包后：root_dir = _internal，.env在exe所在目录（_internal的上一级）
-        # 开发时：root_dir = 项目根目录，.env也在项目根目录
+        # 打包后：E:\manga-translator-cpu-v1.9.2\.env
+        # 开发时：项目根目录\.env
         if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
             exe_dir = os.path.dirname(sys.executable)
             self.env_path = os.path.join(exe_dir, ".env")
@@ -232,6 +232,7 @@ class ConfigService(QObject):
                     config_dict['app']['favorite_folders'] = None
                     config_dict['app']['theme'] = 'light'
                     config_dict['app']['ui_language'] = 'auto'  # 模板配置始终为 auto
+                    config_dict['app']['current_preset'] = '默认'  # 模板配置始终为默认预设
                     
                     if 'cli' in config_dict:
                         config_dict['cli']['verbose'] = False
@@ -327,6 +328,21 @@ class ConfigService(QObject):
     def get_config_reference(self) -> AppSettings:
         """获取对当前配置模型的直接引用，谨慎使用。"""
         return self.current_config
+    
+    def get_current_preset(self) -> str:
+        """获取当前预设名称"""
+        return getattr(self.current_config.app, 'current_preset', '默认')
+    
+    def set_current_preset(self, preset_name: str) -> bool:
+        """设置当前预设名称并保存到配置文件"""
+        try:
+            self.current_config.app.current_preset = preset_name
+            self.save_config_file()
+            self.logger.info(f"当前预设已保存: {preset_name}")
+            return True
+        except Exception as e:
+            self.logger.error(f"保存当前预设失败: {e}")
+            return False
     
     def _convert_config_for_ui(self, config_dict: Dict[str, Any]) -> Dict[str, Any]:
         """将配置转换为UI显示格式"""

@@ -3,6 +3,7 @@
 统一管理编辑器的所有资源，包括图片、蒙版、区域等。
 """
 
+import gc
 import logging
 import os
 from typing import Dict, List, Optional
@@ -12,6 +13,19 @@ from PIL import Image
 
 from .resources import ImageResource, MaskResource, RegionResource
 from .types import MaskType
+
+
+def _release_gpu_memory():
+    """释放GPU显存"""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+    except ImportError:
+        pass
+    except Exception:
+        pass
 
 
 class ResourceManager:
@@ -68,7 +82,7 @@ class ResourceManager:
         
         # 加载图片
         try:
-            self.logger.info(f"Loading image: {image_path}")
+            self.logger.debug(f"Loading image: {image_path}")
             image = Image.open(image_path)
             
             # 创建资源对象
@@ -86,7 +100,7 @@ class ResourceManager:
             # 设置为当前图片
             self._current_image = resource
             
-            self.logger.info(f"Image loaded successfully: {image_path} ({image.width}x{image.height})")
+            self.logger.debug(f"Image loaded successfully: {image_path} ({image.width}x{image.height})")
             return resource
             
         except Exception as e:
@@ -107,18 +121,66 @@ class ResourceManager:
             old_resource = self._image_cache.pop(oldest_path)
             old_resource.release()
             self.logger.debug(f"Removed oldest image from cache: {oldest_path}")
+            
+            # 释放内存
+            gc.collect()
         
         self._image_cache[path] = resource
     
-    def unload_image(self) -> None:
-        """卸载当前图片及所有关联资源"""
+    def release_image_from_cache(self, path: str) -> bool:
+        """从缓存中释放指定图片
+        
+        Args:
+            path: 图片路径
+        
+        Returns:
+            bool: 是否成功释放
+        """
+        path = os.path.normpath(path)
+        if path in self._image_cache:
+            resource = self._image_cache.pop(path)
+            resource.release()
+            gc.collect()
+            self.logger.debug(f"Released image from cache: {path}")
+            return True
+        return False
+    
+    def clear_image_cache(self) -> None:
+        """清空所有图片缓存"""
+        for resource in self._image_cache.values():
+            resource.release()
+        self._image_cache.clear()
+        gc.collect()
+        _release_gpu_memory()
+        self.logger.info("Cleared all image cache")
+    
+    def unload_image(self, release_from_cache: bool = False) -> None:
+        """卸载当前图片及所有关联资源
+        
+        Args:
+            release_from_cache: 是否同时从缓存中释放该图片
+        """
         if self._current_image:
-            self.logger.info(f"Unloading image: {self._current_image.path}")
+            current_path = self._current_image.path
+            
+            # 如果需要从缓存中释放
+            if release_from_cache and current_path in self._image_cache:
+                resource = self._image_cache.pop(current_path)
+                resource.release()
+                self.logger.debug(f"Released image from cache: {current_path}")
+            
             self._current_image = None
         
         # 清空所有关联资源
         self.clear_masks()
         self.clear_regions()
+        self.clear_cache()
+        
+        # 强制垃圾回收
+        gc.collect()
+        _release_gpu_memory()
+        
+        self.logger.debug("Image unloaded and memory released")
     
     def get_current_image(self) -> Optional[ImageResource]:
         """获取当前图片资源
@@ -249,12 +311,13 @@ class ResourceManager:
         return self._regions.get(region_id)
     
     def get_all_regions(self) -> List[RegionResource]:
-        """获取所有区域
+        """获取所有区域（按region_id排序）
         
         Returns:
-            List[RegionResource]: 区域列表
+            List[RegionResource]: 区域列表，按region_id升序排列
         """
-        return list(self._regions.values())
+        # 按region_id排序，确保顺序正确
+        return [self._regions[rid] for rid in sorted(self._regions.keys())]
     
     def clear_regions(self) -> None:
         """清空所有区域"""
@@ -306,15 +369,47 @@ class ResourceManager:
         """清理所有资源"""
         self.logger.info("Cleaning up all resources")
         
-        # 卸载当前图片
-        self.unload_image()
+        # 卸载当前图片（不从缓存释放，因为下面会清空缓存）
+        if self._current_image:
+            self._current_image = None
         
-        # 清理缓存
+        # 清空蒙版
+        self.clear_masks()
+        
+        # 清空区域
+        self.clear_regions()
+        
+        # 清空临时缓存
+        self._temp_cache.clear()
+        
+        # 清理图片缓存
         for resource in self._image_cache.values():
             resource.release()
         self._image_cache.clear()
         
+        # 强制垃圾回收和GPU显存释放
+        gc.collect()
+        _release_gpu_memory()
+        
         self.logger.info("All resources cleaned up")
+    
+    def release_memory_after_export(self) -> None:
+        """导出后释放内存
+        
+        清理临时缓存和GPU显存，但保留图片缓存以便快速切换
+        """
+        self.logger.info("Releasing memory after export")
+        
+        # 清空临时缓存（inpainted图片等）
+        self._temp_cache.clear()
+        
+        # 强制垃圾回收
+        gc.collect()
+        
+        # 释放GPU显存
+        _release_gpu_memory()
+        
+        self.logger.info("Memory released after export")
     
     def get_memory_usage_estimate(self) -> int:
         """估算内存使用量（字节）

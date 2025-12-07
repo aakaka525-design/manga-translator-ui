@@ -28,12 +28,25 @@ class Filter(logging.Filter):
         return super().filter(record)
 
 root = logging.getLogger(ROOT_TAG)
+_initialized = False
 
 def init_logging():
-    logging.basicConfig(level=logging.DEBUG)
+    global _initialized
+    if _initialized:
+        return
+    _initialized = True
+    
+    # 强制添加 handler（不依赖 basicConfig）
+    if not logging.root.handlers:
+        handler = logging.StreamHandler()
+        handler.setLevel(logging.DEBUG)
+        logging.root.addHandler(handler)
+    
     for h in logging.root.handlers:
         h.setFormatter(Formatter())
         h.addFilter(Filter())
+        h.setLevel(logging.DEBUG)
+    
     # Explicitly set the root logger level
     root.setLevel(logging.DEBUG)
     logging.getLogger().setLevel(logging.DEBUG)

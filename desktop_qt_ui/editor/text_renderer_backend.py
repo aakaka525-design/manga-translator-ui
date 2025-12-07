@@ -59,9 +59,25 @@ def render_text_for_region(text_block: TextBlock, dst_points: np.ndarray, transf
         text_block.translation = processed_text
 
         # --- 2. 渲染 ---
-        # 正确的逻辑：当AI断句开启(disable_auto_wrap=True)时，关闭内置换行(hyphenate=False)
-        disable_auto_wrap = render_params.get('disable_auto_wrap', False)
-        hyphenate = not disable_auto_wrap
+        # 与后端逻辑一致：
+        # 1. 当AI断句开启(disable_auto_wrap=True)且文本中有[BR]标记时，关闭自动换行
+        # 2. 当AI断句开启但文本中没有[BR]标记时，启用自动换行（回退到自动换行模式）
+        disable_auto_wrap_param = render_params.get('disable_auto_wrap', False)
+        
+        # 检测文本中是否有BR标记
+        has_br = bool(re.search(r'(\[BR\]|【BR】|<br>|\n)', processed_text, flags=re.IGNORECASE))
+        
+        # 只有当AI断句开启且文本中有BR标记时才真正禁用自动换行
+        # 否则回退到自动换行模式
+        effective_disable_auto_wrap = disable_auto_wrap_param and has_br
+        
+        # 横排使用hyphenate参数控制
+        hyphenate = not effective_disable_auto_wrap
+        
+        if disable_auto_wrap_param and not has_br:
+            logger.debug(f"[EDITOR RENDER] AI断句开启但无BR标记，回退到自动换行模式")
+        elif effective_disable_auto_wrap:
+            logger.debug(f"[EDITOR RENDER] AI断句开启且有BR标记，禁用自动换行")
 
         render_params.get('line_spacing')
         disable_font_border = render_params.get('disable_font_border', False)
@@ -100,6 +116,10 @@ def render_text_for_region(text_block: TextBlock, dst_points: np.ndarray, transf
             config_data['stroke_width'] = config_data.pop('text_stroke_width')
         if 'text_stroke_color' in config_data:
             config_data['bg_color'] = config_data.pop('text_stroke_color')
+        
+        # ✅ 关键修复：根据是否有BR标记来设置effective的disable_auto_wrap
+        # 这样竖排渲染时也能正确回退到自动换行模式
+        config_data['disable_auto_wrap'] = effective_disable_auto_wrap
 
         config_obj = Config(render=RenderConfig(**config_data)) if config_data else Config()
         line_spacing_from_params = render_params.get('line_spacing')

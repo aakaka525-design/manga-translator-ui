@@ -42,6 +42,7 @@ class EditorModel(QObject):
         self._original_image_alpha: float = 0.0  # 默认完全透明，显示inpainted图片
         self._active_tool: str = 'select'
         self._brush_size: int = 30
+        self.controller = None  # 添加controller引用，用于命令模式
 
     # --- Getter / Setter 方法 ---
 
@@ -76,13 +77,10 @@ class EditorModel(QObject):
         return self._raw_mask
 
     def set_refined_mask(self, mask: Any):
-        import logging
-        logging.info(f"[MODEL LOG] set_refined_mask called. Mask Type: {type(mask)}, Shape: {getattr(mask, 'shape', 'N/A')}")
         self._refined_mask = mask
         self.refined_mask_changed.emit(mask)
         # Force immediate display update if this is the current display type
         if self._display_mask_type == 'refined':
-            logging.info("[MODEL LOG] Refined mask is current display type, forcing display update")
             self.display_mask_type_changed.emit('refined')
 
     def get_refined_mask(self) -> Optional[Any]:

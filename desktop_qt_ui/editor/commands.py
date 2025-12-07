@@ -47,10 +47,15 @@ class UpdateRegionCommand(Command):
         # 直接更新模型中的区域字典
         self._model._regions[self._index] = data_to_apply
         
-        # 【关键修复】同时更新resource_manager中的regions（延迟导入避免循环）
+        # 【关键修复】同时更新resource_manager中的regions
+        # resource_manager使用索引而不是ID，因为_set_regions按顺序添加区域
         from services import get_resource_manager
         resource_manager = get_resource_manager()
-        resource_manager.update_region(self._index, data_to_apply)
+        all_regions = resource_manager.get_all_regions()
+        if self._index < len(all_regions):
+            # 获取对应索引的region_id
+            region_resource = all_regions[self._index]
+            resource_manager.update_region(region_resource.region_id, data_to_apply)
 
         # 如果 center 改变了,需要触发完全更新,重新创建 item
         # 否则只触发单个 item 更新
@@ -92,6 +97,12 @@ class AddRegionCommand(Command):
         """执行添加操作"""
         self._model._regions.append(copy.deepcopy(self._region_data))
         self._index = len(self._model._regions) - 1
+        
+        # 【关键修复】同时更新resource_manager中的regions
+        from services import get_resource_manager
+        resource_manager = get_resource_manager()
+        resource_manager.add_region(self._region_data)
+        
         # 添加操作触发完全更新
         self._model.regions_changed.emit(self._model._regions)
 
@@ -99,6 +110,15 @@ class AddRegionCommand(Command):
         """撤销添加操作:删除最后添加的区域"""
         if self._index is not None and 0 <= self._index < len(self._model._regions):
             self._model._regions.pop(self._index)
+            
+            # 【关键修复】同时更新resource_manager中的regions
+            # 由于ResourceManager使用字典存储，需要重新同步整个列表
+            from services import get_resource_manager
+            resource_manager = get_resource_manager()
+            resource_manager.clear_regions()
+            for region_data in self._model._regions:
+                resource_manager.add_region(region_data)
+            
             # 删除操作会改变后续区域的索引,必须触发完全更新
             self._model.regions_changed.emit(self._model._regions)
             # 清除选择

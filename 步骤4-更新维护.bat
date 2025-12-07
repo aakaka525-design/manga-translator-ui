@@ -98,96 +98,83 @@ exit /b 1
 
 :check_env_s4
 
-REM 检查环境是否存在（优先检查命名环境）
-set ENV_FOUND=0
+REM 检查环境是否存在
+call conda info --envs 2>nul | findstr /B /C:"%CONDA_ENV_NAME%" >nul 2>&1 && goto :found_named_env_s4
+if exist "%CONDA_ENV_PATH%\python.exe" goto :found_legacy_env_s4
 
-REM 方法1: 检查命名环境
-REM 使用 /B 选项进行精确匹配行首，避免误匹配路径中的文本
-call conda info --envs 2>nul | findstr /B /C:"%CONDA_ENV_NAME%" >nul 2>&1
-if %ERRORLEVEL% == 0 (
-    set ENV_FOUND=1
-    set USE_NAMED_ENV=1
-    echo [INFO] 检测到命名环境: %CONDA_ENV_NAME%
-)
+REM 没有任何环境
+echo [ERROR] 未检测到Conda环境
+echo 请先运行 步骤1-首次安装.bat 创建环境
+pause
+exit /b 1
 
-REM 方法2: 检查旧版本路径环境
-if %ENV_FOUND% == 0 (
-    if exist "%CONDA_ENV_PATH%\python.exe" (
-        set ENV_FOUND=1
-        set USE_NAMED_ENV=0
-        echo [INFO] 检测到路径环境（旧版本）: %CONDA_ENV_PATH%
-    )
-)
+:found_named_env_s4
+echo [INFO] 检测到命名环境: %CONDA_ENV_NAME%
+goto :activate_env_s4
 
-REM 如果两种环境都不存在
-if %ENV_FOUND% == 0 (
-    echo [ERROR] 未检测到Conda环境
-    echo 请先运行 步骤1-首次安装.bat 创建环境
-    pause
-    exit /b 1
-)
+:found_legacy_env_s4
+echo [INFO] 检测到路径环境（旧版本）: %CONDA_ENV_PATH%
+goto :activate_legacy_s4
 
-REM 激活conda环境
+:activate_env_s4
+REM 先确保 conda 已初始化
+if not exist "%MINICONDA_ROOT%\Scripts\activate.bat" goto :try_conda_activate_s4
+call "%MINICONDA_ROOT%\Scripts\activate.bat"
+
+:try_conda_activate_s4
+REM 方法1: conda activate 命名环境
 echo 正在激活环境...
-if %USE_NAMED_ENV% == 1 (
-    REM 激活命名环境
-    call conda activate "%CONDA_ENV_NAME%" 2>nul
-    if %ERRORLEVEL% == 0 (
-        echo [OK] 已激活命名环境: %CONDA_ENV_NAME%
-        goto :env_activated
-    ) else (
-        echo [WARNING] 无法激活命名环境: %CONDA_ENV_NAME%
-    )
-) else (
-    REM 激活路径环境（旧版本）- 使用多层降级策略
-    echo [INFO] 尝试激活路径环境（旧版本）...
+call conda activate "%CONDA_ENV_NAME%" 2>nul && echo [OK] 已激活命名环境: %CONDA_ENV_NAME% && goto :env_activated
 
-    REM 方法1: 使用activate.bat
-    if exist "%MINICONDA_ROOT%\Scripts\activate.bat" (
-        call "%MINICONDA_ROOT%\Scripts\activate.bat" "%CONDA_ENV_PATH%" 2>nul
-        if %ERRORLEVEL% == 0 (
-            echo [OK] 已激活路径环境（activate.bat方式）
-            goto :env_activated
-        )
-    )
+REM 方法2: activate.bat 激活命名环境
+echo [INFO] 尝试备用激活方式...
+if not exist "%MINICONDA_ROOT%\Scripts\activate.bat" goto :try_manual_path_s4
+call "%MINICONDA_ROOT%\Scripts\activate.bat" "%CONDA_ENV_NAME%" 2>nul && echo [OK] 已激活命名环境 && goto :env_activated
 
-    REM 方法2: 使用conda activate
-    call conda activate "%CONDA_ENV_PATH%" 2>nul
-    if %ERRORLEVEL% == 0 (
-        echo [OK] 已激活路径环境（conda activate方式）
-        goto :env_activated
-    )
+:try_manual_path_s4
+REM 方法3: 获取环境路径并手动设置PATH
+for /f "tokens=2" %%i in ('conda info --envs 2^>nul ^| findstr /B /C:"%CONDA_ENV_NAME%"') do set "ENV_PATH=%%i"
+if not defined ENV_PATH goto :activate_failed_s4
+if not exist "!ENV_PATH!\python.exe" goto :activate_failed_s4
+echo [INFO] 使用手动PATH激活方式...
+set "PATH=!ENV_PATH!;!ENV_PATH!\Library\mingw-w64\bin;!ENV_PATH!\Library\usr\bin;!ENV_PATH!\Library\bin;!ENV_PATH!\Scripts;!ENV_PATH!\bin;%PATH%"
+set "CONDA_PREFIX=!ENV_PATH!"
+set "CONDA_DEFAULT_ENV=%CONDA_ENV_NAME%"
+echo [OK] 已激活环境: %CONDA_ENV_NAME%
+goto :env_activated
 
-    REM 方法3: 手动设置PATH（兜底方案）
-    echo [INFO] 使用手动PATH激活方式...
-    set "PATH=%CONDA_ENV_PATH%;%CONDA_ENV_PATH%\Library\mingw-w64\bin;%CONDA_ENV_PATH%\Library\usr\bin;%CONDA_ENV_PATH%\Library\bin;%CONDA_ENV_PATH%\Scripts;%CONDA_ENV_PATH%\bin;%PATH%"
-    set "CONDA_PREFIX=%CONDA_ENV_PATH%"
-    set "CONDA_DEFAULT_ENV=%CONDA_ENV_PATH%"
-    echo [OK] 已使用手动PATH方式激活环境
-    goto :env_activated
-)
+:activate_legacy_s4
+REM 旧版本路径环境 - 直接用手动PATH
+echo 正在激活环境...
+echo [INFO] 使用手动PATH激活方式...
+set "PATH=%CONDA_ENV_PATH%;%CONDA_ENV_PATH%\Library\mingw-w64\bin;%CONDA_ENV_PATH%\Library\usr\bin;%CONDA_ENV_PATH%\Library\bin;%CONDA_ENV_PATH%\Scripts;%CONDA_ENV_PATH%\bin;%PATH%"
+set "CONDA_PREFIX=%CONDA_ENV_PATH%"
+set "CONDA_DEFAULT_ENV=%CONDA_ENV_PATH%"
+echo [OK] 已激活路径环境
+goto :env_activated
 
+:activate_failed_s4
 echo [ERROR] 无法激活环境
+echo 请尝试: 打开新命令提示符，运行 conda init cmd.exe，然后重试
 pause
 exit /b 1
 
 :env_activated
 
 REM 检查是否有便携版 Git
-if exist "PortableGit\cmd\git.exe" (
-    set "GIT=%SCRIPT_DIR%\PortableGit\cmd\git.exe"
-    set "PATH=%SCRIPT_DIR%\PortableGit\cmd;%PATH%"
-) else (
-    git --version >nul 2>&1
-    if %ERRORLEVEL% == 0 (
-        set GIT=git
-    ) else (
-        echo [ERROR] 未找到 Git
-        echo 请先安装 Git 或运行 步骤1-首次安装.bat
-        pause
-        exit /b 1
-    )
-)
+if not exist "PortableGit\cmd\git.exe" goto :check_system_git_s4
+set "GIT=%SCRIPT_DIR%\PortableGit\cmd\git.exe"
+set "PATH=%SCRIPT_DIR%\PortableGit\cmd;%PATH%"
+goto :git_done_s4
+
+:check_system_git_s4
+git --version >nul 2>&1 && set GIT=git && goto :git_done_s4
+echo [ERROR] 未找到 Git
+echo 请先安装 Git 或运行 步骤1-首次安装.bat
+pause
+exit /b 1
+
+:git_done_s4
 
 REM 检查版本信息 (在菜单显示前) - 使用Python脚本
 :check_version

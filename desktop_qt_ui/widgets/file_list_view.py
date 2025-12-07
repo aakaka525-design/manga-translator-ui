@@ -104,6 +104,11 @@ class FileItemWidget(QWidget):
             style = QApplication.style()
             icon = style.standardIcon(QStyle.StandardPixmap.SP_DirIcon)
             self.thumbnail_label.setPixmap(icon.pixmap(QSize(40,40)))
+        elif self._is_archive_file(self.file_path):
+            # 压缩包/文档文件显示特殊图标
+            style = QApplication.style()
+            icon = style.standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+            self.thumbnail_label.setPixmap(icon.pixmap(QSize(40,40)))
         else:
             # 连接全局信号（只连接一次）
             if not hasattr(FileItemWidget, '_signals_connected'):
@@ -193,6 +198,13 @@ class FileItemWidget(QWidget):
     def _emit_remove_request(self):
         """发射删除请求信号"""
         self.remove_requested.emit(self.file_path)
+    
+    @staticmethod
+    def _is_archive_file(file_path: str) -> bool:
+        """检查文件是否是压缩包/文档格式"""
+        archive_extensions = {'.pdf', '.epub', '.cbz', '.cbr', '.zip'}
+        ext = os.path.splitext(file_path)[1].lower()
+        return ext in archive_extensions
 
     def get_path(self):
         return self.file_path
@@ -331,6 +343,8 @@ class FileListView(QTreeWidget):
         """在后台线程中扫描文件夹结构（不创建UI元素）"""
         try:
             image_extensions = {'.png', '.jpg', '.jpeg', '.bmp', '.webp'}
+            archive_extensions = {'.pdf', '.epub', '.cbz', '.cbr', '.zip'}
+            all_extensions = image_extensions | archive_extensions
             structure = {'subdirs': [], 'files': [], 'subdir_data': {}}
             
             items = os.listdir(folder_path)
@@ -341,7 +355,7 @@ class FileListView(QTreeWidget):
                 item_path = os.path.join(folder_path, item)
                 if os.path.isdir(item_path):
                     structure['subdirs'].append(item_path)
-                elif os.path.splitext(item)[1].lower() in image_extensions:
+                elif os.path.splitext(item)[1].lower() in all_extensions:
                     structure['files'].append(item_path)
             
             # 排序
@@ -714,6 +728,8 @@ class FileListView(QTreeWidget):
             return 0
         try:
             image_extensions = {'.png', '.jpg', '.jpeg', '.bmp', '.webp'}
+            archive_extensions = {'.pdf', '.epub', '.cbz', '.cbr', '.zip'}
+            all_extensions = image_extensions | archive_extensions
             count = 0
             for root, dirs, files in os.walk(folder_path):
                 # 忽略 manga_translator_work 目录
@@ -721,7 +737,7 @@ class FileListView(QTreeWidget):
                     dirs.remove('manga_translator_work')
                     
                 for filename in files:
-                    if os.path.splitext(filename)[1].lower() in image_extensions:
+                    if os.path.splitext(filename)[1].lower() in all_extensions:
                         count += 1
             return count
         except:
@@ -731,6 +747,8 @@ class FileListView(QTreeWidget):
         """递归填充文件夹树形结构"""
         try:
             image_extensions = {'.png', '.jpg', '.jpeg', '.bmp', '.webp'}
+            archive_extensions = {'.pdf', '.epub', '.cbz', '.cbr', '.zip'}
+            all_extensions = image_extensions | archive_extensions
             
             # 获取当前文件夹的直接子项
             items = os.listdir(folder_path)
@@ -747,7 +765,7 @@ class FileListView(QTreeWidget):
                 item_path = os.path.join(folder_path, item)
                 if os.path.isdir(item_path):
                     subdirs.append(item_path)
-                elif os.path.splitext(item)[1].lower() in image_extensions:
+                elif os.path.splitext(item)[1].lower() in all_extensions:
                     files.append(item_path)
             
             # 先添加子文件夹
@@ -810,10 +828,12 @@ class FileListView(QTreeWidget):
         # 添加文件夹中的文件
         try:
             image_extensions = {'.png', '.jpg', '.jpeg', '.bmp', '.webp'}
+            archive_extensions = {'.pdf', '.epub', '.cbz', '.cbr', '.zip'}
+            all_extensions = image_extensions | archive_extensions
             files = [
                 os.path.join(folder_path, f)
                 for f in os.listdir(folder_path)
-                if os.path.splitext(f)[1].lower() in image_extensions
+                if os.path.splitext(f)[1].lower() in all_extensions
             ]
             
             for file_path in sorted(files, key=natural_sort_key):

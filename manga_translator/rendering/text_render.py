@@ -538,19 +538,30 @@ def put_char_vertical(font_size: int, cdpt: str, pen_l: Tuple[int, int], canvas_
     bitmap = slot.bitmap
     char_bitmap_rows = bitmap.rows
     char_bitmap_width = bitmap.width
+    # 统一的竖排字体度量获取逻辑
+    char_offset_y = font_size  # 默认值
+    
+    if hasattr(slot, 'metrics') and slot.metrics:
+        if hasattr(slot.metrics, 'vertAdvance') and slot.metrics.vertAdvance:
+            char_offset_y = slot.metrics.vertAdvance >> 6
+        elif hasattr(slot.metrics, 'height') and slot.metrics.height:
+            # 使用字符高度作为备选
+            char_offset_y = slot.metrics.height >> 6
+    
+    # 如果metrics不可用，尝试使用advance
+    if char_offset_y == font_size and hasattr(slot, 'advance') and slot.advance:
+        if hasattr(slot.advance, 'y') and slot.advance.y:
+            char_offset_y = slot.advance.y >> 6
+    
+    # 如果bitmap为空，直接返回计算好的offset
     if char_bitmap_rows * char_bitmap_width == 0 or len(bitmap.buffer) != char_bitmap_rows * char_bitmap_width:
-        if hasattr(slot, 'metrics') and hasattr(slot.metrics, 'vertAdvance') and slot.metrics.vertAdvance:
-             char_offset_y = slot.metrics.vertAdvance >> 6
-        elif hasattr(slot, 'advance') and slot.advance.y:
-             char_offset_y = slot.advance.y >> 6
-        elif hasattr(slot, 'metrics') and hasattr(slot.metrics, 'vertBearingY'):
-             char_offset_y = slot.metrics.vertBearingY >> 6
-        else:
-             char_offset_y = font_size
         return char_offset_y
-    char_offset_y = slot.metrics.vertAdvance >> 6
     bitmap_char = np.array(bitmap.buffer, dtype=np.uint8).reshape((char_bitmap_rows, char_bitmap_width))
 
+    # 保存原始尺寸用于位置补偿计算
+    original_bitmap_rows = char_bitmap_rows
+    original_bitmap_width = char_bitmap_width
+    
     # 如果需要旋转90度
     if force_rotate_90:
         # 顺时针旋转90度 (相当于逆时针旋转270度或使用 cv2.ROTATE_90_CLOCKWISE)
@@ -562,10 +573,17 @@ def put_char_vertical(font_size: int, cdpt: str, pen_l: Tuple[int, int], canvas_
     if line_width <= 0:
         line_width = font_size
     # The pen's x-coordinate is the right boundary of the line. Center the character in the column.
-    char_place_x = (pen[0] - line_width) + (line_width - char_bitmap_width) // 2
+    # 使用round()而不是整数除法，提高居中精度
+    char_place_x = (pen[0] - line_width) + round((line_width - char_bitmap_width) / 2.0)
     # --- END FIX ---
 
-    char_place_y = pen[1] + (slot.metrics.vertBearingY >> 6)
+    # 计算Y位置，考虑旋转后的位置补偿
+    if force_rotate_90:
+        # 旋转后需要调整Y位置：原来的宽度变成了高度
+        # 使用原始宽度的一半作为垂直偏移的基准
+        char_place_y = pen[1] + round((original_bitmap_width - char_bitmap_rows) / 2.0)
+    else:
+        char_place_y = pen[1] + (slot.metrics.vertBearingY >> 6)
     paste_y_start = max(0, char_place_y)
     paste_x_start = max(0, char_place_x)
     paste_y_end = min(canvas_text.shape[0], char_place_y + char_bitmap_rows)
@@ -597,16 +615,14 @@ def put_char_vertical(font_size: int, cdpt: str, pen_l: Tuple[int, int], canvas_
                 bitmap_border = cv2.rotate(bitmap_border, cv2.ROTATE_90_CLOCKWISE)
                 border_bitmap_rows, border_bitmap_width = bitmap_border.shape
 
-            char_center_offset_x = char_bitmap_width / 2.0
-            char_center_offset_y = char_bitmap_rows / 2.0
-            border_center_offset_x = border_bitmap_width / 2.0
-            border_center_offset_y = border_bitmap_rows / 2.0
-            char_center_on_canvas_x = char_place_x + char_center_offset_x
-            char_center_on_canvas_y = char_place_y + char_center_offset_y
-            pen_border_x_float = char_center_on_canvas_x - border_center_offset_x
-            pen_border_y_float = char_center_on_canvas_y - border_center_offset_y
-            pen_border_x = int(round(pen_border_x_float))
-            pen_border_y = int(round(pen_border_y_float))
+            # 改进的边框位置计算：直接基于字符位置和尺寸差异
+            # 避免浮点累积误差
+            size_diff_x = border_bitmap_width - char_bitmap_width
+            size_diff_y = border_bitmap_rows - char_bitmap_rows
+            
+            # 边框应该围绕字符居中，所以偏移是尺寸差的一半
+            pen_border_x = char_place_x - round(size_diff_x / 2.0)
+            pen_border_y = char_place_y - round(size_diff_y / 2.0)
             pen_border = (max(0, pen_border_x), max(0, pen_border_y))
             paste_border_y_start = pen_border[1]
             paste_border_x_start = pen_border[0]
@@ -645,17 +661,33 @@ def put_text_vertical(font_size: int, text: str, h: int, alignment: str, fg: Tup
     spacing_x = int(font_size * (line_spacing or 0.2))
 
     # Conditional wrapping logic based on disable_auto_wrap and region_count
+    # 检测文本中是否有BR标记或换行符
+    has_br = bool(re.search(r'(\[BR\]|【BR】|<br>|\n)', text, flags=re.IGNORECASE))
+    
     effective_max_height = h
     if config and config.render.disable_auto_wrap:
-        # 当AI断句开启时，使用无限高度，让文本按AI断句标记换行
-        effective_max_height = 99999
-        logger.debug(f"[VERTICAL DEBUG] AI断句开启，effective_max_height=99999, region_count={region_count}")
-    elif config and config.render.layout_mode == 'smart_scaling':
-        if region_count <= 1:
+        if has_br:
+            # 当AI断句开启且有BR标记时，使用无限高度，让文本按AI断句标记换行
             effective_max_height = 99999
-            logger.debug(f"[VERTICAL DEBUG] Smart scaling单区域，effective_max_height=99999, region_count={region_count}")
+            logger.debug(f"[VERTICAL DEBUG] AI断句开启且有BR标记，effective_max_height=99999, region_count={region_count}")
         else:
-            logger.debug(f"[VERTICAL DEBUG] Smart scaling多区域，effective_max_height={h}, region_count={region_count}")
+            # AI断句开启但没有BR标记，回退到自动换行模式
+            effective_max_height = h
+            logger.debug(f"[VERTICAL DEBUG] AI断句开启但无BR标记，回退自动换行，effective_max_height={h}, region_count={region_count}")
+    elif config and config.render.layout_mode == 'smart_scaling':
+        # smart_scaling 模式下，检查是否有换行符
+        if has_br:
+            # 有换行符，使用传入的框高度
+            effective_max_height = h
+            logger.debug(f"[VERTICAL DEBUG] Smart scaling有换行符，effective_max_height={h}, region_count={region_count}")
+        else:
+            # 无换行符，单区域使用无限高度
+            if region_count <= 1:
+                effective_max_height = 99999
+                logger.debug(f"[VERTICAL DEBUG] Smart scaling单区域无换行符，effective_max_height=99999, region_count={region_count}")
+            else:
+                effective_max_height = h
+                logger.debug(f"[VERTICAL DEBUG] Smart scaling多区域无换行符，effective_max_height={h}, region_count={region_count}")
     else:
         logger.debug(f"[VERTICAL DEBUG] 默认模式，effective_max_height={h}, region_count={region_count}")
 
@@ -664,18 +696,60 @@ def put_text_vertical(font_size: int, text: str, h: int, alignment: str, fg: Tup
     if not line_height_list:
         return
 
-    canvas_x = font_size * len(line_text_list) + spacing_x * (len(line_text_list) - 1) + (font_size + bg_size) * 2
+    # 预先计算每一列的实际最大字符宽度
+    line_widths = []
+    for line_text in line_text_list:
+        max_width = font_size  # 默认使用font_size
+        parts = re.split(r'(<H>.*?</H>)', line_text, flags=re.IGNORECASE | re.DOTALL)
+        for part in parts:
+            if not part:
+                continue
+            is_horizontal_block = part.lower().startswith('<h>') and part.lower().endswith('</h>')
+            if not is_horizontal_block:
+                # 计算竖排字符的实际宽度
+                for c in part:
+                    cdpt, _ = CJK_Compatibility_Forms_translate(c, 1)
+                    slot = get_char_glyph(cdpt, font_size, 1)
+                    if slot.bitmap.width > max_width:
+                        max_width = slot.bitmap.width
+        line_widths.append(max_width)
+
+    # 使用实际列宽计算画布大小
+    canvas_x = sum(line_widths) + spacing_x * (len(line_text_list) - 1) + (font_size + bg_size) * 2
     canvas_y = max(line_height_list) + (font_size + bg_size) * 2
 
     canvas_text = np.zeros((canvas_y, canvas_x), dtype=np.uint8)
     canvas_border = canvas_text.copy()
     pen_orig = [canvas_text.shape[1] - (font_size + bg_size), (font_size + bg_size)]
 
+    # 预先计算每一列的最大字符宽度，防止字符超出列边界
+    line_max_widths = []
+    for line_text in line_text_list:
+        max_char_width = font_size  # 默认使用font_size
+        parts = re.split(r'(<H>.*?</H>)', line_text, flags=re.IGNORECASE | re.DOTALL)
+        for part in parts:
+            if not part:
+                continue
+            is_horizontal_block = part.lower().startswith('<h>') and part.lower().endswith('</h>')
+            if not is_horizontal_block:
+                # 只计算竖排字符的宽度
+                for c in part:
+                    cdpt, _ = CJK_Compatibility_Forms_translate(c, 1)
+                    slot = get_char_glyph(cdpt, font_size, 1)
+                    bitmap = slot.bitmap
+                    # 使用实际bitmap宽度，确保不会超出列边界
+                    if bitmap.width > max_char_width:
+                        max_char_width = bitmap.width
+        line_max_widths.append(max_char_width)
+
     for line_idx, (line_text, line_height) in enumerate(zip(line_text_list, line_height_list)):
         pen_line = pen_orig.copy()
+        # 使用该列的实际最大字符宽度作为列宽
+        line_width = line_max_widths[line_idx]
 
         if alignment == 'center':
-            pen_line[1] += (max(line_height_list) - line_height) // 2
+            # 使用round()提高居中精度
+            pen_line[1] += round((max(line_height_list) - line_height) / 2.0)
         elif alignment == 'right': # In vertical, right means bottom
             pen_line[1] += max(line_height_list) - line_height
 
@@ -844,10 +918,11 @@ def put_text_vertical(font_size: int, text: str, h: int, alignment: str, fg: Tup
 
             else: # It's a vertical part
                 for char_idx, c in enumerate(part):
-                    offset_y = put_char_vertical(font_size, c, pen_line, canvas_text, canvas_border, border_size=bg_size, config=config, line_width=font_size)
+                    offset_y = put_char_vertical(font_size, c, pen_line, canvas_text, canvas_border, border_size=bg_size, config=config, line_width=line_width)
                     pen_line[1] += offset_y
         
-        pen_orig[0] -= spacing_x + font_size
+        # 使用实际列宽而不是固定的font_size来计算下一列的位置
+        pen_orig[0] -= spacing_x + line_width
 
     canvas_border = np.clip(canvas_border, 0, 255)
     line_box = add_color(canvas_text, fg, canvas_border, bg)
@@ -1220,14 +1295,27 @@ def put_char_horizontal(font_size: int, cdpt: str, pen_l: Tuple[int, int], canva
     slot = get_char_glyph(cdpt, font_size, 0)
     bitmap = slot.bitmap
     
-    if hasattr(slot, 'metrics') and hasattr(slot.metrics, 'horiAdvance') and slot.metrics.horiAdvance:
-        char_offset_x = slot.metrics.horiAdvance >> 6
-    elif hasattr(slot, 'advance') and slot.advance.x:
-        char_offset_x = slot.advance.x >> 6
-    elif bitmap.width > 0 and hasattr(slot, 'bitmap_left'):
-         char_offset_x = slot.bitmap_left + bitmap.width
-    else:
-         char_offset_x = font_size // 2
+    # 统一的字体度量获取逻辑，优先使用metrics.horiAdvance
+    char_offset_x = font_size  # 默认值
+    
+    if hasattr(slot, 'metrics') and slot.metrics:
+        if hasattr(slot.metrics, 'horiAdvance') and slot.metrics.horiAdvance:
+            char_offset_x = slot.metrics.horiAdvance >> 6
+        elif hasattr(slot.metrics, 'width') and slot.metrics.width:
+            # 使用字符宽度作为备选
+            char_offset_x = slot.metrics.width >> 6
+    
+    # 如果metrics不可用，尝试使用advance
+    if char_offset_x == font_size and hasattr(slot, 'advance') and slot.advance:
+        if hasattr(slot.advance, 'x') and slot.advance.x:
+            char_offset_x = slot.advance.x >> 6
+    
+    # 最后的fallback：使用bitmap宽度
+    if char_offset_x == font_size and bitmap.width > 0:
+        if hasattr(slot, 'bitmap_left'):
+            char_offset_x = slot.bitmap_left + bitmap.width
+        else:
+            char_offset_x = bitmap.width
     if bitmap.rows * bitmap.width == 0 or len(bitmap.buffer) != bitmap.rows * bitmap.width:
         return char_offset_x
     bitmap_char = np.array(bitmap.buffer, dtype=np.uint8).reshape((bitmap.rows, bitmap.width))
@@ -1272,16 +1360,15 @@ def put_char_horizontal(font_size: int, cdpt: str, pen_l: Tuple[int, int], canva
                                    ).reshape((border_bitmap_rows, border_bitmap_width))
             char_bitmap_rows = bitmap.rows
             char_bitmap_width = bitmap.width
-            char_center_offset_x = char_bitmap_width / 2.0
-            char_center_offset_y = char_bitmap_rows / 2.0
-            border_center_offset_x = border_bitmap_width / 2.0
-            border_center_offset_y = border_bitmap_rows / 2.0
-            char_center_on_canvas_x = char_place_x + char_center_offset_x
-            char_center_on_canvas_y = char_place_y + char_center_offset_y
-            pen_border_x_float = char_center_on_canvas_x - border_center_offset_x
-            pen_border_y_float = char_center_on_canvas_y - border_center_offset_y
-            pen_border_x = int(round(pen_border_x_float))
-            pen_border_y = int(round(pen_border_y_float))
+            
+            # 改进的边框位置计算：直接基于字符位置和尺寸差异
+            # 避免浮点累积误差
+            size_diff_x = border_bitmap_width - char_bitmap_width
+            size_diff_y = border_bitmap_rows - char_bitmap_rows
+            
+            # 边框应该围绕字符居中，所以偏移是尺寸差的一半
+            pen_border_x = char_place_x - round(size_diff_x / 2.0)
+            pen_border_y = char_place_y - round(size_diff_y / 2.0)
             paste_border_y_start = max(0, pen_border_y)
             paste_border_x_start = max(0, pen_border_x)
             paste_border_y_end = min(canvas_border.shape[0], pen_border_y + border_bitmap_rows)
@@ -1398,7 +1485,8 @@ def put_text_horizontal(font_size: int, text: str, width: int, height: int, alig
         pen_line = pen_orig.copy()
 
         if alignment == 'center':
-            pen_line[0] += (max(line_width_list) - line_width) // 2 * (-1 if reversed_direction else 1)
+            # 使用round()提高居中精度
+            pen_line[0] += round((max(line_width_list) - line_width) / 2.0) * (-1 if reversed_direction else 1)
         elif alignment == 'right' and not reversed_direction:
             pen_line[0] += max(line_width_list) - line_width
         elif alignment == 'left' and reversed_direction:

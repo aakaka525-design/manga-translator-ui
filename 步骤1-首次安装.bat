@@ -809,36 +809,75 @@ exit /b 1
 echo.
 echo 正在激活环境...
 
-REM 激活命名环境
-call conda activate "%CONDA_ENV_NAME%" 2>nul
-if !ERRORLEVEL! == 0 (
-    echo [OK] 已激活命名环境: %CONDA_ENV_NAME%
-    goto :env_activated
-)
+REM 先确保 conda 已初始化
+if not exist "%MINICONDA_ROOT%\Scripts\activate.bat" goto :try_activate_s1
+call "%MINICONDA_ROOT%\Scripts\activate.bat"
 
-REM 激活失败 - 环境可能已损坏，删除并重新创建
-echo [WARNING] 无法激活环境: %CONDA_ENV_NAME%
-echo 环境可能已损坏，将自动删除并重新创建
+:try_activate_s1
+REM 方法1: conda activate 命名环境
+call conda activate "%CONDA_ENV_NAME%" 2>nul && echo [OK] 已激活命名环境: %CONDA_ENV_NAME% && goto :env_activated
+
+REM 方法2: activate.bat 激活命名环境
+echo [INFO] 尝试备用激活方式...
+if not exist "%MINICONDA_ROOT%\Scripts\activate.bat" goto :try_manual_path_s1
+call "%MINICONDA_ROOT%\Scripts\activate.bat" "%CONDA_ENV_NAME%" 2>nul && echo [OK] 已激活命名环境: %CONDA_ENV_NAME% && goto :env_activated
+
+:try_manual_path_s1
+REM 方法3: 获取环境路径并手动设置PATH
+for /f "tokens=2" %%i in ('conda info --envs 2^>nul ^| findstr /B /C:"%CONDA_ENV_NAME%"') do set "ENV_PATH=%%i"
+if not defined ENV_PATH goto :activate_failed_s1
+if not exist "!ENV_PATH!\python.exe" goto :activate_failed_s1
+echo [INFO] 使用手动PATH激活方式...
+set "PATH=!ENV_PATH!;!ENV_PATH!\Library\mingw-w64\bin;!ENV_PATH!\Library\usr\bin;!ENV_PATH!\Library\bin;!ENV_PATH!\Scripts;!ENV_PATH!\bin;%PATH%"
+set "CONDA_PREFIX=!ENV_PATH!"
+set "CONDA_DEFAULT_ENV=%CONDA_ENV_NAME%"
+echo [OK] 已激活环境: %CONDA_ENV_NAME%
+goto :env_activated
+
+:activate_failed_s1
+REM 所有激活方式都失败，询问用户
 echo.
+echo [WARNING] 无法激活环境: %CONDA_ENV_NAME%
+echo.
+echo 可能原因:
+echo   1. Conda 未正确初始化
+echo   2. 环境已损坏
+echo.
+echo 请选择:
+echo [1] 重新创建环境（删除现有环境）
+echo [2] 退出，手动修复
+echo.
+set /p activate_choice="请选择 (1/2): "
+if "!activate_choice!"=="2" goto :activate_exit_s1
+
+echo.
+echo 正在删除环境...
 call conda deactivate >nul 2>&1
 call conda env remove -n "%CONDA_ENV_NAME%" -y 2>nul
 
 REM 检查删除是否成功
-call conda info --envs 2>nul | findstr /C:"%CONDA_ENV_NAME%" >nul 2>&1
-if !ERRORLEVEL! == 0 (
-    echo [ERROR] 无法删除损坏的环境，可能被占用
-    echo 请关闭所有相关程序后重试
-    pause
-    exit /b 1
-)
+call conda info --envs 2>nul | findstr /B /C:"%CONDA_ENV_NAME%" >nul 2>&1 && goto :delete_failed_s1
 
-echo [OK] 已删除损坏的环境
+echo [OK] 已删除环境
 echo.
 echo 正在重新创建环境...
 echo.
-
-REM 跳转到创建新环境的逻辑（不显示"[INFO] 开始创建Conda环境..."）
 goto :create_new_env
+
+:activate_exit_s1
+echo.
+echo 建议尝试:
+echo   1. 关闭此窗口，打开新的命令提示符
+echo   2. 运行: conda init cmd.exe
+echo   3. 重新运行此脚本
+pause
+exit /b 1
+
+:delete_failed_s1
+echo [ERROR] 无法删除环境，可能被占用
+echo 请关闭所有相关程序后重试
+pause
+exit /b 1
 
 :env_activated
 

@@ -62,8 +62,7 @@ class AsyncService:
             return
         
         try:
-            count = self._job_manager.cancel_all()
-            self.logger.info(f"Cancelled {count} tasks via AsyncService")
+            self._job_manager.cancel_all()
         except Exception as e:
             self.logger.error(f"Error cancelling tasks: {e}")
 

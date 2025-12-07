@@ -75,7 +75,9 @@ class EditorController(QObject):
         self._regions_update_finished.connect(self.on_regions_update_finished)
         self._ocr_completed.connect(self._on_ocr_completed)
         self._translation_completed.connect(self._on_translation_completed)
-        self.logger.info("[CONTROLLER LOG] Internal signals connected to model methods")
+        
+        # 设置model的controller引用，用于命令模式
+        self.model.controller = self
 
         self._connect_model_signals()
     
@@ -226,19 +228,13 @@ class EditorController(QObject):
 
     def on_refined_mask_changed(self, mask):
         """refined mask 变化时的槽函数，触发增量 inpainting"""
-        self.logger.info("!!! Refined mask changed signal received !!!")
-        self.logger.info("Refined mask changed, checking for incremental inpainting...")
-
         # 检查是否有必要的数据来进行 inpainting
         image = self._get_current_image()
-        raw_mask = self.model.get_raw_mask()  # 获取原始蒙版用于比较
+        raw_mask = self.model.get_raw_mask()
 
         if image is not None and mask is not None and raw_mask is not None:
-            self.logger.info("All data available, starting incremental inpainting task...")
             # 计算差异蒙版（只包含用户编辑的部分）
             self.async_service.submit_task(self._async_incremental_inpaint(mask, raw_mask))
-        else:
-            self.logger.warning(f"Incremental inpainting skipped: image={image is not None}, mask={mask is not None}, raw_mask={raw_mask is not None}")
 
     @pyqtSlot(dict)
     def update_multiple_translations(self, translations: dict):
@@ -259,13 +255,10 @@ class EditorController(QObject):
         """确保一个函数在主GUI线程上运行"""
         def wrapper():
             try:
-                args_info = [f'(Type: {type(arg)}, Shape: {getattr(arg, "shape", "N/A")})' for arg in args]
-                self.logger.info(f"[CONTROLLER LOG] Executing on main thread: {func.__name__} with args: {args_info}")
                 result = func(*args)
-                self.logger.info(f"[CONTROLLER LOG] Successfully executed {func.__name__}")
                 return result
             except Exception as e:
-                self.logger.error(f"[CONTROLLER LOG] Error executing {func.__name__}: {e}")
+                self.logger.error(f"Error executing {func.__name__}: {e}")
                 raise
         QTimer.singleShot(0, wrapper)
 
@@ -275,17 +268,19 @@ class EditorController(QObject):
         """检查是否有未保存的编辑"""
         return self.history_service.can_undo()
 
-    def _clear_editor_state(self):
-        """清空编辑器状态"""
-        self.logger.info("Clearing editor state")
+    def _clear_editor_state(self, release_image_cache: bool = False):
+        """清空编辑器状态
+        
+        Args:
+            release_image_cache: 是否同时释放图片缓存（切换文件时通常不需要）
+        """
+        import gc
         
         # 取消所有正在运行的后台任务
         self.async_service.cancel_all_tasks()
-        self.logger.info("Cancelled all background tasks")
 
         # 使用ResourceManager卸载当前资源
-        self.resource_manager.unload_image()
-        self.logger.info("Unloaded image from ResourceManager")
+        self.resource_manager.unload_image(release_from_cache=release_image_cache)
 
         # 清空模型数据（向后兼容，View仍然监听Model）
         self.model.set_regions([])
@@ -304,8 +299,29 @@ class EditorController(QObject):
         from services import get_render_parameter_service
         render_parameter_service = get_render_parameter_service()
         render_parameter_service.clear_cache()
-
-        self.logger.info("Editor state cleared")
+        
+        # 清空GraphicsView的缓存
+        if self.view and hasattr(self.view, 'graphics_view'):
+            gv = self.view.graphics_view
+            if hasattr(gv, '_text_render_cache'):
+                gv._text_render_cache.clear()
+            if hasattr(gv, '_text_blocks_cache'):
+                gv._text_blocks_cache = []
+            if hasattr(gv, '_dst_points_cache'):
+                gv._dst_points_cache = []
+        
+        # 强制垃圾回收
+        gc.collect()
+        
+        # 释放GPU显存
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+        
+        self.logger.debug("Editor state cleared and memory released")
 
     def _is_translated_image(self, image_path: str) -> bool:
         """
@@ -323,23 +339,23 @@ class EditorController(QObject):
             output_dir = os.path.dirname(norm_path)
             map_path = os.path.join(output_dir, 'translation_map.json')
 
-            self.logger.info(f"Checking if translated image: {image_path}")
-            self.logger.info(f"Normalized path: {norm_path}")
-            self.logger.info(f"Looking for translation_map.json at: {map_path}")
+            self.logger.debug(f"Checking if translated image: {image_path}")
+            self.logger.debug(f"Normalized path: {norm_path}")
+            self.logger.debug(f"Looking for translation_map.json at: {map_path}")
 
             if os.path.exists(map_path):
                 with open(map_path, 'r', encoding='utf-8') as f:
                     translation_map = json.load(f)
-                self.logger.info(f"Found translation_map.json with {len(translation_map)} entries")
-                self.logger.info(f"Translation map keys: {list(translation_map.keys())[:3]}...")  # 只显示前3个
+                self.logger.debug(f"Found translation_map.json with {len(translation_map)} entries")
+                self.logger.debug(f"Translation map keys: {list(translation_map.keys())[:3]}...")  # 只显示前3个
                 # 如果当前路径是translation_map的key，说明是翻译后的图片
                 if norm_path in translation_map:
-                    self.logger.info(f"✓ Found translation mapping for: {image_path}")
+                    self.logger.debug(f"✓ Found translation mapping for: {image_path}")
                     return True
                 else:
-                    self.logger.info(f"✗ No translation mapping found for: {norm_path}")
+                    self.logger.debug(f"✗ No translation mapping found for: {norm_path}")
             else:
-                self.logger.info(f"✗ translation_map.json not found at: {map_path}")
+                self.logger.debug(f"✗ translation_map.json not found at: {map_path}")
         except Exception as e:
             self.logger.error(f"Error checking translation map: {e}")
 
@@ -347,7 +363,7 @@ class EditorController(QObject):
 
     def load_image_and_regions(self, image_path: str):
         """加载图像及其关联的区域数据，并触发后台处理"""
-        self.logger.info(f"Controller: Loading image {image_path}")
+        self.logger.debug(f"Controller: Loading image {image_path}")
 
         # 检查是否有未保存的编辑
         if self.has_unsaved_changes():
@@ -364,12 +380,18 @@ class EditorController(QObject):
                 self.logger.info("User cancelled loading new image")
                 return
             elif reply == QMessageBox.StandardButton.Yes:
-                # 导出当前图片
+                # 导出当前图片，然后异步加载新图片
                 self.export_image()
-                # 等待导出完成(这里简化处理,实际可能需要异步等待)
-                import time
-                time.sleep(0.5)
+                # 使用QTimer延迟加载，避免阻塞UI
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(500, lambda: self._do_load_image(image_path))
+                return
 
+        # 直接加载
+        self._do_load_image(image_path)
+    
+    def _do_load_image(self, image_path: str):
+        """实际执行图片加载的内部方法"""
         # 清空旧状态
         self._clear_editor_state()
 
@@ -383,7 +405,7 @@ class EditorController(QObject):
 
             if is_translated_image:
                 # 翻译后的图片：只作为查看器，不加载JSON
-                self.logger.info(f"Detected translated image, loading as viewer only: {image_path}")
+                self.logger.debug(f"Detected translated image, loading as viewer only: {image_path}")
                 self.model.set_source_image_path(image_path)
 
                 # 只在首次加载或用户未手动调整时设置透明度
@@ -431,7 +453,6 @@ class EditorController(QObject):
                 self.resource_manager.set_mask(MaskType.RAW, raw_mask)
                 # 同步到Model（向后兼容）
                 self.model.set_raw_mask(raw_mask)
-                self.logger.info(f"Raw mask loaded with shape: {raw_mask.shape}")
 
             self.model.set_refined_mask(None) # Initially, no refined mask is ready
 
@@ -439,7 +460,7 @@ class EditorController(QObject):
             inpainted_path = find_inpainted_path(image_path)
             if inpainted_path:
                 self.model.set_inpainted_image_path(inpainted_path)
-                self.logger.info(f"Found existing inpainted image: {inpainted_path}")
+                self.logger.debug(f"Found existing inpainted image: {inpainted_path}")
                 # 加载inpainted图片并触发信号
                 try:
                     inpainted_image = Image.open(inpainted_path)
@@ -448,7 +469,7 @@ class EditorController(QObject):
                         self.logger.info(f"Resizing inpainted image from {inpainted_image.size} to {image.size}")
                         inpainted_image = inpainted_image.resize(image.size, Image.LANCZOS)
                     self.model.set_inpainted_image(inpainted_image)
-                    self.logger.info(f"Loaded inpainted image: {inpainted_path}")
+                    self.logger.debug(f"Loaded inpainted image: {inpainted_path}")
                 except Exception as e:
                     self.logger.error(f"Error loading inpainted image: {e}")
                     self.model.set_inpainted_image_path(None)
@@ -458,7 +479,7 @@ class EditorController(QObject):
 
             # If regions were loaded, trigger background processing
             if regions:
-                self.logger.info("JSON data loaded, background processing is temporarily disabled.")
+                self.logger.debug("JSON data loaded, background processing is temporarily disabled.")
                 self.async_service.submit_task(self._async_refine_and_inpaint())
 
         except Exception as e:
@@ -471,7 +492,7 @@ class EditorController(QObject):
     async def _async_refine_and_inpaint(self):
         """Asynchronously refines the mask and generates an inpainting preview."""
         try:
-            self.logger.info("Starting async mask refinement and inpainting...")
+            self.logger.debug("Starting async mask refinement and inpainting...")
             image = self._get_current_image()
             raw_mask = self.model.get_raw_mask() # Use the raw mask for refinement
             regions = self._get_regions()
@@ -513,8 +534,6 @@ class EditorController(QObject):
                 dilation_offset=dilation_offset, ignore_bubble=ignore_bubble, kernel_size=kernel_size
             )
 
-            self.logger.info(f"[CONTROLLER LOG] Refined mask generated. Type: {type(refined_mask)}, Shape: {getattr(refined_mask, 'shape', 'N/A')}")
-
             if refined_mask is None:
                 self.logger.error("Mask refinement failed.")
                 return
@@ -528,18 +547,12 @@ class EditorController(QObject):
                 self.logger.error("Refined mask is empty")
                 return
 
-            self.logger.info("Using direct model update approach")
-            self.logger.info(f"[CONTROLLER LOG] About to update refined mask directly. Mask shape: {refined_mask.shape}")
-
             # Since we're already in an async context that should be thread-safe for PyQt signals,
             # let's try direct calls
             self.model.set_refined_mask(refined_mask)
-            self.logger.info("[CONTROLLER LOG] Refined mask update completed")
 
             # 不自动显示refined mask，让用户自己决定是否显示
             # self.model.set_display_mask_type('refined')
-
-            self.logger.info("Mask refinement successful.")
 
             # 2. Inpaint Image - 检查是否已有inpainted图片
             inpainted_path = self.model.get_inpainted_image_path()
@@ -562,7 +575,6 @@ class EditorController(QObject):
                     self.resource_manager.set_cache(self.CACHE_LAST_INPAINTED, inpainted_image_np.copy())
                     self.resource_manager.set_cache(self.CACHE_LAST_MASK, refined_mask.copy())
 
-                    self.logger.info("Existing inpainted image loaded successfully. Skipping inpainting step.")
                 except Exception as e:
                     self.logger.error(f"Failed to load existing inpainted image: {e}")
                     # 如果加载失败，继续执行inpainting
@@ -595,8 +607,6 @@ class EditorController(QObject):
                     cli_config = config.cli
                     use_gpu = cli_config.use_gpu
                     device = 'cuda' if use_gpu and torch.cuda.is_available() else 'cpu'
-
-                    self.logger.info(f"Using inpainter config: Model={inpainter_key.value}, Size={inpainting_size}, Device={device}")
 
                     inpainted_image_np = await inpaint_dispatch(
                         inpainter_key=inpainter_key,
@@ -631,7 +641,6 @@ class EditorController(QObject):
     async def _async_incremental_inpaint(self, current_mask, original_mask):
         """边界框局部修复 - 只修复变化区域的矩形边界框"""
         try:
-            self.logger.info("Starting bounding box incremental inpainting...")
             image = self._get_current_image()
 
             if image is None or current_mask is None:
@@ -661,9 +670,6 @@ class EditorController(QObject):
             removed_areas = cv2.subtract(last_mask_2d, current_mask_2d)
             all_changed_areas = cv2.bitwise_or(added_areas, removed_areas)
 
-            self.logger.info(f"Added areas: {np.sum(added_areas > 128)} pixels")
-            self.logger.info(f"Removed areas: {np.sum(removed_areas > 128)} pixels")
-
             if np.sum(all_changed_areas) == 0:
                 self.logger.info("No changes detected, skipping update.")
                 return
@@ -686,8 +692,6 @@ class EditorController(QObject):
 
             bbox_w = x_max - x_min
             bbox_h = y_max - y_min
-
-            self.logger.info(f"Bounding box: ({x_min}, {y_min}) to ({x_max}, {y_max}), size: {bbox_w}x{bbox_h}")
 
             # 裁剪原图和当前蒙版的对应区域
             image_np = np.array(image.convert("RGB"))
@@ -722,8 +726,6 @@ class EditorController(QObject):
             cli_config = config.cli
             device = 'cuda' if cli_config.use_gpu and torch.cuda.is_available() else 'cpu'
 
-            self.logger.info(f"Using bounding box inpainter: Model={inpainter_key.value}, BBox={bbox_w}x{bbox_h}, Device={device}")
-
             # 局部修复：原图矩形区域 + 对应蒙版
             bbox_result = await inpaint_dispatch(
                 inpainter_key=inpainter_key,
@@ -735,8 +737,6 @@ class EditorController(QObject):
             )
 
             if bbox_result is not None:
-                self.logger.info(f"Bounding box inpainting successful, result shape: {bbox_result.shape}")
-
                 # 将局部修复结果贴回完整图像
                 last_inpainted = self.resource_manager.get_cache(self.CACHE_LAST_INPAINTED)
                 if last_inpainted is None:
@@ -1245,10 +1245,13 @@ class EditorController(QObject):
         if not region_indices:
             return
 
-        # 重置 _last_edited_region_index,确保删除操作触发完全更新
-        if self.view and hasattr(self.view, 'graphics_view'):
-            self.view.graphics_view._last_edited_region_index = None
-            self.logger.info("[DELETE] 重置 _last_edited_region_index 为 None")
+        try:
+            # 重置 _last_edited_region_index,确保删除操作触发完全更新
+            if self.view and hasattr(self.view, 'graphics_view'):
+                graphics_view = self.view.graphics_view
+                if graphics_view and hasattr(graphics_view, '_last_edited_region_index'):
+                    graphics_view._last_edited_region_index = None
+                    self.logger.info("[DELETE] 重置 _last_edited_region_index 为 None")
 
         # 按索引倒序处理，避免索引变化问题
         sorted_indices = sorted(region_indices, reverse=True)
@@ -1348,6 +1351,9 @@ class EditorController(QObject):
 
         # 清除选择
         self.model.set_selection([])
+        
+        except Exception as e:
+            self.logger.error(f"[DELETE] 删除区域时发生错误: {e}", exc_info=True)
 
     def enter_drawing_mode(self):
         """进入绘制模式以添加新文本框"""
@@ -1574,6 +1580,10 @@ class EditorController(QObject):
                 self.logger.info(f"[TOAST_DEBUG] Emitting _show_toast_signal to main thread...")
                 self._show_toast_signal.emit(f"导出成功\n{output_path}", 5000, True, output_path)
                 self.logger.info(f"[TOAST_DEBUG] Signal emitted successfully")
+                
+                # 导出成功后释放内存
+                self.resource_manager.release_memory_after_export()
+                self.logger.info("Memory released after successful export")
 
             def error_callback(message):
                 self.logger.error(f"Export error: {message}")
@@ -1680,7 +1690,7 @@ class EditorController(QObject):
 
                 source_path = translation_map.get(norm_path)
                 if source_path and os.path.exists(source_path):
-                    self.logger.info(f"Loading source file for editing: {source_path}")
+                    self.logger.debug(f"Loading source file for editing: {source_path}")
                     self.load_image_and_regions(source_path)
                 else:
                     self.logger.warning(f"Source file not found: {source_path}")

@@ -35,7 +35,11 @@ class EditorLogic(QObject):
             None, 
             "添加文件到编辑器", 
             last_dir, 
-            "Image Files (*.png *.jpg *.jpeg *.bmp *.webp)"
+            "All Supported Files (*.png *.jpg *.jpeg *.bmp *.webp *.pdf *.epub *.cbz *.cbr *.zip);;"
+            "Image Files (*.png *.jpg *.jpeg *.bmp *.webp);;"
+            "PDF Files (*.pdf);;"
+            "EPUB Files (*.epub);;"
+            "Comic Book Archives (*.cbz *.cbr *.zip)"
         )
         if file_paths:
             self.add_files(file_paths)
@@ -73,7 +77,10 @@ class EditorLogic(QObject):
 
             # 如果是第一次添加文件，自动加载第一个
             if is_first_add and len(new_files) > 0:
-                self.load_image_into_editor(new_files[0])
+                try:
+                    self.load_image_into_editor(new_files[0])
+                except Exception:
+                    pass  # 静默失败，避免崩溃
 
     def add_folder(self, folder_path: str):
         if not folder_path or not os.path.isdir(folder_path):
@@ -89,17 +96,19 @@ class EditorLogic(QObject):
             
             # 如果是第一次添加，自动加载第一个图片
             if is_first_add:
-                # 获取文件夹中的第一个图片
                 image_extensions = {'.png', '.jpg', '.jpeg', '.bmp', '.webp'}
                 try:
                     for root, dirs, files in os.walk(folder_path):
                         for f in sorted(files):
                             if os.path.splitext(f)[1].lower() in image_extensions:
                                 first_image = os.path.join(root, f)
-                                self.load_image_into_editor(first_image)
+                                try:
+                                    self.load_image_into_editor(first_image)
+                                except Exception:
+                                    pass  # 静默失败，避免崩溃
                                 return
-                except OSError as e:
-                    print(f"Error reading folder {folder_path}: {e}")
+                except OSError:
+                    pass  # 静默失败
 
     @pyqtSlot(list)
     def add_files_from_paths(self, paths: List[str]):
@@ -148,7 +157,36 @@ class EditorLogic(QObject):
                         self.controller._clear_editor_state()
                 except:
                     pass
-            # 文件夹删除由视图和app_logic处理，这里不需要做任何事
+            
+            # 从 folder_tree 中删除
+            del self.folder_tree[norm_file]
+            
+            # 从 source_files 和 translated_files 中删除该文件夹下的所有文件
+            files_to_remove = []
+            for source_file in self.source_files:
+                norm_source = os.path.normpath(source_file)
+                try:
+                    if norm_source.startswith(norm_file + os.sep):
+                        files_to_remove.append(source_file)
+                except:
+                    pass
+            
+            for f in files_to_remove:
+                self.source_files.remove(f)
+            
+            # 同样处理 translated_files
+            files_to_remove = []
+            for trans_file in self.translated_files:
+                norm_trans = os.path.normpath(trans_file)
+                try:
+                    if norm_trans.startswith(norm_file + os.sep):
+                        files_to_remove.append(trans_file)
+                except:
+                    pass
+            
+            for f in files_to_remove:
+                self.translated_files.remove(f)
+            
             return
         
         # 检查是否是文件
@@ -156,25 +194,59 @@ class EditorLogic(QObject):
         source_path, translated_path = self._find_file_pair(file_path)
         norm_source = os.path.normpath(source_path) if source_path else None
         
+        # 从 source_files 中删除（需要规范化路径进行比较）
+        files_to_remove = []
+        if source_path:
+            norm_source = os.path.normpath(source_path)
+            for f in self.source_files:
+                if os.path.normpath(f) == norm_source:
+                    files_to_remove.append(f)
+            
+            for f in files_to_remove:
+                self.source_files.remove(f)
+        
+        # 从 translated_files 中删除（需要规范化路径进行比较）
+        files_to_remove = []
+        if translated_path:
+            norm_trans = os.path.normpath(translated_path)
+            for f in self.translated_files:
+                if os.path.normpath(f) == norm_trans:
+                    files_to_remove.append(f)
+            
+            for f in files_to_remove:
+                self.translated_files.remove(f)
+        
         # 检查当前加载的图片是否是被移除的文件
         current_image_path = self.controller.model.get_source_image_path()
         if current_image_path:
             norm_current = os.path.normpath(current_image_path)
             if norm_current == norm_file or norm_current == norm_source:
                 self.controller.model.set_image(None)
-                self.controller._clear_editor_state()
+                self.controller._clear_editor_state(release_image_cache=True)
+        
+        # 从资源管理器的缓存中释放被移除的图片
+        if hasattr(self.controller, 'resource_manager'):
+            if source_path:
+                self.controller.resource_manager.release_image_from_cache(source_path)
+            if translated_path:
+                self.controller.resource_manager.release_image_from_cache(translated_path)
 
     @pyqtSlot()
     def clear_list(self):
         self.source_files.clear()
         self.translated_files.clear()
+        self.folder_tree.clear()
         # 清空列表时发射空列表
         self.file_list_changed.emit([])
         
         # 先清空画布图片，这样后台任务会检测到图片为None而提前返回
         self.controller.model.set_image(None)
         # 然后清空编辑器状态（包括取消后台任务）
-        self.controller._clear_editor_state()
+        self.controller._clear_editor_state(release_image_cache=True)
+        
+        # 清空所有图片缓存
+        if hasattr(self.controller, 'resource_manager'):
+            self.controller.resource_manager.clear_image_cache()
 
     # --- Image Loading Methods ---
 

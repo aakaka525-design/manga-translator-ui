@@ -88,11 +88,42 @@ class OpenAITranslator(CommonTranslator):
     
     def parse_args(self, args):
         """解析配置参数"""
+        # 调用父类的 parse_args 来设置通用参数（包括 attempts、post_check 等）
+        super().parse_args(args)
+        
+        # 同步 attempts 到 _max_total_attempts
+        self._max_total_attempts = self.attempts
+        
         # 从配置中读取RPM限制
         max_rpm = getattr(args, 'max_requests_per_minute', 0)
         if max_rpm > 0:
             self._MAX_REQUESTS_PER_MINUTE = max_rpm
             self.logger.info(f"Setting OpenAI max requests per minute to: {max_rpm}")
+        
+        # 从配置中读取用户级 API Key（优先于环境变量）
+        need_rebuild_client = False
+        
+        user_api_key = getattr(args, 'user_api_key', None)
+        if user_api_key:
+            self.api_key = user_api_key
+            need_rebuild_client = True
+            self.logger.info("[UserAPIKey] Using user-provided API key")
+        
+        user_api_base = getattr(args, 'user_api_base', None)
+        if user_api_base:
+            self.base_url = user_api_base
+            need_rebuild_client = True
+            self.logger.info(f"[UserAPIKey] Using user-provided API base: {user_api_base}")
+        
+        user_api_model = getattr(args, 'user_api_model', None)
+        if user_api_model:
+            self.model = user_api_model
+            self.logger.info(f"[UserAPIKey] Using user-provided model: {user_api_model}")
+        
+        # 如果 API Key 或 Base URL 变化，重建客户端
+        if need_rebuild_client:
+            self.client = None
+            self._setup_client()
     
     def _setup_client(self):
         """设置OpenAI客户端"""
@@ -104,7 +135,7 @@ class OpenAITranslator(CommonTranslator):
                 default_headers=BROWSER_HEADERS,
                 http_client=httpx.AsyncClient(
                     headers=BROWSER_HEADERS,
-                    timeout=httpx.Timeout(120.0, connect=30.0)
+                    timeout=httpx.Timeout(300.0, connect=60.0)
                 )
             )
     
@@ -298,11 +329,16 @@ This is an incorrect response because it includes extra text and explanations.
                         self.logger.info(f'Ratelimit sleep: {sleep_time:.2f}s')
                         await asyncio.sleep(sleep_time)
                 
+                # 动态调整温度：质量检查或BR检查失败时提高温度帮助跳出错误模式
+                current_temperature = self._get_retry_temperature(self.temperature, retry_attempt, retry_reason)
+                if retry_attempt > 0 and current_temperature != self.temperature:
+                    self.logger.info(f"[重试] 温度调整: {self.temperature} -> {current_temperature}")
+                
                 response = await self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
                     max_tokens=self.max_tokens,
-                    temperature=self.temperature
+                    temperature=current_temperature
                 )
                 
                 # 在API调用成功后立即更新时间戳，确保所有请求（包括重试）都被计入速率限制
@@ -341,6 +377,9 @@ This is an incorrect response because it includes extra text and explanations.
                         self.logger.warning(f"[{log_attempt}] {retry_reason}. Retrying...")
                         self.logger.warning(f"Expected texts: {texts}")
                         self.logger.warning(f"Got translations: {translations}")
+                        
+                        # 记录错误以便在达到最大尝试次数时显示
+                        last_exception = Exception(f"翻译数量不匹配: 期望 {len(texts)} 条，实际得到 {len(translations)} 条")
 
                         if not is_infinite and attempt >= max_retries:
                             raise Exception(f"Translation count mismatch after {max_retries} attempts: expected {len(texts)}, got {len(translations)}")
@@ -355,6 +394,9 @@ This is an incorrect response because it includes extra text and explanations.
                         retry_reason = f"Quality check failed: {error_msg}"
                         log_attempt = f"{attempt}/{max_retries}" if not is_infinite else f"Attempt {attempt}"
                         self.logger.warning(f"[{log_attempt}] {retry_reason}. Retrying...")
+                        
+                        # 记录错误以便在达到最大尝试次数时显示
+                        last_exception = Exception(f"翻译质量检查失败: {error_msg}")
 
                         if not is_infinite and attempt >= max_retries:
                             raise Exception(f"Quality check failed after {max_retries} attempts: {error_msg}")
@@ -373,6 +415,9 @@ This is an incorrect response because it includes extra text and explanations.
                         retry_reason = "BR markers missing in translations"
                         log_attempt = f"{attempt}/{max_retries}" if not is_infinite else f"Attempt {attempt}"
                         self.logger.warning(f"[{log_attempt}] {retry_reason}, retrying...")
+                        
+                        # 记录错误以便在达到最大尝试次数时显示
+                        last_exception = Exception("AI断句检查失败: 翻译结果缺少必要的[BR]标记")
                         
                         # 如果达到最大重试次数，抛出友好的异常
                         if not is_infinite and attempt >= max_retries:

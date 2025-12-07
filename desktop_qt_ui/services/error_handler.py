@@ -45,7 +45,6 @@ class InputValidator:
         # API密钥验证模式
         self.api_patterns = {
             'openai': r'^sk-[a-zA-Z0-9]{48}$',
-            'deepl': r'^[a-fA-F0-9-:fx]+$',
         }
     
     def validate_file_path(self, file_path: str) -> ValidationResult:

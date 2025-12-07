@@ -18,6 +18,7 @@ from .history_service import EditorStateManager as HistoryService
 from .i18n_service import I18nManager, get_i18n_manager
 from .log_service import LogService, setup_logging
 from .ocr_service import OcrService
+from .preset_service import PresetService
 from .render_parameter_service import RenderParameterService
 from .state_manager import StateManager
 from .translation_service import TranslationService
@@ -73,6 +74,9 @@ class ServiceContainer:
         config = self.services['config'].get_config()
         ui_language = config.app.ui_language if hasattr(config.app, 'ui_language') else "auto"
         self.services['i18n'] = I18nManager(locale_dir=locale_dir, fallback_locale="zh_CN", config_language=ui_language)
+        
+        # 初始化预设服务
+        self.services['preset'] = PresetService()
         
         # 根据配置设置日志级别
         try:
@@ -238,6 +242,11 @@ class ServiceManager:
         return cls.get_service('i18n')
     
     @classmethod
+    def get_preset_service(cls) -> Optional[PresetService]:
+        """获取预设服务"""
+        return cls.get_service('preset')
+    
+    @classmethod
     def shutdown(cls):
         """关闭服务管理器"""
         if cls._container:
@@ -295,6 +304,10 @@ def get_resource_manager() -> Optional[ResourceManager]:
 def get_i18n_manager() -> Optional[I18nManager]:
     """获取国际化管理器的便捷函数"""
     return ServiceManager.get_i18n_manager()
+
+def get_preset_service() -> Optional[PresetService]:
+    """获取预设服务的便捷函数"""
+    return ServiceManager.get_preset_service()
 
 def shutdown_services():
     """关闭服务的便捷函数"""

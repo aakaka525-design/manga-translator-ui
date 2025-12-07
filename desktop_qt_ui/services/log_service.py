@@ -41,6 +41,13 @@ class LogService:
         
     def _setup_main_logger(self):
         """设置主日志器"""
+        # 初始化 manga_translator 的日志系统
+        try:
+            from manga_translator.utils.log import init_logging
+            init_logging()
+        except Exception as e:
+            logging.warning(f"无法初始化manga_translator日志: {e}")
+        
         logger = logging.getLogger(self.app_name)
         logger.setLevel(logging.INFO)  # 默认INFO级别，可通过set_console_log_level调整
         

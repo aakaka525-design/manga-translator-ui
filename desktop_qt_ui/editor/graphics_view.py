@@ -153,19 +153,21 @@ class GraphicsView(QGraphicsView):
 
     def clear_all_state(self):
         """清空所有状态,包括items、缓存、计时器"""
+        try:
+            # 停止防抖计时器
+            if hasattr(self, 'render_debounce_timer') and self.render_debounce_timer.isActive():
+                self.render_debounce_timer.stop()
 
-        # 停止防抖计时器
-        if self.render_debounce_timer.isActive():
-            self.render_debounce_timer.stop()
-
-        # 清空region items
-        for item in self._region_items:
-            try:
-                if item and hasattr(item, 'scene') and item.scene():
-                    self.scene.removeItem(item)
-            except (RuntimeError, AttributeError):
-                pass
-        self._region_items.clear()
+            # 清空region items - 使用副本遍历避免修改时出错
+            items_to_remove = list(self._region_items) if hasattr(self, '_region_items') else []
+            for item in items_to_remove:
+                try:
+                    if item and hasattr(item, 'scene') and item.scene():
+                        self.scene.removeItem(item)
+                except (RuntimeError, AttributeError):
+                    pass
+            if hasattr(self, '_region_items'):
+                self._region_items.clear()
 
         # 清空image items
         if self._image_item and self._image_item.scene():
@@ -203,7 +205,8 @@ class GraphicsView(QGraphicsView):
             self._preview_item = None
 
         # 清空缓存
-        self._text_render_cache.clear()
+        if hasattr(self, '_text_render_cache'):
+            self._text_render_cache.clear()
         self._text_blocks_cache = []
         self._dst_points_cache = []
 
@@ -212,6 +215,10 @@ class GraphicsView(QGraphicsView):
         self._is_drawing_geometry = False
         self._is_drawing_textbox = False
         self._last_edited_region_index = None
+        
+        except (RuntimeError, AttributeError) as e:
+            # 清理过程中可能遇到已删除的对象
+            print(f"[View] Warning: Error during clear_all_state: {e}")
 
     def on_image_changed(self, image):
         """槽：当模型中的图像变化时更新背景"""
@@ -464,82 +471,103 @@ class GraphicsView(QGraphicsView):
 
     def _perform_single_item_update(self, index):
         """Delegates the update logic to the RegionTextItem itself."""
-        if not (0 <= index < len(self._region_items)):
-            return
+        try:
+            if not (0 <= index < len(self._region_items)):
+                return
 
-        region_data = self.model.get_region_by_index(index)
-        item = self._region_items[index]
+            region_data = self.model.get_region_by_index(index)
+            item = self._region_items[index]
 
-        if region_data and item:
-            # The item is now responsible for updating itself from the new data.
-            item.update_from_data(region_data)
+            # 安全检查：确保item仍然有效
+            if item is None:
+                return
+            
+            # 检查item是否仍在场景中（可能已被删除）
+            if not hasattr(item, 'scene') or item.scene() is None:
+                return
 
-            # 重新计算单个区域的渲染数据
-            self._recalculate_single_region_render_data(index)
+            if region_data and item:
+                # The item is now responsible for updating itself from the new data.
+                item.update_from_data(region_data)
 
-            # 重新渲染单个区域的文字
-            self._update_single_region_text_visual(index)
+                # 重新计算单个区域的渲染数据
+                self._recalculate_single_region_render_data(index)
 
-            # 重新渲染后,再次更新白框
-            updated_region_data = self.model.get_region_by_index(index)
-            if updated_region_data:
-                item.update_from_data(updated_region_data)
+                # 重新渲染单个区域的文字
+                self._update_single_region_text_visual(index)
 
-            item.update() # Trigger a repaint for the item.
+                # 重新渲染后,再次更新白框
+                updated_region_data = self.model.get_region_by_index(index)
+                if updated_region_data and item.scene() is not None:
+                    item.update_from_data(updated_region_data)
+
+                if item.scene() is not None:
+                    item.update() # Trigger a repaint for the item.
+        except (RuntimeError, AttributeError) as e:
+            # Item可能在更新过程中被删除
+            print(f"[View] Warning: Item update failed for index {index}: {e}")
 
 
 
     def _perform_render_update(self):
         """执行实际的渲染更新，由防抖计时器调用。"""
-        # Clear old region items safely
-        for item in self._region_items:
-            try:
-                if item and hasattr(item, 'scene') and item.scene():
-                    self.scene.removeItem(item)
-            except (RuntimeError, AttributeError):
-                # Item already deleted or invalid, ignore
-                pass
-        self._region_items.clear()
+        try:
+            # Clear old region items safely - 使用副本遍历
+            items_to_remove = list(self._region_items)
+            for item in items_to_remove:
+                try:
+                    if item and hasattr(item, 'scene') and item.scene():
+                        self.scene.removeItem(item)
+                except (RuntimeError, AttributeError):
+                    # Item already deleted or invalid, ignore
+                    pass
+            self._region_items.clear()
 
-        # Add a new item for each REGION
-        regions = self.model.get_regions()
-        for i, region_data in enumerate(regions):
-            if not region_data.get('lines'):
-                continue
-            item = RegionTextItem(
-                region_data,
-                i,
-                geometry_callback=self._on_region_geometry_changed,
-            )
-            item.setZValue(100)
-            self.scene.addItem(item)
-            self._region_items.append(item)
+            # Add a new item for each REGION
+            regions = self.model.get_regions()
+            for i, region_data in enumerate(regions):
+                if not region_data.get('lines'):
+                    continue
+                item = RegionTextItem(
+                    region_data,
+                    i,
+                    geometry_callback=self._on_region_geometry_changed,
+                )
+                item.setZValue(100)
+                self.scene.addItem(item)
+                self._region_items.append(item)
 
-        # After updating items, recalculate all rendering data
-        self.recalculate_render_data()
-        self._update_text_visuals()
-        self.scene.update()
+            # After updating items, recalculate all rendering data
+            self.recalculate_render_data()
+            self._update_text_visuals()
+            self.scene.update()
+        except Exception as e:
+            print(f"[View] Warning: Render update failed: {e}")
 
     def _update_text_visuals(self):
-        if self.model.get_region_display_mode() in ["box_only", "none"]:
-            for item in self._region_items:
-                item.text_item.setVisible(False)
-            return
-        else:
-            for item in self._region_items:
-                item.text_item.setVisible(True)
+        try:
+            if self.model.get_region_display_mode() in ["box_only", "none"]:
+                for item in self._region_items:
+                    if item and hasattr(item, 'text_item') and item.text_item and item.scene():
+                        item.text_item.setVisible(False)
+                return
+            else:
+                for item in self._region_items:
+                    if item and hasattr(item, 'text_item') and item.text_item and item.scene():
+                        item.text_item.setVisible(True)
 
-        render_parameter_service = get_render_parameter_service()
+            render_parameter_service = get_render_parameter_service()
 
-        for i, text_block in enumerate(self._text_blocks_cache):
-            item = self._region_items[i] if i < len(self._region_items) else None
-            if not item:
-                continue
+            for i, text_block in enumerate(self._text_blocks_cache):
+                item = self._region_items[i] if i < len(self._region_items) else None
+                if not item or item.scene() is None:
+                    continue
 
-            if text_block is None or i >= len(self._dst_points_cache) or self._dst_points_cache[i] is None:
-                item.update_text_pixmap(QPixmap(), QPointF(0, 0))
-                item.set_dst_points(None)  # 清除绿框数据
-                continue
+                if text_block is None or i >= len(self._dst_points_cache) or self._dst_points_cache[i] is None:
+                    if item.scene() is not None:
+                        item.update_text_pixmap(QPixmap(), QPointF(0, 0))
+                        item.set_dst_points(None)  # 清除绿框数据
+                    continue
 
             region_data = self.model.get_region_by_index(i)
             if not region_data: continue
@@ -648,12 +676,19 @@ class GraphicsView(QGraphicsView):
                 # 不传递 angle，因为 item 已经通过 setRotation() 设置了旋转
                 pivot = None
 
-                item.update_text_pixmap(pixmap, pos, 0, pivot)
+                if item.scene() is not None:
+                    item.update_text_pixmap(pixmap, pos, 0, pivot)
             else:
-                item.update_text_pixmap(QPixmap(), QPointF(0, 0))
+                if item.scene() is not None:
+                    item.update_text_pixmap(QPixmap(), QPointF(0, 0))
 
             # 无论是否有渲染结果,都设置绿框数据(即使 translation 为空)
-            item.set_dst_points(self._dst_points_cache[i])
+            if item.scene() is not None and i < len(self._dst_points_cache):
+                item.set_dst_points(self._dst_points_cache[i])
+                
+        except (RuntimeError, AttributeError) as e:
+            # 处理item在更新过程中被删除的情况
+            print(f"[View] Warning: Text visuals update failed: {e}")
 
     def _recalculate_single_region_render_data(self, index):
         """重新计算单个区域的渲染数据"""
@@ -753,22 +788,32 @@ class GraphicsView(QGraphicsView):
 
     def _update_single_region_text_visual(self, index):
         """重新渲染单个区域的文字"""
-        if not (0 <= index < len(self._region_items)):
-            return
+        try:
+            if not (0 <= index < len(self._region_items)):
+                return
 
-        if self.model.get_region_display_mode() in ["box_only", "none"]:
-            self._region_items[index].text_item.setVisible(False)
-            return
-        else:
-            self._region_items[index].text_item.setVisible(True)
+            item = self._region_items[index]
+            
+            # 安全检查：确保item有效且在场景中
+            if item is None or not hasattr(item, 'scene') or item.scene() is None:
+                return
+            
+            if not hasattr(item, 'text_item') or item.text_item is None:
+                return
 
-        if index >= len(self._text_blocks_cache) or index >= len(self._dst_points_cache):
-            return
+            if self.model.get_region_display_mode() in ["box_only", "none"]:
+                item.text_item.setVisible(False)
+                return
+            else:
+                item.text_item.setVisible(True)
 
-        text_block = self._text_blocks_cache[index]
-        item = self._region_items[index]
+            if index >= len(self._text_blocks_cache) or index >= len(self._dst_points_cache):
+                return
 
-        if text_block is None or self._dst_points_cache[index] is None:
+            text_block = self._text_blocks_cache[index] if index < len(self._text_blocks_cache) else None
+            dst_points = self._dst_points_cache[index] if index < len(self._dst_points_cache) else None
+
+            if text_block is None or dst_points is None:
             item.update_text_pixmap(QPixmap(), QPointF(0, 0))
             item.set_dst_points(None)
             return
@@ -846,11 +891,17 @@ class GraphicsView(QGraphicsView):
         if render_result:
             pixmap, pos = render_result
             # 不传递 angle，因为 item 已经通过 setRotation() 设置了旋转
-            item.update_text_pixmap(pixmap, pos, 0, None)
-            item.set_dst_points(self._dst_points_cache[index])
+            if item.scene() is not None:  # 再次检查item是否仍有效
+                item.update_text_pixmap(pixmap, pos, 0, None)
+                item.set_dst_points(dst_points)
         else:
-            item.update_text_pixmap(QPixmap(), QPointF(0, 0))
-            item.set_dst_points(None)
+            if item.scene() is not None:
+                item.update_text_pixmap(QPixmap(), QPointF(0, 0))
+                item.set_dst_points(None)
+                
+        except (RuntimeError, AttributeError) as e:
+            # Item可能在渲染过程中被删除
+            print(f"[View] Warning: Text visual update failed for index {index}: {e}")
 
     def recalculate_render_data(self):
         """
@@ -1294,14 +1345,24 @@ class GraphicsView(QGraphicsView):
             new_mask=new_mask_np.copy()
         )
         
-        # Access controller through parent hierarchy to execute command
-        # GraphicsView -> QSplitter -> EditorView
-        editor_view = self.parent().parent() if self.parent() else None
-        controller = getattr(editor_view, 'controller', None) if editor_view else None
+        # Access controller through model's controller reference
+        controller = getattr(self.model, 'controller', None)
         if controller and hasattr(controller, 'execute_command'):
             controller.execute_command(command)
         else:
-            print("Warning: Could not find controller to execute mask edit command")
+            # Fallback: try to find controller through parent hierarchy
+            # GraphicsView -> QSplitter -> EditorView
+            editor_view = self.parent()
+            while editor_view and not hasattr(editor_view, 'controller'):
+                editor_view = editor_view.parent()
+            
+            if editor_view and hasattr(editor_view, 'controller'):
+                editor_view.controller.execute_command(command)
+            else:
+                # Last resort: directly update the model (no undo support)
+                self.model.set_refined_mask(new_mask_np.copy())
+                import logging
+                logging.warning("Could not find controller, updated mask directly without undo support")
 
         self._current_draw_path = None
 
@@ -1335,21 +1396,34 @@ class GraphicsView(QGraphicsView):
 
     def _on_selection_changed(self, selected_indices: list):
         """同步model的selection到Qt item的selected状态"""
-        # 先清除所有item的selection
-        for item in self._region_items:
-            if item.isSelected():
-                item.setSelected(False)
-                item.update()  # 强制重绘
+        try:
+            # 先清除所有item的selection - 使用安全遍历
+            for item in self._region_items:
+                try:
+                    if item and hasattr(item, 'scene') and item.scene() and item.isSelected():
+                        item.setSelected(False)
+                        item.update()  # 强制重绘
+                except (RuntimeError, AttributeError):
+                    # Item可能已被删除
+                    pass
 
-        # 设置新选中的items
-        for idx in selected_indices:
-            if 0 <= idx < len(self._region_items):
-                self._region_items[idx].setSelected(True)
-                self._region_items[idx].update()  # 强制重绘
-        
-        # 强制场景更新
-        self.scene.update()
-        self.viewport().update()
+            # 设置新选中的items
+            for idx in selected_indices:
+                if 0 <= idx < len(self._region_items):
+                    item = self._region_items[idx]
+                    try:
+                        if item and hasattr(item, 'scene') and item.scene():
+                            item.setSelected(True)
+                            item.update()  # 强制重绘
+                    except (RuntimeError, AttributeError):
+                        pass
+            
+            # 强制场景更新
+            if self.scene:
+                self.scene.update()
+            self.viewport().update()
+        except Exception as e:
+            print(f"[View] Warning: Selection change failed: {e}")
 
     def _update_cursor(self):
         """Updates the cursor to match the selected tool and brush size."""

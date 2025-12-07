@@ -404,7 +404,7 @@ class EditorView(QWidget):
 
     @pyqtSlot(str)
     def _on_file_remove_requested(self, file_path: str):
-        """处理文件移除请求：先在视图中移除，再调用app_logic同步"""
+        """处理文件移除请求：只处理编辑器自己的文件列表"""
         import os
         
         # 先在视图中移除（避免重建列表）
@@ -413,10 +413,7 @@ class EditorView(QWidget):
         # 调用 editor_logic 移除文件（会检查是否需要清空画布）
         self.logic.remove_file(file_path, emit_signal=False)
         
-        # 再调用app_logic同步数据
-        # file_path 可能是源文件路径或翻译后的文件路径
-        # app_logic.remove_file 会自动处理
-        self.app_logic.remove_file(file_path)
+        # 编辑器有自己独立的文件列表，不需要同步到主页的 app_logic
     
     @pyqtSlot(list)
     def update_file_list(self, files: list):

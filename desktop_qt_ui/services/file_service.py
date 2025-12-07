@@ -31,6 +31,10 @@ class FileService:
         self.supported_image_extensions = {
             '.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp', '.tiff', '.tif'
         }
+        # 支持的压缩包/文档格式
+        self.supported_archive_extensions = {
+            '.pdf', '.epub', '.cbz', '.cbr', '.zip'
+        }
         # 支持的配置文件格式
         self.supported_config_extensions = {
             '.json', '.yaml', '.yml', '.toml'
@@ -52,7 +56,7 @@ class FileService:
             self.logger.warning(f"JSON file not found for {os.path.basename(image_path)}")
             return regions, raw_mask, original_size
 
-        self.logger.info(f"Loading JSON from: {json_path}")
+        self.logger.debug(f"Loading JSON from: {json_path}")
 
         try:
             with open(json_path, 'r', encoding='utf-8') as f:
@@ -133,7 +137,7 @@ class FileService:
             
             original_size = (image_data.get('original_width'), image_data.get('original_height'))
 
-            self.logger.info(f"Loaded {len(regions)} regions from {os.path.basename(json_path)}")
+            self.logger.debug(f"Loaded {len(regions)} regions from {os.path.basename(json_path)}")
 
         except Exception as e:
             self.logger.error(f"Failed to load or parse JSON file {json_path}: {e}")
@@ -142,14 +146,20 @@ class FileService:
         return regions, raw_mask, original_size
         
     def validate_image_file(self, file_path: str) -> bool:
-        """验证是否为有效的图片文件"""
+        """验证是否为有效的图片文件或压缩包文件"""
         try:
             if not os.path.exists(file_path):
                 return False
                 
             # 检查文件扩展名
             _, ext = os.path.splitext(file_path)
-            if ext.lower() not in self.supported_image_extensions:
+            ext_lower = ext.lower()
+            
+            # 支持压缩包格式
+            if ext_lower in self.supported_archive_extensions:
+                return os.access(file_path, os.R_OK)
+            
+            if ext_lower not in self.supported_image_extensions:
                 return False
                 
             # 检查MIME类型
@@ -166,6 +176,11 @@ class FileService:
         except Exception as e:
             self.logger.error(f"验证图片文件失败 {file_path}: {e}")
             return False
+    
+    def is_archive_file(self, file_path: str) -> bool:
+        """检查文件是否是压缩包/文档格式"""
+        _, ext = os.path.splitext(file_path)
+        return ext.lower() in self.supported_archive_extensions
     
     def validate_config_file(self, file_path: str) -> bool:
         """验证是否为有效的配置文件"""

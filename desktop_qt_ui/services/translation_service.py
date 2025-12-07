@@ -23,7 +23,7 @@ except ImportError as e:
     TRANSLATOR_AVAILABLE = False
     # 定义fallback类型
     class Translator:
-        sugoi = "sugoi"
+        openai_hq = "openai_hq"
     
     class TranslatorConfig:
         pass
@@ -50,7 +50,7 @@ class TranslationService:
         if TRANSLATOR_AVAILABLE and hasattr(Translator, initial_translator_name):
             self.current_translator_enum = Translator[initial_translator_name]
         else:
-            self.current_translator_enum = Translator.sugoi # Fallback
+            self.current_translator_enum = Translator.openai_hq # Fallback
         
         self.current_target_lang = initial_config.translator.target_lang or 'CHS'
     

@@ -850,9 +850,10 @@ def resize_regions_to_font_size(img: np.ndarray, text_regions: List['TextBlock']
                             unrotated_p = rotate_polygons(region.center, p.reshape(1, -1, 2), region.angle, to_int=False)
                             unrotated_polygons.append(Polygon(unrotated_p.reshape(-1, 2)))
                         union_poly = unary_union(unrotated_polygons)
-                        original_area = union_poly.area
                         unrotated_base_poly = union_poly.envelope
-                        logger.debug(f"[SMART_SCALING DEBUG] Multi-line region, union area={original_area:.1f}")
+                        # 使用外接矩形面积（bubble_size），包含框之间的空白
+                        original_area = region.unrotated_size[0] * region.unrotated_size[1]
+                        logger.debug(f"[SMART_SCALING DEBUG] Multi-line region, bubble area={original_area:.1f}")
                     except Exception as e:
                         logger.warning(f"Failed to compute union of polygons: {e}")
                         original_area = region.unrotated_size[0] * region.unrotated_size[1]
@@ -952,13 +953,73 @@ def resize_regions_to_font_size(img: np.ndarray, text_regions: List['TextBlock']
                         font_shrink_ratio = diff_ratio / 2 / (1 + diff_ratio)
                         font_scale_factor = 1 - min(font_shrink_ratio, 0.5)
                         logger.debug(f"[SMART_SCALING DEBUG] Expanding box: expansion_ratio={box_expansion_ratio:.3f}, box_scale={box_scale_factor:.3f}, font_shrink_ratio={font_shrink_ratio:.3f}, font_scale={font_scale_factor:.3f}")
-                        try:
-                            scaled_unrotated_poly = affinity.scale(unrotated_base_poly, xfact=box_scale_factor, yfact=box_scale_factor, origin='center')
-                            scaled_unrotated_points = np.array(scaled_unrotated_poly.exterior.coords[:4])
-                            dst_points = rotate_polygons(region.center, scaled_unrotated_points.reshape(1, -1), -region.angle, to_int=False).reshape(-1, 4, 2)
-                        except Exception as e:
-                            logger.warning(f"Failed to apply dynamic scaling: {e}")
-                        target_font_size = int(target_font_size * font_scale_factor)
+                        
+                        # 计算缩小后的字体大小
+                        new_font_size = int(target_font_size * font_scale_factor)
+                        
+                        # 计算最终字体大小（考虑 font_scale_ratio）
+                        sim_font_size = int(new_font_size * config.render.font_scale_ratio)
+                        if config.render.max_font_size > 0 and sim_font_size > config.render.max_font_size:
+                            sim_font_size = config.render.max_font_size
+                        
+                        # 计算扩大后的框尺寸
+                        scaled_width = bubble_width * box_scale_factor
+                        scaled_height = bubble_height * box_scale_factor
+                        
+                        # 用最终字体大小模拟排版，计算实际需要的高度
+                        if not region.horizontal:
+                            # 垂直文本：用扩大后的高度模拟排版
+                            sim_lines, sim_heights = text_render.calc_vertical(sim_font_size, region.translation, max_height=int(scaled_height))
+                            if sim_heights and len(sim_heights) > 0:
+                                num_cols = len(sim_heights)
+                                total_height = sum(sim_heights)
+                                # 计算平均每列高度，让每列高度均匀分布
+                                avg_height = total_height / num_cols
+                                # 优化后的高度不能小于原始框高度
+                                optimized_height = max(avg_height, bubble_height)
+                                height_scale = optimized_height / bubble_height
+                                logger.debug(f"[SMART_SCALING DEBUG] Height optimization: {num_cols} cols, total_height={total_height:.1f}, avg_height={avg_height:.1f}, optimized_height={optimized_height:.1f}")
+                            else:
+                                height_scale = box_scale_factor
+                        else:
+                            # 水平文本：用扩大后的宽度模拟排版
+                            sim_lines, sim_widths = text_render.calc_horizontal(new_font_size, region.translation, max_width=int(scaled_width), max_height=99999, language=region.target_lang)
+                            if sim_widths:
+                                actual_max_width = max(sim_widths)
+                                if actual_max_width < scaled_width:
+                                    optimized_width = max(actual_max_width, bubble_width)
+                                    width_scale = optimized_width / bubble_width
+                                    height_scale = box_scale_factor  # 高度保持等比例
+                                    # 对于水平文本，优化宽度而不是高度
+                                    try:
+                                        scaled_unrotated_poly = affinity.scale(unrotated_base_poly, xfact=width_scale, yfact=box_scale_factor, origin='center')
+                                        scaled_unrotated_points = np.array(scaled_unrotated_poly.exterior.coords[:4])
+                                        dst_points = rotate_polygons(region.center, scaled_unrotated_points.reshape(1, -1), -region.angle, to_int=False).reshape(-1, 4, 2)
+                                    except Exception as e:
+                                        logger.warning(f"Failed to apply optimized scaling: {e}")
+                                    target_font_size = new_font_size
+                                    # 跳过后面的默认缩放
+                                    height_scale = None
+                            else:
+                                height_scale = box_scale_factor
+                        
+                        # 应用优化后的缩放（垂直文本）
+                        if not region.horizontal and height_scale is not None:
+                            try:
+                                scaled_unrotated_poly = affinity.scale(unrotated_base_poly, xfact=box_scale_factor, yfact=height_scale, origin='center')
+                                scaled_unrotated_points = np.array(scaled_unrotated_poly.exterior.coords[:4])
+                                dst_points = rotate_polygons(region.center, scaled_unrotated_points.reshape(1, -1), -region.angle, to_int=False).reshape(-1, 4, 2)
+                            except Exception as e:
+                                logger.warning(f"Failed to apply optimized scaling: {e}")
+                            target_font_size = new_font_size
+                        elif height_scale is not None:
+                            try:
+                                scaled_unrotated_poly = affinity.scale(unrotated_base_poly, xfact=box_scale_factor, yfact=box_scale_factor, origin='center')
+                                scaled_unrotated_points = np.array(scaled_unrotated_poly.exterior.coords[:4])
+                                dst_points = rotate_polygons(region.center, scaled_unrotated_points.reshape(1, -1), -region.angle, to_int=False).reshape(-1, 4, 2)
+                            except Exception as e:
+                                logger.warning(f"Failed to apply dynamic scaling: {e}")
+                            target_font_size = new_font_size
                     elif diff_ratio < 0:
                         logger.debug(f"[SMART_SCALING DEBUG] Shrinking: diff_ratio={diff_ratio:.3f}")
                         try:
@@ -1085,8 +1146,31 @@ def render(
     
     # Set region-specific font if specified, otherwise use global default
     if hasattr(region, 'font_path') and region.font_path:
-        if os.path.exists(region.font_path):
-            text_render.set_font(region.font_path)
+        font_path = region.font_path
+        
+        # If font_path doesn't exist directly, try different resolution strategies
+        if not os.path.exists(font_path):
+            resolved_path = None
+            
+            if os.path.isabs(font_path):
+                # Absolute path but doesn't exist - no fallback
+                resolved_path = None
+            else:
+                # Try 1: Relative to BASE_PATH (e.g., "fonts/xxx.ttf")
+                candidate = os.path.join(BASE_PATH, font_path)
+                if os.path.exists(candidate):
+                    resolved_path = candidate
+                else:
+                    # Try 2: Just filename, look in fonts directory (e.g., "xxx.ttf")
+                    candidate = os.path.join(BASE_PATH, 'fonts', font_path)
+                    if os.path.exists(candidate):
+                        resolved_path = candidate
+            
+            if resolved_path:
+                font_path = resolved_path
+        
+        if os.path.exists(font_path):
+            text_render.set_font(font_path)
         else:
             logger.warning(f"Font path not found for region: {region.font_path}, using default font")
             # Fall back to global default font

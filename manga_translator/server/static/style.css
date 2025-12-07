@@ -844,3 +844,567 @@ button {
 #preview-container::-webkit-scrollbar-thumb:hover {
     background: #546E7A;
 }
+
+
+/* ========== 移动端基础组件 ========== */
+
+/* 移动端设置按钮 - 打开设置面板 */
+.mobile-menu-btn {
+    display: none;
+    background: #2196F3;
+    border: none;
+    font-size: 20px;
+    cursor: pointer;
+    padding: 8px;
+    min-width: 44px;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    color: #FFFFFF;
+    border-radius: 6px;
+    transition: background-color 0.2s;
+    margin-left: auto;
+}
+
+.mobile-menu-btn:hover {
+    background-color: #1976D2;
+}
+
+.mobile-menu-btn:active {
+    background-color: #1565C0;
+}
+
+/* 移动端遮罩层 */
+.mobile-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 999;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.mobile-overlay.active {
+    display: block;
+    opacity: 1;
+}
+
+
+/* ========== 移动端媒体查询 (< 768px) ========== */
+@media (max-width: 767px) {
+    /* ----- 全局样式 ----- */
+    body {
+        overflow: auto;  /* 允许页面滚动 */
+        height: auto;
+    }
+    
+    .app-container {
+        height: auto;
+        min-height: 100vh;
+    }
+    
+    /* ----- Header 适配 (3.1) ----- */
+    .app-header {
+        padding: 8px 12px;
+        height: auto;
+        min-height: 50px;
+        flex-wrap: nowrap;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        background: #FFFFFF;
+    }
+    
+    .app-header h1 {
+        font-size: 16px;
+        flex: 1;
+        margin-right: 10px;
+    }
+    
+    .header-controls {
+        gap: 6px;
+        flex-shrink: 0;
+        align-items: center;
+    }
+    
+    .header-controls .secondary-btn {
+        padding: 6px 10px;
+        font-size: 12px;
+        min-height: 36px;
+    }
+    
+    /* 移动端隐藏用户信息，简化界面 */
+    #user-info {
+        display: none !important;
+    }
+    
+    #logout-btn {
+        padding: 6px 8px;
+        font-size: 11px;
+    }
+    
+    .admin-link {
+        padding: 6px 8px;
+    }
+    
+    #admin-link-text {
+        display: none;  /* 移动端只显示图标 */
+    }
+    
+    .language-select {
+        padding: 6px;
+        font-size: 12px;
+        max-width: 70px;
+    }
+    
+    /* 移动端设置按钮显示在header右侧 */
+    .mobile-menu-btn {
+        display: flex !important;
+        align-items: center;
+        justify-content: center;
+        margin-left: 8px;
+    }
+    
+    /* ----- 主内容区垂直布局 (3.2) ----- */
+    .main-content {
+        flex-direction: column;
+        height: auto;
+        overflow: visible;
+        min-height: calc(100vh - 50px);
+    }
+    
+    /* ----- 左侧面板（文件操作）显示在主页面 ----- */
+    .left-panel {
+        position: relative;
+        left: 0;
+        width: 100%;
+        min-width: 100%;
+        padding: 10px;
+        background: #F5F7FA;
+        border-right: none;
+        border-bottom: 1px solid #E0E0E0;
+        overflow: visible;
+        order: 1;
+    }
+    
+    /* ----- 右侧面板（设置）做成抽屉式 (3.3) ----- */
+    .right-panel {
+        position: fixed;
+        right: -100%;
+        top: 50px;
+        height: calc(100vh - 50px);
+        width: 90%;
+        max-width: 400px;
+        z-index: 1000;
+        transition: right 0.3s ease;
+        background: #F5F7FA;
+        box-shadow: -2px 0 10px rgba(0,0,0,0.2);
+        overflow-y: auto;
+        padding: 15px;
+        order: 2;
+    }
+    
+    .right-panel.open {
+        right: 0;
+    }
+    
+    /* ----- 面板区块 ----- */
+    .panel-section {
+        padding: 12px;
+        margin-bottom: 10px;
+    }
+    
+    .section-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+    
+    .section-header .button-group {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+    
+    /* ----- 按钮触摸优化 (3.5) ----- */
+    .primary-btn, .secondary-btn {
+        min-height: 44px;
+        padding: 12px 16px;
+        font-size: 14px;
+    }
+    
+    .large-btn {
+        padding: 14px;
+        font-size: 16px;
+        width: 100%;
+    }
+    
+    .button-group {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    
+    .button-group .secondary-btn {
+        flex: 1;
+        min-width: 80px;
+        text-align: center;
+    }
+    
+    /* ----- 输入框防缩放 (3.6) ----- */
+    input[type="text"],
+    input[type="number"],
+    input[type="password"],
+    select,
+    textarea {
+        font-size: 16px;  /* 防止iOS缩放 */
+        min-height: 44px;
+        width: 100%;
+    }
+    
+    /* ----- 文件列表容器高度调整 (3.7) ----- */
+    .file-list-container {
+        height: 150px;
+    }
+    
+    .file-list li {
+        padding: 10px;
+        font-size: 12px;
+    }
+    
+    /* ----- 设置容器移动端优化 ----- */
+    .settings-container {
+        flex: none;
+        max-height: none;
+        overflow: visible;
+    }
+    
+    /* ----- 标签页水平滚动 (3.8) ----- */
+    .tabs {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        flex-wrap: nowrap;
+        padding: 0;
+        gap: 0;
+    }
+    
+    .tab-btn {
+        flex-shrink: 0;
+        padding: 12px 16px;
+        font-size: 13px;
+        min-height: 44px;
+        white-space: nowrap;
+    }
+    
+    .tab-content-area {
+        padding: 15px 10px;
+        overflow: visible;
+    }
+    
+    /* ----- 设置区域单列布局 (3.9) ----- */
+    .settings-split {
+        flex-direction: column;
+        gap: 20px;
+    }
+    
+    .settings-column {
+        width: 100%;
+    }
+    
+    /* ----- 表单组优化 ----- */
+    .form-group {
+        margin-bottom: 16px;
+    }
+    
+    .form-group label {
+        font-size: 14px;
+        margin-bottom: 8px;
+        display: block;
+        font-weight: 500;
+    }
+    
+    .checkbox-wrapper {
+        min-height: 44px;
+        padding: 10px 0;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .checkbox-wrapper input[type="checkbox"] {
+        width: 22px;
+        height: 22px;
+        flex-shrink: 0;
+    }
+    
+    .checkbox-wrapper label {
+        margin-bottom: 0;
+        flex: 1;
+    }
+    
+    /* ----- 工作流选择 ----- */
+    .workflow-section select {
+        min-height: 44px;
+        font-size: 14px;
+    }
+    
+    /* ----- 日志容器适配 (3.10) ----- */
+    .log-container {
+        height: auto;
+        min-height: 120px;
+        max-height: 200px;
+    }
+    
+    .log-header {
+        padding: 10px 12px;
+    }
+    
+    .log-box {
+        font-size: 12px;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+        padding: 10px;
+        max-height: 150px;
+    }
+    
+    .log-entry {
+        word-break: break-all;
+    }
+    
+    /* ----- 结果列表容器高度调整 (3.11) ----- */
+    .results-section {
+        max-height: none;
+    }
+    
+    .results-list-container {
+        max-height: 200px;
+    }
+    
+    .result-item {
+        padding: 12px 10px;
+    }
+    
+    .result-actions {
+        flex-direction: column;
+        gap: 4px;
+    }
+    
+    .result-btn {
+        min-height: 36px;
+        padding: 8px 12px;
+    }
+    
+    /* ----- 历史区域 ----- */
+    .history-section .section-header {
+        flex-direction: row;
+        align-items: center;
+    }
+    
+    .history-list-container {
+        max-height: 120px;
+    }
+    
+    /* ----- 配置导入导出 ----- */
+    .config-io-section .button-group {
+        flex-direction: column;
+    }
+    
+    .config-io-section .secondary-btn {
+        width: 100%;
+    }
+    
+    /* ----- 上传区域优化 ----- */
+    .upload-section {
+        padding: 12px;
+        margin-top: 15px;
+    }
+    
+    .upload-section h4 {
+        font-size: 14px;
+        margin-bottom: 10px;
+    }
+    
+    .upload-area {
+        text-align: center;
+    }
+    
+    /* ----- API密钥区域优化 ----- */
+    .env-editor-container {
+        padding: 10px;
+    }
+    
+    #env-inputs-container {
+        max-width: 100%;
+    }
+    
+    .env-hint {
+        font-size: 13px;
+        margin-bottom: 15px;
+    }
+    
+    /* ----- 图片查看器移动端样式 (3.12) ----- */
+    .modal {
+        padding: 0;
+    }
+    
+    .modal-content {
+        max-width: 100%;
+        max-height: 100%;
+        border-radius: 0;
+    }
+    
+    .image-viewer-content {
+        width: 100vw;
+        height: 100vh;
+    }
+    
+    .modal-header {
+        padding: 10px 15px;
+    }
+    
+    .modal-header h2 {
+        font-size: 16px;
+    }
+    
+    .close-btn {
+        width: 44px;
+        height: 44px;
+        font-size: 28px;
+    }
+    
+    .image-viewer-body {
+        flex-direction: column;
+    }
+    
+    /* 缩略图面板移至底部 */
+    .thumbnails-panel {
+        width: 100%;
+        height: 100px;
+        border-right: none;
+        border-top: 1px solid #E0E0E0;
+        order: 2;
+    }
+    
+    #thumbnails-container {
+        flex-direction: row;
+        overflow-x: auto;
+        overflow-y: hidden;
+        padding: 8px;
+        gap: 8px;
+    }
+    
+    .thumbnail-item {
+        flex-shrink: 0;
+        width: 80px;
+    }
+    
+    .thumbnail-item img {
+        height: 60px;
+    }
+    
+    .thumbnail-item .thumbnail-name {
+        padding: 4px;
+        font-size: 10px;
+    }
+    
+    .preview-panel {
+        order: 1;
+        height: calc(100vh - 160px);
+    }
+    
+    .preview-info {
+        padding: 10px 15px;
+        flex-direction: column;
+        gap: 8px;
+    }
+    
+    #preview-filename {
+        font-size: 12px;
+        text-align: center;
+    }
+    
+    /* ----- 用户登录弹窗 ----- */
+    .user-login-box {
+        width: 90%;
+        max-width: 350px;
+        padding: 24px;
+    }
+    
+    .user-login-box h2 {
+        font-size: 18px;
+    }
+    
+    .user-login-box input {
+        min-height: 44px;
+        font-size: 16px;
+    }
+}
+
+
+/* ========== 平板端媒体查询 (768px - 1024px) ========== */
+@media (min-width: 768px) and (max-width: 1024px) {
+    /* ----- 左侧面板宽度调整 (4.1) ----- */
+    .left-panel {
+        width: 280px;
+        min-width: 250px;
+    }
+    
+    /* ----- 设置区域布局调整 (4.2) ----- */
+    .settings-split {
+        flex-direction: column;
+    }
+    
+    .settings-column {
+        width: 100%;
+    }
+    
+    .tabs {
+        flex-wrap: wrap;
+    }
+    
+    .tab-btn {
+        padding: 10px 16px;
+        font-size: 13px;
+    }
+    
+    .tab-content-area {
+        padding: 12px;
+    }
+    
+    /* ----- 图片查看器尺寸调整 (4.3) ----- */
+    .image-viewer-content {
+        width: 95vw;
+        height: 95vh;
+    }
+    
+    .thumbnails-panel {
+        width: 200px;
+    }
+    
+    .thumbnail-item img {
+        height: 120px;
+    }
+    
+    .preview-info {
+        padding: 12px 15px;
+    }
+    
+    /* ----- 其他平板端优化 ----- */
+    .app-header h1 {
+        font-size: 17px;
+    }
+    
+    .header-controls {
+        gap: 8px;
+    }
+    
+    .form-group label {
+        font-size: 13px;
+    }
+    
+    .results-list-container {
+        max-height: 250px;
+    }
+}

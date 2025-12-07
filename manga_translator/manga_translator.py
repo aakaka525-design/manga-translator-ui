@@ -165,65 +165,8 @@ class MangaTranslator:
         self._current_image_context = None  # 存储当前处理图片的上下文信息
         self._saved_image_contexts = {}     # 存储批量处理中每个图片的上下文信息
         
-        # 设置日志文件
-        self._setup_log_file()
-
-    def _setup_log_file(self):
-        """设置日志文件，在result文件夹下创建带时间戳的log文件"""
-        try:
-            # 创建result目录
-            result_dir = os.path.join(BASE_PATH, 'result')
-            os.makedirs(result_dir, exist_ok=True)
-            
-            # 生成带时间戳的日志文件名
-            from datetime import datetime
-            timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-            log_filename = f"log_{timestamp}.txt"
-            log_path = os.path.join(result_dir, log_filename)
-            
-            # 配置文件日志处理器
-            file_handler = logging.FileHandler(log_path, encoding='utf-8')
-            file_handler.setLevel(logging.INFO)
-            # 使用自定义格式器，保持与控制台输出一致
-            from .utils.log import Formatter
-            formatter = Formatter()
-            file_handler.setFormatter(formatter)
-            
-            # 添加到manga-translator根logger以捕获所有输出
-            mt_logger = logging.getLogger('manga-translator')
-            mt_logger.addHandler(file_handler)
-            if not mt_logger.level or mt_logger.level > logging.INFO:
-                mt_logger.setLevel(logging.INFO)
-            
-            # 保存日志文件路径供后续使用
-            self._log_file_path = log_path
-            
-            # 简单的print重定向
-            import builtins
-            original_print = builtins.print
-            
-            def log_print(*args, **kwargs):
-                # 正常打印到控制台
-                original_print(*args, **kwargs)
-                # 同时写入日志文件
-                try:
-                    import io
-                    buffer = io.StringIO()
-                    original_print(*args, file=buffer, **kwargs)
-                    output = buffer.getvalue()
-                    if output.strip():
-                        with open(log_path, 'a', encoding='utf-8') as f:
-                            f.write(output)
-                except Exception:
-                    pass
-            
-            builtins.print = log_print
-            
-
-            
-            logger.info(f"Log file created: {log_path}")
-        except Exception as e:
-            print(f"Failed to setup log file: {e}")
+        # 日志文件现在由UI层管理，这里不再创建
+        self._log_file_path = None
 
     def parse_init_params(self, params: dict):
         self.verbose = params.get('verbose', False)
@@ -1230,8 +1173,17 @@ class MangaTranslator:
                 logger.debug(f"rendering does not require unloading")
             case _:
                 logger.warning(f"Unknown tool type for unloading: {tool}")
+        
+        # 清理 Python 内存（对 CPU 和 GPU 都有效）
+        import gc
+        gc.collect()
+        
+        # 清理 GPU 显存（如果有）
         if torch.cuda.is_available():
-            torch.cuda.empty_cache()  # empty CUDA cache
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        
+        logger.info(f"模型 {tool}/{model} 已卸载，内存已清理")
 
     def _cleanup_gpu_memory(self):
         """清理GPU显存的辅助方法"""
@@ -2535,6 +2487,9 @@ class MangaTranslator:
             global_total_batches = (display_total + batch_size - 1) // batch_size
             
             logger.info(f"Processing rolling batch {global_batch_num}/{global_total_batches} (images {global_batch_start}-{global_batch_end})")
+            
+            # 报告批次进度给前端
+            await self._report_progress(f"batch:{global_batch_start}:{global_batch_end}:{display_total}")
 
             # --- 阶段1: 预处理（检测、OCR、文本行合并） ---
             preprocessed_contexts = []
@@ -3636,9 +3591,8 @@ class MangaTranslator:
                 translator = GeminiHighQualityTranslator()
 
             translator.parse_args(config.translator)
-            # 只有当 self.attempts 不是默认值时才覆盖（允许 API 传入的 config.translator.attempts 生效）
-            if self.attempts != -1:
-                translator.attempts = self.attempts
+            # 注意：-1 表示无限重试，也是有效值
+            # 这里不再覆盖 translator.attempts，让配置中的值生效
             
             # 传递取消检查回调给翻译器
             if self._cancel_check_callback:
@@ -4337,6 +4291,9 @@ class MangaTranslator:
             global_total_batches = (display_total + batch_size - 1) // batch_size
             
             logger.info(f"Processing rolling batch {global_batch_num}/{global_total_batches} (images {global_batch_start}-{global_batch_end})")
+            
+            # 报告批次进度给前端
+            await self._report_progress(f"batch:{global_batch_start}:{global_batch_end}:{display_total}")
 
             # 阶段一：预处理当前批次
             preprocessed_contexts = []
@@ -4365,12 +4322,24 @@ class MangaTranslator:
 
             # 阶段二：翻译当前批次
             batch_data = []
+            global_text_index = 1  # 全局文本编号从1开始（与提示词中的编号一致）
             for ctx, config in preprocessed_contexts:
+                num_regions = len(ctx.text_regions) if ctx.text_regions else 0
+                # 为当前图片生成全局连续的文本编号
+                text_order = list(range(global_text_index, global_text_index + num_regions))
+                global_text_index += num_regions
+                
+                # 获取超分后的尺寸（用于坐标转换）
+                upscaled_size = None
+                if hasattr(ctx, 'img_rgb') and ctx.img_rgb is not None:
+                    upscaled_size = ctx.img_rgb.shape[:2]  # (height, width)
+                
                 image_data = {
                     'image': ctx.input,
                     'text_regions': ctx.text_regions if ctx.text_regions else [],
                     'original_texts': [region.text for region in ctx.text_regions] if ctx.text_regions else [],
-                    'text_order': list(range(len(ctx.text_regions))) if ctx.text_regions else []
+                    'text_order': text_order,
+                    'upscaled_size': upscaled_size
                 }
                 batch_data.append(image_data)
 

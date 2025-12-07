@@ -22,7 +22,7 @@
     "name": "openai",
     "display_name": "OpenAI",
     "required_env_vars": ["OPENAI_API_KEY"],
-    "optional_env_vars": ["OPENAI_MODEL", "OPENAI_API_BASE", "OPENAI_HTTP_PROXY"],
+    "optional_env_vars": ["OPENAI_MODEL", "OPENAI_API_BASE"],
     "validation_rules": {
       "OPENAI_API_KEY": "^sk-[a-zA-Z0-9]{48}$"
     }
@@ -67,7 +67,7 @@
     "name": "openai_hq",
     "display_name": "高质量翻译 OpenAI",
     "required_env_vars": ["OPENAI_API_KEY"],
-    "optional_env_vars": ["OPENAI_MODEL", "OPENAI_API_BASE", "OPENAI_HTTP_PROXY"]
+    "optional_env_vars": ["OPENAI_MODEL", "OPENAI_API_BASE"]
   },
   "gemini_hq": {
     "name": "gemini_hq",

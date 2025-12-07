@@ -208,7 +208,7 @@ python -m manga_translator --help
 
 - 🔍 **智能文本检测** - 自动识别漫画中的文字区域
 - 📝 **多语言 OCR** - 支持日语、中文、英语等多种语言
-- 🌐 **30+ 翻译引擎** - 离线/在线翻译器任选
+- 🌐 **5 种翻译引擎** - OpenAI、Gemini（普通+高质量）、Sakura
 - 🎯 **高质量翻译** - 支持 GPT-4o、Gemini 多模态 AI 翻译
 - 🎨 **智能嵌字** - 自动排版译文，支持多种字体
 - 📦 **批量处理** - 一次处理整个文件夹
@@ -239,11 +239,10 @@ python -m manga_translator --help
 
 ## ⚙️ 常用翻译器
 
-### 离线翻译器（无需网络）
-- Sugoi、NLLB、M2M100、Qwen2 等
-
 ### 在线翻译器（需要 API Key）
-- Google Gemini、OpenAI、DeepL、百度翻译等
+- **OpenAI** - 使用 GPT 系列模型
+- **Gemini** - 使用 Google Gemini 模型
+- **Sakura** - 专门针对日语优化的翻译模型
 
 ### 高质量翻译器（推荐）
 - **高质量翻译 OpenAI** - 使用 GPT-4o 多模态模型

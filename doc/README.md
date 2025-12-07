@@ -46,7 +46,7 @@
 
 - **🔍 智能文本检测**：自动识别漫画中的文字区域
 - **📝 多语言 OCR**：支持日语、中文、英语等多种语言识别
-- **🌐 30+ 翻译引擎**：离线翻译器（Sugoi、NLLB 等）、在线翻译器（Google Gemini、OpenAI、DeepL 等）
+- **🌐 5 种翻译引擎**：OpenAI、Gemini（普通+高质量）、Sakura
 - **🎯 高质量翻译**：使用多模态 AI 模型（GPT-4o、Gemini），结合图片上下文进行翻译，准确率更高
 - **🎨 图像修复**：自动擦除原文并智能填充背景
 - **✍️ 智能嵌字**：自动排版译文，支持多种字体和样式
@@ -93,29 +93,10 @@
 
 ### 翻译器配置
 
-**离线翻译器**（无需网络）：
-- **Sugoi**：日→英翻译（默认）
-- **NLLB**：多语言翻译
-- **NLLB (Big)**：大模型多语言翻译
-- **M2M100**：多语言翻译
-- **M2M100 (Big)**：大模型多语言翻译
-- **mBART50**：多语言翻译
-- **JParaCrawl**：日语翻译
-- **JParaCrawl (Big)**：大模型日语翻译
-- **Qwen2**：通义千问翻译
-- **Qwen2 (Big)**：大模型通义千问翻译
-- **离线翻译**：通用离线翻译
-
 **在线翻译器**（需要 API Key）：
-- **Google Gemini**：Google Gemini 翻译
 - **OpenAI**：OpenAI ChatGPT 翻译
-- **DeepL**：DeepL 翻译
-- **百度翻译**：百度翻译 API
-- **有道翻译**：有道翻译 API
-- **彩云小译**：彩云小译 API
-- **Papago**：Naver Papago 翻译
-- **Sakura**：Sakura 翻译
-- **Groq**：Groq 翻译
+- **Gemini**：Google Gemini 翻译
+- **Sakura**：专门针对日语优化的翻译模型
 
 **高质量翻译器**（需要 API Key，推荐）：
 - **高质量翻译 OpenAI**：使用 GPT-4o 等多模态模型，结合图片上下文翻译

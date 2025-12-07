@@ -4,7 +4,8 @@
     "last_output_path": "",
     "favorite_folders": null,
     "theme": "light",
-    "ui_language": "auto"
+    "ui_language": "auto",
+    "current_preset": "默认"
   },
   "filter_text": null,
   "kernel_size": 3,
@@ -15,7 +16,8 @@
     "no_text_lang_skip": false,
     "gpt_config": "examples/gpt_config-example.yaml",
     "high_quality_prompt_path": "dict/prompt_example.json",
-    "max_requests_per_minute": 0
+    "max_requests_per_minute": 0,
+    "attempts": -1
   },
   "ocr": {
     "use_mocr_merge": false,
@@ -91,14 +93,14 @@
   },
   "cli": {
     "verbose": false,
-    "attempts": 2,
+    "attempts": 3,
     "ignore_errors": false,
     "use_gpu": true,
     "use_gpu_limited": false,
     "context_size": 3,
     "format": "不指定",
     "overwrite": false,
-    "skip_no_text": true,
+    "skip_no_text": false,
     "save_text": true,
     "load_text": false,
     "template": false,

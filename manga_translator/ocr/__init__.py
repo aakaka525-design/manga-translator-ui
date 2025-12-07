@@ -4,16 +4,23 @@ from .common import CommonOCR, OfflineOCR
 from .model_32px import Model32pxOCR
 from .model_48px import Model48pxOCR
 from .model_48px_ctc import Model48pxCTCOCR
-from .model_manga_ocr import ModelMangaOCR
+# ModelMangaOCR 延迟导入，避免未使用时下载模型
 from .model_paddleocr import ModelPaddleOCR, ModelPaddleOCRKorean, ModelPaddleOCRLatin
 from ..config import Ocr, OcrConfig
 from ..utils import Quadrilateral
+
+
+def _get_manga_ocr_class():
+    """延迟导入 ModelMangaOCR，只有在真正使用 mocr 时才导入"""
+    from .model_manga_ocr import ModelMangaOCR
+    return ModelMangaOCR
+
 
 OCRS = {
     Ocr.ocr32px: Model32pxOCR,
     Ocr.ocr48px: Model48pxOCR,
     Ocr.ocr48px_ctc: Model48pxCTCOCR,
-    Ocr.mocr: ModelMangaOCR,
+    Ocr.mocr: _get_manga_ocr_class,  # 延迟导入
     Ocr.paddleocr: ModelPaddleOCR,
     Ocr.paddleocr_korean: ModelPaddleOCRKorean,
     Ocr.paddleocr_latin: ModelPaddleOCRLatin,
@@ -25,8 +32,11 @@ def get_ocr(key: Ocr, *args, **kwargs) -> CommonOCR:
         raise ValueError(f'Could not find OCR for: "{key}". Choose from the following: %s' % ','.join(OCRS))
     # Use cache to avoid reloading models in the same translation session
     if key not in ocr_cache:
-        ocr = OCRS[key]
-        ocr_cache[key] = ocr(*args, **kwargs)
+        ocr_class = OCRS[key]
+        # 处理延迟导入的情况（mocr）
+        if callable(ocr_class) and key == Ocr.mocr:
+            ocr_class = ocr_class()  # 调用函数获取真正的类
+        ocr_cache[key] = ocr_class(*args, **kwargs)
     return ocr_cache[key]
 
 async def prepare(ocr_key: Ocr, device: str = 'cpu'):

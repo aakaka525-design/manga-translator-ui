@@ -165,14 +165,62 @@ class MainView(QWidget):
                         # 对象已被删除
                         self.env_group_box = None
                 
-                # 重新创建 env_group_box - 使用 GridLayout 避免 FormLayout 的列宽继承问题
+                # 重新创建 env_group_box - 使用 VBoxLayout 包含预设管理和环境变量输入
                 self.env_group_box = QGroupBox(self._t("API Keys (.env)"))
                 from PyQt6.QtWidgets import QGridLayout
-                self.env_layout = QGridLayout(self.env_group_box)
+                env_main_layout = QVBoxLayout(self.env_group_box)
+                
+                # 预设管理区域
+                preset_widget = QWidget()
+                preset_layout = QHBoxLayout(preset_widget)
+                preset_layout.setContentsMargins(0, 0, 0, 0)
+                
+                preset_label = QLabel(self._t("Preset:"))
+                self.preset_combo = QComboBox()
+                self.preset_combo.setMinimumWidth(150)
+                self.preset_combo.setEditable(False)
+                self._refresh_preset_list()
+                
+                # 从配置中读取上次使用的预设并选中
+                saved_preset = self.controller.config_service.get_current_preset()
+                index = self.preset_combo.findText(saved_preset)
+                if index >= 0:
+                    self.preset_combo.setCurrentIndex(index)
+                
+                self.add_preset_button = QPushButton("+")
+                self.add_preset_button.setFixedWidth(30)
+                self.add_preset_button.setToolTip(self._t("Add new preset"))
+                
+                self.delete_preset_button = QPushButton(self._t("Delete"))
+                self.delete_preset_button.setToolTip(self._t("Delete selected preset"))
+                
+                preset_layout.addWidget(preset_label)
+                preset_layout.addWidget(self.preset_combo)
+                preset_layout.addWidget(self.add_preset_button)
+                preset_layout.addWidget(self.delete_preset_button)
+                preset_layout.addStretch()
+                
+                # 记录当前预设名称，用于切换时自动保存
+                self._current_preset_name = self.preset_combo.currentText() if self.preset_combo.count() > 0 else ""
+                
+                env_main_layout.addWidget(preset_widget)
+                
+                # 环境变量输入区域
+                env_input_widget = QWidget()
+                self.env_layout = QGridLayout(env_input_widget)
                 self.env_layout.setColumnStretch(1, 1)  # 让输入框列可以拉伸
                 self.env_layout.setHorizontalSpacing(10)
                 self.env_layout.setVerticalSpacing(8)
-                self.env_layout.setContentsMargins(10, 10, 10, 10)
+                self.env_layout.setContentsMargins(0, 0, 0, 0)
+                
+                env_main_layout.addWidget(env_input_widget)
+                
+                # 连接预设按钮信号
+                self.add_preset_button.clicked.connect(self._on_add_preset_clicked)
+                self.delete_preset_button.clicked.connect(self._on_delete_preset_clicked)
+                # 切换预设时自动保存当前预设并加载新预设
+                self.preset_combo.currentTextChanged.connect(self._on_preset_changed)
+                
                 # 关键：使用 addRow 只传一个参数，让 GroupBox 跨越整行，不受标签列宽度影响
                 parent_layout.addRow(self.env_group_box)
 
@@ -671,10 +719,12 @@ class MainView(QWidget):
         log_container_layout.setContentsMargins(0, 0, 0, 0)
         log_container_layout.setSpacing(5)
         
-        # 日志框
-        self.log_box = QTextEdit()
+        # 日志框（使用QPlainTextEdit性能更好）
+        from PyQt6.QtWidgets import QPlainTextEdit
+        self.log_box = QPlainTextEdit()
         self.log_box.setReadOnly(True)
         self.log_box.setPlaceholderText(self._t("Log output..."))
+        self.log_box.setMaximumBlockCount(5000)  # 限制最大行数，防止内存问题
         log_container_layout.addWidget(self.log_box)
         
         # 进度条（常态显示）
@@ -709,9 +759,40 @@ class MainView(QWidget):
         return right_panel
 
     def append_log(self, message):
-        """安全地将消息追加到日志框。"""
-        self.log_box.append(message.strip())
-        self.log_box.verticalScrollBar().setValue(self.log_box.verticalScrollBar().maximum())
+        """安全地将消息追加到日志框（带批量更新优化）。"""
+        # 初始化日志缓冲区
+        if not hasattr(self, '_log_buffer'):
+            self._log_buffer = []
+            self._log_timer = None
+        
+        self._log_buffer.append(message.strip())
+        
+        # 如果定时器未启动，启动50ms后批量更新
+        if self._log_timer is None:
+            from PyQt6.QtCore import QTimer
+            self._log_timer = QTimer()
+            self._log_timer.setSingleShot(True)
+            self._log_timer.timeout.connect(self._flush_log_buffer)
+            self._log_timer.start(50)  # 50ms批量更新一次
+    
+    def _flush_log_buffer(self):
+        """批量刷新日志缓冲区"""
+        if not hasattr(self, '_log_buffer') or not self._log_buffer:
+            self._log_timer = None
+            return
+        
+        # 检查是否已经在底部
+        scrollbar = self.log_box.verticalScrollBar()
+        at_bottom = scrollbar.value() >= scrollbar.maximum() - 10
+        
+        # 批量追加所有日志
+        self.log_box.appendPlainText('\n'.join(self._log_buffer))
+        self._log_buffer.clear()
+        self._log_timer = None
+        
+        # 只有之前在底部时才自动滚动到底部
+        if at_bottom:
+            scrollbar.setValue(scrollbar.maximum())
     
     def update_progress(self, current: int, total: int, message: str = ""):
         """更新进度条
@@ -727,8 +808,9 @@ class MainView(QWidget):
             percentage = int((current / total) * 100) if total > 0 else 0
             self.progress_bar.setFormat(f"{current}/{total} ({percentage}%)")
             
-            # 翻译中：蓝色进度条
-            if current > 0:
+            # 翻译中：蓝色进度条（只在首次进入翻译状态时设置样式）
+            if current > 0 and not getattr(self, '_progress_active', False):
+                self._progress_active = True
                 self.progress_bar.setStyleSheet("""
                     QProgressBar {
                         border: 1px solid #0078d4;
@@ -742,6 +824,7 @@ class MainView(QWidget):
                 """)
         else:
             # 重置为灰色
+            self._progress_active = False
             self.progress_bar.setMaximum(100)
             self.progress_bar.setValue(0)
             self.progress_bar.setFormat("0/0 (0%)")
@@ -929,6 +1012,133 @@ class MainView(QWidget):
         self._env_debounce_timer.timeout.connect(lambda: self.env_var_changed.emit(key, text))
         self._env_debounce_timer.start()
 
+    def _refresh_preset_list(self):
+        """刷新预设列表"""
+        if not hasattr(self, 'preset_combo'):
+            return
+        
+        current_text = self.preset_combo.currentText()
+        self.preset_combo.blockSignals(True)
+        self.preset_combo.clear()
+        
+        presets = self.controller.get_presets_list()
+        if presets:
+            self.preset_combo.addItems(presets)
+            # 恢复之前选择的预设
+            if current_text and current_text in presets:
+                self.preset_combo.setCurrentText(current_text)
+        
+        self.preset_combo.blockSignals(False)
+
+    def _on_add_preset_clicked(self):
+        """添加新预设"""
+        from PyQt6.QtWidgets import QInputDialog, QMessageBox
+        
+        preset_name, ok = QInputDialog.getText(
+            self,
+            self._t("Add Preset"),
+            self._t("Enter preset name:")
+        )
+        
+        if ok and preset_name:
+            preset_name = preset_name.strip()
+            if not preset_name:
+                QMessageBox.warning(
+                    self,
+                    self._t("Warning"),
+                    self._t("Preset name cannot be empty")
+                )
+                return
+            
+            # 检查预设是否已存在
+            existing_presets = self.controller.get_presets_list()
+            if preset_name in existing_presets:
+                reply = QMessageBox.question(
+                    self,
+                    self._t("Confirm"),
+                    self._t("Preset '{name}' already exists. Overwrite?", name=preset_name),
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
+            
+            # 保存当前.env配置为预设
+            success = self.controller.save_preset(preset_name)
+            if success:
+                self._refresh_preset_list()
+                self.preset_combo.setCurrentText(preset_name)
+                QMessageBox.information(
+                    self,
+                    self._t("Success"),
+                    self._t("Preset saved successfully")
+                )
+            else:
+                QMessageBox.critical(
+                    self,
+                    self._t("Error"),
+                    self._t("Failed to save preset")
+                )
+
+    def _on_delete_preset_clicked(self):
+        """删除选中的预设"""
+        from PyQt6.QtWidgets import QMessageBox
+        
+        preset_name = self.preset_combo.currentText()
+        if not preset_name:
+            QMessageBox.warning(
+                self,
+                self._t("Warning"),
+                self._t("Please select a preset to delete")
+            )
+            return
+        
+        reply = QMessageBox.question(
+            self,
+            self._t("Confirm"),
+            self._t("Are you sure you want to delete preset '{name}'?", name=preset_name),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            success = self.controller.delete_preset(preset_name)
+            if success:
+                self._refresh_preset_list()
+                QMessageBox.information(
+                    self,
+                    self._t("Success"),
+                    self._t("Preset deleted successfully")
+                )
+            else:
+                QMessageBox.critical(
+                    self,
+                    self._t("Error"),
+                    self._t("Failed to delete preset")
+                )
+
+    def _on_preset_changed(self, new_preset_name: str):
+        """切换预设时自动保存当前预设并加载新预设"""
+        if not new_preset_name:
+            return
+        
+        # 获取当前预设名称
+        old_preset_name = getattr(self, '_current_preset_name', '')
+        
+        # 如果有旧预设，先保存当前环境变量到旧预设
+        if old_preset_name and old_preset_name != new_preset_name:
+            self.controller.save_preset(old_preset_name)
+        
+        # 加载新预设
+        success = self.controller.load_preset(new_preset_name)
+        if success:
+            # 更新当前预设名称
+            self._current_preset_name = new_preset_name
+            # 保存当前预设到配置文件（持久化）
+            self.controller.config_service.set_current_preset(new_preset_name)
+            # 重新加载当前翻译器的环境变量显示
+            translator_combo = self.findChild(QComboBox, "translator.translator")
+            if translator_combo:
+                self._on_translator_changed(translator_combo.currentText())
+
     def update_output_path_display(self, path: str):
         """Slot to update the text of the output folder input field."""
         self.output_folder_input.setText(path)
@@ -940,7 +1150,11 @@ class MainView(QWidget):
             self, 
             self._t("Add Files"), 
             last_dir, 
-            "Image Files (*.png *.jpg *.jpeg *.bmp *.webp)"
+            "All Supported Files (*.png *.jpg *.jpeg *.bmp *.webp *.pdf *.epub *.cbz *.cbr *.zip);;"
+            "Image Files (*.png *.jpg *.jpeg *.bmp *.webp);;"
+            "PDF Files (*.pdf);;"
+            "EPUB Files (*.epub);;"
+            "Comic Book Archives (*.cbz *.cbr *.zip)"
         )
         if file_paths:
             self.controller.add_files(file_paths)
@@ -957,14 +1171,12 @@ class MainView(QWidget):
     def on_translation_state_changed(self, is_translating: bool):
         """Handles the change of the translation state to update the start/stop button."""
         if is_translating:
-            self.start_button.setText(self._t("Stop Translation"))
-            self.start_button.setStyleSheet("background-color: #C53929; color: white;")
-            try:
-                self.start_button.clicked.disconnect()
-            except TypeError:
-                pass
-            self.start_button.clicked.connect(self.controller.stop_task)
+            # 禁用按钮2秒，防止快速重复点击导致线程冲突
+            self.start_button.setEnabled(False)
+            self.start_button.setText(self._t("Starting..."))
+            QTimer.singleShot(2000, self._enable_stop_button)
         else:
+            self.start_button.setEnabled(True)
             self.start_button.setStyleSheet("")
             self.start_button.style().unpolish(self.start_button)
             self.start_button.style().polish(self.start_button)
@@ -976,6 +1188,18 @@ class MainView(QWidget):
                 pass
             self.start_button.clicked.connect(self.controller.start_backend_task)
             self.update_start_button_text()
+    
+    def _enable_stop_button(self):
+        """启用停止按钮（延迟调用）"""
+        if self.controller.state_manager.is_translating():
+            self.start_button.setEnabled(True)
+            self.start_button.setText(self._t("Stop Translation"))
+            self.start_button.setStyleSheet("background-color: #C53929; color: white;")
+            try:
+                self.start_button.clicked.disconnect()
+            except TypeError:
+                pass
+            self.start_button.clicked.connect(self.controller.stop_task)
 
     def _sync_workflow_mode_from_config(self):
         """从配置同步下拉框的选择"""

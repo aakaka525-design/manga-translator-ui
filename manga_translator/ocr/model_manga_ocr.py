@@ -13,6 +13,20 @@ from shapely.geometry import Polygon
 
 import torch
 
+# 在导入 manga_ocr 之前配置 HuggingFace 镜像
+# transformers 库需要这些环境变量来使用镜像站
+os.environ.setdefault('HF_ENDPOINT', 'https://hf-mirror.com')
+os.environ.setdefault('HF_HUB_ENDPOINT', 'https://hf-mirror.com')
+
+# 禁用 SSL 验证（解决 hf-mirror.com 证书问题）
+import ssl
+import urllib.request
+ssl._create_default_https_context = ssl._create_unverified_context
+os.environ['CURL_CA_BUNDLE'] = ''
+os.environ['REQUESTS_CA_BUNDLE'] = ''
+# 对于 huggingface_hub 库
+os.environ['HF_HUB_DISABLE_SSL_VERIFY'] = '1'
+
 from manga_ocr import MangaOcr
 
 from .common import OfflineOCR

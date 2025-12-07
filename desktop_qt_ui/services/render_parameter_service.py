@@ -473,7 +473,7 @@ class RenderParameterService:
 
                 params = RenderParameters(**base_dict)
                 self.set_region_parameters(region_index, params)
-                self.logger.info(f"从JSON导入区域 {region_index} 的参数")
+                self.logger.debug(f"从JSON导入区域 {region_index} 的参数")
                 return True
             else:
                 self.logger.warning("JSON中没有有效的渲染参数")

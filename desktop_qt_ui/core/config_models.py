@@ -12,6 +12,7 @@ class TranslatorSettings(BaseModel):
     gpt_config: Optional[str] = "examples/gpt_config-example.yaml"
     high_quality_prompt_path: Optional[str] = "dict/prompt_example.json"
     max_requests_per_minute: int = 0
+    attempts: int = -1  # 翻译重试次数，-1 表示无限重试
     
     @property
     def chatgpt_config(self):
@@ -130,6 +131,7 @@ class AppSection(BaseModel):
     favorite_folders: Optional[List[str]] = None
     theme: str = "light"  # 主题：light, dark, gray
     ui_language: str = "auto"  # UI语言：auto(自动检测), zh_CN, en_US, ja_JP, ko_KR 等
+    current_preset: str = "默认"  # 当前使用的预设名称
 
 class AppSettings(BaseModel):
     app: AppSection = Field(default_factory=AppSection)

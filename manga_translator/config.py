@@ -49,7 +49,7 @@ def translator_chain(string):
     except ValueError as e:
         raise argparse.ArgumentTypeError(e)
     except Exception:
-        raise argparse.ArgumentTypeError(f'Invalid translator_chain value: "{string}". Example usage: --translator "google:sugoi" -l "JPN:ENG"')
+        raise argparse.ArgumentTypeError(f'Invalid translator_chain value: "{string}". Example usage: --translator "openai:gemini" -l "JPN:ENG"')
 
 
 def hex2rgb(h):
@@ -111,30 +111,14 @@ class Ocr(str, Enum):
     paddleocr_latin = "paddleocr_latin"
 
 class Translator(str, Enum):
-    youdao = "youdao"
-    baidu = "baidu"
-    deepl = "deepl"
-    papago = "papago"
-    caiyun = "caiyun"
     openai = "openai"
+    openai_hq = "openai_hq"
+    gemini = "gemini"
+    gemini_hq = "gemini_hq"
+    sakura = "sakura"
     none = "none"
     original = "original"
-    sakura = "sakura"
-    groq = "groq"
-    gemini = "gemini"
-    openai_hq = "openai_hq"
-    gemini_hq = "gemini_hq"
     offline = "offline"
-    nllb = "nllb"
-    nllb_big = "nllb_big"
-    sugoi = "sugoi"
-    jparacrawl = "jparacrawl"
-    jparacrawl_big = "jparacrawl_big"
-    m2m100 = "m2m100"
-    m2m100_big = "m2m100_big"
-    mbart50 = "mbart50"
-    qwen2 = "qwen2"
-    qwen2_big = "qwen2_big"
 
     def __str__(self):
         return self.name
@@ -242,7 +226,7 @@ class UpscaleConfig(BaseModel):
     """Tile size for Real-CUGAN upscaling (default: 400, 0 = process full image without tiling)"""
 
 class TranslatorConfig(BaseModel):
-    translator: Translator = Translator.sugoi
+    translator: Translator = Translator.openai_hq
     """Language translator to use"""
     target_lang: str = 'ENG' #todo: validate VALID_LANGUAGES #todo: convert to enum
     """Destination language"""
@@ -255,9 +239,18 @@ class TranslatorConfig(BaseModel):
     high_quality_prompt_path: Optional[str] = None
     """Path to a JSON file containing custom prompts for high-quality translation."""
     translator_chain: Optional[str] = None
-    """Output of one translator goes in another. Example: --translator-chain "google:JPN;sugoi:ENG"."""
+    """Output of one translator goes in another. Example: --translator-chain "openai:JPN;gemini:ENG"."""
     selective_translation: Optional[str] = None
-    """Select a translator based on detected language in image. Note the first translation service acts as default if the language isn\'t defined. Example: --translator-chain "google:JPN;sugoi:ENG".'"""
+    """Select a translator based on detected language in image. Note the first translation service acts as default if the language isn\'t defined. Example: --translator-chain "openai:JPN;gemini:ENG".'"""
+    
+    # 用户级 API Key（用于 Web 服务器多用户场景）
+    # 这些字段优先于环境变量，允许每个用户使用自己的 API Key
+    user_api_key: Optional[str] = None
+    """User-provided API key (overrides environment variable)"""
+    user_api_base: Optional[str] = None
+    """User-provided API base URL (overrides environment variable)"""
+    user_api_model: Optional[str] = None
+    """User-provided model name (overrides environment variable)"""
     
     # 重试配置
     attempts: int = -1
@@ -362,6 +355,33 @@ class ColorizerConfig(BaseModel):
     colorizer: Colorizer = Colorizer.none
     """Colorization model to use."""
 
+class CliConfig(BaseModel):
+    """CLI-specific configuration options"""
+    attempts: int = -1
+    """Number of retry attempts for translation. -1 means unlimited retries"""
+    verbose: bool = False
+    """Enable verbose logging"""
+    use_gpu: bool = True
+    """Use GPU for processing"""
+    use_gpu_limited: bool = False
+    """Use limited GPU memory mode"""
+    context_size: int = 3
+    """Context size for translation"""
+    batch_size: int = 1
+    """Batch size for processing"""
+    format: Optional[str] = None
+    """Output format"""
+    save_quality: int = 100
+    """Save quality for output images"""
+    overwrite: bool = False
+    """Overwrite existing files"""
+    skip_no_text: bool = False
+    """Skip images with no text"""
+    save_text: bool = False
+    """Save extracted text"""
+    ignore_errors: bool = False
+    """Ignore errors and continue processing"""
+
 class OcrConfig(BaseModel):
     use_mocr_merge: bool = False
     """Use bbox merge when Manga OCR inference."""
@@ -402,6 +422,8 @@ class Config(BaseModel):
     """inpainter configs"""
     ocr: OcrConfig = OcrConfig()
     """Ocr configs"""
+    cli: CliConfig = CliConfig()
+    """CLI configs"""
     # ?
     force_simple_sort: bool = False
     """Don't use panel detection for sorting, use a simpler fallback logic instead"""

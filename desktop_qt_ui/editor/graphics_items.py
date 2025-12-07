@@ -177,15 +177,20 @@ class RegionTextItem(QGraphicsItemGroup):
 
     def update_from_data(self, region_data: dict):
         """Updates the item's entire state from a new region_data dictionary."""
-        # 【关键修复】在拖动过程中，完全跳过更新，避免重置位置和geometry
-        if self._is_dragging:
-            return
-        
-        # 保存旧的场景边界矩形（在改变几何之前）
-        old_scene_rect = self.sceneBoundingRect() if self.scene() else None
+        try:
+            # 【关键修复】在拖动过程中，完全跳过更新，避免重置位置和geometry
+            if self._is_dragging:
+                return
+            
+            # 安全检查：确保item仍在场景中
+            if not self.scene():
+                return
+            
+            # 保存旧的场景边界矩形（在改变几何之前）
+            old_scene_rect = self.sceneBoundingRect() if self.scene() else None
 
-        # 保存选中状态
-        was_selected = self.isSelected()
+            # 保存选中状态
+            was_selected = self.isSelected()
 
         # 确保 region_data 包含所有必要的字段
         # 如果新的 region_data 缺少某些字段,从旧的 self.region_data 中复制
@@ -239,6 +244,10 @@ class RegionTextItem(QGraphicsItemGroup):
             update_rect = old_scene_rect.united(new_scene_rect)
             self.scene().invalidate(update_rect, QGraphicsScene.SceneLayer.ItemLayer)
             self.scene().update(update_rect)
+            
+        except (RuntimeError, AttributeError) as e:
+            # Item可能在更新过程中被删除
+            print(f"[RegionTextItem] Warning: update_from_data failed: {e}")
 
     def itemChange(self, change, value):
         if change == QGraphicsItem.GraphicsItemChange.ItemSelectedChange:
@@ -485,58 +494,83 @@ class RegionTextItem(QGraphicsItemGroup):
         painter.restore()
 
     def hoverMoveEvent(self, event: QGraphicsSceneMouseEvent):
-        # 检查当前工具，如果是绘图工具就不设置光标
-        view = self.scene().views()[0] if self.scene().views() else None
-        if view and hasattr(view, '_active_tool') and view._active_tool in ['pen', 'brush', 'eraser']:
-            super().hoverMoveEvent(event)
-            return
+        try:
+            # 安全检查：确保scene存在
+            if not self.scene():
+                super().hoverMoveEvent(event)
+                return
+                
+            # 检查当前工具，如果是绘图工具就不设置光标
+            views = self.scene().views()
+            view = views[0] if views else None
+            if view and hasattr(view, '_active_tool') and view._active_tool in ['pen', 'brush', 'eraser']:
+                super().hoverMoveEvent(event)
+                return
 
-        if self.isSelected():
-            handle, _ = self._get_handle_at(event.pos())
-            if handle == 'vertex':
-                self.setCursor(Qt.CursorShape.CrossCursor)
-            elif handle == 'rotate':
-                self.setCursor(Qt.CursorShape.SizeAllCursor) # Use a more distinct cursor
-            elif handle == 'edge':
-                poly_idx, edge_idx = _
-                p1 = self.polygons[poly_idx][edge_idx]
-                p2 = self.polygons[poly_idx][(edge_idx + 1) % len(self.polygons[poly_idx])]
-                angle = np.arctan2(p2.y() - p1.y(), p2.x() - p1.x()) * 180 / np.pi
-                angle = (angle + 360) % 360
-                if (45 <= angle < 135) or (225 <= angle < 315):
-                    self.setCursor(Qt.CursorShape.SizeHorCursor)
+            if self.isSelected():
+                handle, _ = self._get_handle_at(event.pos())
+                if handle == 'vertex':
+                    self.setCursor(Qt.CursorShape.CrossCursor)
+                elif handle == 'rotate':
+                    self.setCursor(Qt.CursorShape.SizeAllCursor) # Use a more distinct cursor
+                elif handle == 'edge':
+                    poly_idx, edge_idx = _
+                    # 安全检查：确保索引有效
+                    if not (0 <= poly_idx < len(self.polygons)):
+                        super().hoverMoveEvent(event)
+                        return
+                    poly = self.polygons[poly_idx]
+                    if not (0 <= edge_idx < len(poly)):
+                        super().hoverMoveEvent(event)
+                        return
+                    p1 = poly[edge_idx]
+                    p2 = poly[(edge_idx + 1) % len(poly)]
+                    angle = np.arctan2(p2.y() - p1.y(), p2.x() - p1.x()) * 180 / np.pi
+                    angle = (angle + 360) % 360
+                    if (45 <= angle < 135) or (225 <= angle < 315):
+                        self.setCursor(Qt.CursorShape.SizeHorCursor)
+                    else:
+                        self.setCursor(Qt.CursorShape.SizeVerCursor)
+                elif handle == 'white_corner':
+                    # 根据角点位置设置不同的对角线光标
+                    corner_idx = _
+                    if corner_idx in [0, 2]:  # 左上、右下
+                        self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+                    else:  # 右上、左下
+                        self.setCursor(Qt.CursorShape.SizeBDiagCursor)
+                elif handle == 'white_edge':
+                    edge_idx = _
+                    if edge_idx in [0, 2]:  # 上下边
+                        self.setCursor(Qt.CursorShape.SizeVerCursor)
+                    else:  # 左右边
+                        self.setCursor(Qt.CursorShape.SizeHorCursor)
                 else:
-                    self.setCursor(Qt.CursorShape.SizeVerCursor)
-            elif handle == 'white_corner':
-                # 根据角点位置设置不同的对角线光标
-                corner_idx = _
-                if corner_idx in [0, 2]:  # 左上、右下
-                    self.setCursor(Qt.CursorShape.SizeFDiagCursor)
-                else:  # 右上、左下
-                    self.setCursor(Qt.CursorShape.SizeBDiagCursor)
-            elif handle == 'white_edge':
-                edge_idx = _
-                if edge_idx in [0, 2]:  # 上下边
-                    self.setCursor(Qt.CursorShape.SizeVerCursor)
-                else:  # 左右边
-                    self.setCursor(Qt.CursorShape.SizeHorCursor)
+                    self.setCursor(Qt.CursorShape.SizeAllCursor)
             else:
-                self.setCursor(Qt.CursorShape.SizeAllCursor)
-        else:
-            self.setCursor(Qt.CursorShape.ArrowCursor)
-        super().hoverMoveEvent(event)
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+            super().hoverMoveEvent(event)
+        except (RuntimeError, AttributeError) as e:
+            # Item可能已被删除
+            pass
 
     def mousePressEvent(self, event: QGraphicsSceneMouseEvent):
-        # 使用 Qt 自动计算的局部坐标（已考虑旋转）
-        local_pos = event.pos()
-
-        if event.button() == Qt.MouseButton.LeftButton:
-            # 获取 view 和 model
-            view = self.scene().views()[0] if self.scene() and self.scene().views() else None
-            if not view or not hasattr(view, 'model'):
-                # 没有 view/model，使用默认行为
+        try:
+            # 安全检查：确保scene存在
+            if not self.scene():
                 super().mousePressEvent(event)
                 return
+                
+            # 使用 Qt 自动计算的局部坐标（已考虑旋转）
+            local_pos = event.pos()
+
+            if event.button() == Qt.MouseButton.LeftButton:
+                # 获取 view 和 model
+                views = self.scene().views()
+                view = views[0] if views else None
+                if not view or not hasattr(view, 'model'):
+                    # 没有 view/model，使用默认行为
+                    super().mousePressEvent(event)
+                    return
             
             # 检查 Ctrl 键
             ctrl_pressed = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
@@ -636,8 +670,11 @@ class RegionTextItem(QGraphicsItemGroup):
                 event.accept()
                 return
         
-        # 其他按钮的默认行为
-        super().mousePressEvent(event)
+            # 其他按钮的默认行为
+            super().mousePressEvent(event)
+        except (RuntimeError, AttributeError) as e:
+            # Item可能已被删除
+            print(f"[RegionTextItem] Warning: mousePressEvent failed: {e}")
 
     def mouseMoveEvent(self, event: QGraphicsSceneMouseEvent):
         if self._interaction_mode == 'none':
@@ -715,12 +752,19 @@ class RegionTextItem(QGraphicsItemGroup):
         event.accept()
 
     def mouseReleaseEvent(self, event: QGraphicsSceneMouseEvent):
-        if self._interaction_mode != 'none':
-            self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+        try:
+            if self._interaction_mode != 'none':
+                self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, True)
+                
+                # 保存当前交互模式，因为后面会重置
+                current_mode = self._interaction_mode
+                
+                # 【关键修复】先重置交互模式，避免在 callback 触发重建后访问无效状态
+                self._interaction_mode = 'none'
 
-            # 处理移动模式
-            if self._interaction_mode == 'move':
-                self._is_dragging = False  # 清除拖动状态
+                # 处理移动模式
+                if current_mode == 'move':
+                    self._is_dragging = False  # 清除拖动状态
                 
                 # 使用保存的初始visual_center计算delta
                 new_center = self.pos()
@@ -732,7 +776,7 @@ class RegionTextItem(QGraphicsItemGroup):
 
                 # 如果没有移动,跳过更新
                 if abs(delta_x) < 0.1 and abs(delta_y) < 0.1:
-                    self._interaction_mode = 'none'
+                    super().mouseReleaseEvent(event)
                     return
 
                 # 更新lines：所有点都加上偏移量
@@ -750,23 +794,32 @@ class RegionTextItem(QGraphicsItemGroup):
                 new_region_data = copy.deepcopy(self.region_data)
                 new_region_data['center'] = [new_center.x(), new_center.y()]
                 new_region_data['lines'] = new_lines
-
-                # 更新模型
-                self.geometry_callback(self.region_index, new_region_data)
+                
+                # 【关键修复】先更新本地状态，再调用 callback
+                # 因为 callback 可能触发 item 重建，之后不能再访问 self
                 self.region_data.update(new_region_data)
                 
-                # 【关键修复】手动更新polygons，因为update_from_data在拖动时被跳过了
-                # 转换为局部坐标: local = world - center
+                # 手动更新polygons
                 self.polygons = []
                 for i, line in enumerate(new_lines):
                     local_poly = QPolygonF()
                     for x, y in line:
                         local_poly.append(QPointF(x - new_center.x(), y - new_center.y()))
                     self.polygons.append(local_poly)
+                
+                # 保存 callback 引用，因为调用后 self 可能无效
+                callback = self.geometry_callback
+                region_index = self.region_index
+                
+                # 调用父类方法
+                super().mouseReleaseEvent(event)
+                
+                # 【最后】调用 callback，之后不再访问 self
+                callback(region_index, new_region_data)
+                return
 
 
-            elif self._interaction_mode == 'rotate':
-                # --- REFACTOR START: Simplified rotate logic ---
+            elif current_mode == 'rotate':
                 # The item's rotation is the new angle.
                 new_angle = self.rotation()
 
@@ -779,11 +832,20 @@ class RegionTextItem(QGraphicsItemGroup):
                 new_region_data = copy.deepcopy(self.region_data)
                 new_region_data['angle'] = new_angle
 
-                self.geometry_callback(self.region_index, new_region_data)
+                # 先更新本地状态
                 self.region_data.update(new_region_data)
-                # --- REFACTOR END ---
+                
+                # 保存引用
+                callback = self.geometry_callback
+                region_index = self.region_index
+                
+                super().mouseReleaseEvent(event)
+                
+                # 最后调用 callback
+                callback(region_index, new_region_data)
+                return
 
-            elif self._interaction_mode in ['vertex', 'edge']:
+            elif current_mode in ['vertex', 'edge']:
                 # 使用 desktop-ui 的数据结构保存蓝框编辑结果
                 new_region_data = self.desktop_geometry.to_region_data()
 
@@ -800,10 +862,20 @@ class RegionTextItem(QGraphicsItemGroup):
                 print(f"  texts: {final_region_data.get('texts', 'NOT FOUND')}")
                 print(f"  translation: {final_region_data.get('translation', 'NOT FOUND')}")
 
-                self.geometry_callback(self.region_index, final_region_data)
+                # 先更新本地状态
                 self.region_data.update(final_region_data)
+                
+                # 保存引用
+                callback = self.geometry_callback
+                region_index = self.region_index
+                
+                super().mouseReleaseEvent(event)
+                
+                # 最后调用 callback
+                callback(region_index, final_region_data)
+                return
 
-            elif self._interaction_mode in ['white_corner', 'white_edge']:
+            elif current_mode in ['white_corner', 'white_edge']:
                 # 使用 desktop-ui 的数据结构保存结果
                 new_region_data = self.desktop_geometry.to_region_data()
 
@@ -811,21 +883,41 @@ class RegionTextItem(QGraphicsItemGroup):
                 final_region_data = copy.deepcopy(self.region_data)
                 final_region_data.update(new_region_data)
 
-                self.geometry_callback(self.region_index, final_region_data)
+                # 先更新本地状态
                 self.region_data.update(final_region_data)
 
                 # 使用保存的初始rect刷新空间索引
-                if self.scene() and hasattr(self, '_drag_start_scene_rect') and self._drag_start_scene_rect is not None:
+                scene = self.scene()
+                if scene and hasattr(self, '_drag_start_scene_rect') and self._drag_start_scene_rect is not None:
                     from PyQt6.QtWidgets import QGraphicsScene
                     new_scene_rect = self.sceneBoundingRect()
                     update_rect = self._drag_start_scene_rect.united(new_scene_rect)
-                    self.scene().invalidate(update_rect, QGraphicsScene.SceneLayer.ItemLayer)
-                    self.scene().update(update_rect)
+                    scene.invalidate(update_rect, QGraphicsScene.SceneLayer.ItemLayer)
+                    scene.update(update_rect)
+                
+                # 保存引用
+                callback = self.geometry_callback
+                region_index = self.region_index
+                
+                super().mouseReleaseEvent(event)
+                
+                # 最后调用 callback
+                callback(region_index, final_region_data)
+                return
 
-            # --- End of Change ---
+                # --- End of Change ---
 
-        self._interaction_mode = 'none'
-        super().mouseReleaseEvent(event)
+            self._interaction_mode = 'none'
+            super().mouseReleaseEvent(event)
+        except (RuntimeError, AttributeError) as e:
+            # Item可能在操作过程中被删除
+            self._interaction_mode = 'none'
+            self._is_dragging = False
+            print(f"[RegionTextItem] Warning: mouseReleaseEvent failed: {e}")
+        except Exception as e:
+            self._interaction_mode = 'none'
+            self._is_dragging = False
+            print(f"[RegionTextItem] Error in mouseReleaseEvent: {e}")
 
     def _get_handle_at(self, pos: QPointF) -> (str, tuple):
         handle_info = self._get_handle_info()

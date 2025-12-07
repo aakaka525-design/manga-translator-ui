@@ -489,80 +489,192 @@ docker run -e MANGA_TRANSLATOR_ADMIN_PASSWORD=your_password_here ...
 
 以下API端点在 **Web模式** 中可用：
 
-**API 端点**：
+### 基础端点
 
-**基础端点**：
-- `GET /` - 服务器信息
-- `GET /docs` - API 文档（Swagger UI）
-- `POST /queue-size` - 获取任务队列大小
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/` | GET | 服务器信息 |
+| `/docs` | GET | API 文档（Swagger UI） |
+| `/translate/queue-size` | POST | 获取任务队列大小 |
 
-**配置管理端点**：
-- `GET /config` - 获取配置结构
-- `GET /config/structure` - 获取完整配置结构（管理员）
-- `GET /config/options` - 获取配置选项（翻译器、语言等）
-- `GET /translator-config/{translator}` - 获取指定翻译器的配置信息
+### 认证端点 (`/auth`)
 
-**用户设置端点**：
-- `GET /user/access` - 检查用户访问权限
-- `POST /user/login` - 用户登录
-- `GET /user/settings` - 获取用户设置
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/auth/login` | POST | 用户登录 |
+| `/auth/logout` | POST | 用户注销 |
+| `/auth/register` | POST | 用户注册（需管理员开启） |
+| `/auth/change-password` | POST | 修改密码 |
+| `/auth/check` | GET | 检查会话状态 |
+| `/auth/status` | GET | 获取认证系统状态 |
+| `/auth/setup` | POST | 初始设置（创建首个管理员） |
 
-**环境变量管理端点**：
-- `GET /env` - 获取环境变量（用户）
-- `POST /env` - 保存用户环境变量（API密钥）
-- `GET /env-vars` - 获取环境变量列表（管理员）
-- `POST /env-vars` - 保存环境变量到.env文件（管理员）
-- `GET /api-key-policy` - 获取API密钥策略
+### 配置管理端点
 
-**资源管理端点**：
-- `GET /fonts` - 获取可用字体列表
-- `POST /upload/font` - 上传字体文件（管理员）
-- `DELETE /fonts/{filename}` - 删除字体文件（管理员）
-- `GET /prompts` - 获取可用提示词列表
-- `GET /prompts/{filename}` - 查看提示词内容（管理员）
-- `POST /upload/prompt` - 上传提示词文件（管理员）
-- `DELETE /prompts/{filename}` - 删除提示词文件（管理员）
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/config` | GET | 获取配置结构（支持 mode 参数：user/authenticated/admin） |
+| `/config/defaults` | GET | 获取服务器默认配置 |
+| `/config/structure` | GET | 获取完整配置结构（管理员） |
+| `/config/options` | GET | 获取配置选项（翻译器、语言等） |
+| `/translator-config/{translator}` | GET | 获取指定翻译器的配置信息 |
 
-**翻译器和语言端点**：
-- `GET /translators` - 获取可用翻译器列表
-- `GET /languages` - 获取可用目标语言列表
-- `GET /workflows` - 获取可用工作流列表
+### 元数据端点
 
-**管理员端点**：
-- `POST /admin/login` - 管理员登录
-- `GET /admin/settings` - 获取管理员设置
-- `POST /admin/settings` - 保存管理员设置
-- `POST /admin/settings/parameter-visibility` - 更新参数可见性设置
-- `GET /admin/server-config` - 获取服务器配置
-- `POST /admin/server-config` - 保存服务器配置
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/fonts` | GET | 获取可用字体列表 |
+| `/translators` | GET | 获取可用翻译器列表（支持 mode 参数） |
+| `/languages` | GET | 获取可用目标语言列表（支持 mode 参数） |
+| `/workflows` | GET | 获取可用工作流列表（支持 mode 参数） |
 
-**国际化端点**：
-- `GET /i18n/languages` - 获取可用语言列表
-- `GET /i18n/{locale}` - 获取指定语言的翻译文本
+### 用户设置端点
 
-**日志端点**：
-- `GET /logs` - 获取实时日志
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/user/settings` | GET | 获取用户设置（包含用户组配额） |
+
+### 管理员端点 (`/admin`)
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/admin/need-setup` | GET | 检查是否需要首次设置 |
+| `/admin/setup` | POST | 首次设置管理员密码 |
+| `/admin/login` | POST | 管理员登录（旧版，建议用 /auth/login） |
+| `/admin/change-password` | POST | 修改管理员密码 |
+| `/admin/settings` | GET/POST/PUT | 获取/更新管理员设置 |
+| `/admin/settings/parameter-visibility` | POST | 更新参数可见性设置 |
+| `/admin/server-config` | GET/POST | 获取/更新服务器配置 |
+| `/admin/announcement` | PUT | 更新公告 |
+| `/admin/tasks` | GET | 获取所有活动任务 |
+| `/admin/tasks/{task_id}/cancel` | POST | 取消指定任务（支持 force 参数） |
+| `/admin/logs` | GET | 获取日志（支持筛选和分页） |
+| `/admin/logs/export` | GET | 导出日志为文本文件 |
+| `/admin/env-vars` | GET/POST | 获取/保存环境变量 |
+| `/admin/storage/info` | GET | 获取存储使用情况 |
+| `/admin/cleanup/{target}` | POST | 清理指定目录（uploads/results/cache/all） |
+
+### 用户管理端点 (`/api/admin/users`)
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/admin/users` | GET | 列出所有用户 |
+| `/api/admin/users` | POST | 创建新用户 |
+| `/api/admin/users/{username}` | GET | 获取用户信息 |
+| `/api/admin/users/{username}` | PUT | 更新用户信息 |
+| `/api/admin/users/{username}` | DELETE | 删除用户 |
+| `/api/admin/users/{username}/permissions` | PUT | 更新用户权限 |
+
+### 用户组管理端点 (`/api/admin/groups`)
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/admin/groups` | GET | 获取所有用户组 |
+| `/api/admin/groups` | POST | 创建新用户组 |
+| `/api/admin/groups/{group_id}` | GET | 获取指定用户组 |
+| `/api/admin/groups/{group_id}` | DELETE | 删除用户组 |
+| `/api/admin/groups/{group_id}/rename` | PUT | 重命名用户组 |
+| `/api/admin/groups/{group_id}/config` | PUT | 更新用户组配置 |
+
+### 会话管理端点 (`/sessions`)
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/sessions/` | GET | 列出当前用户的会话 |
+| `/sessions/` | POST | 创建新会话 |
+| `/sessions/{session_token}` | GET | 获取会话详情 |
+| `/sessions/{session_token}` | DELETE | 删除会话 |
+| `/sessions/{session_token}/status` | PUT | 更新会话状态 |
+| `/sessions/access-log` | GET | 获取访问日志（管理员） |
+| `/sessions/access-log/unauthorized` | GET | 获取未授权访问记录（管理员） |
+
+### 资源管理端点 (`/api/resources`)
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/resources/prompts` | GET | 获取用户的提示词列表 |
+| `/api/resources/prompts` | POST | 上传提示词文件 |
+| `/api/resources/prompts/{resource_id}` | DELETE | 删除提示词 |
+| `/api/resources/prompts/by-name/{filename}` | DELETE | 按文件名删除提示词 |
+| `/api/resources/fonts` | GET | 获取用户的字体列表 |
+| `/api/resources/fonts` | POST | 上传字体文件 |
+| `/api/resources/fonts/{resource_id}` | DELETE | 删除字体 |
+| `/api/resources/fonts/by-name/{filename}` | DELETE | 按文件名删除字体 |
+| `/api/resources/stats` | GET | 获取资源统计信息 |
+
+### 历史记录端点 (`/api/history`)
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/history` | GET | 获取用户翻译历史（支持筛选） |
+| `/api/history/search` | GET | 搜索翻译历史 |
+| `/api/history/admin/all` | GET | 管理员查看所有历史（支持分页） |
+| `/api/history/{session_token}` | GET | 获取会话详情 |
+| `/api/history/{session_token}` | DELETE | 删除翻译会话 |
+| `/api/history/{session_token}/download` | GET | 下载会话结果（ZIP） |
+| `/api/history/{session_token}/file/{filename}` | GET | 获取历史记录中的单个文件 |
+| `/api/history/batch-download` | POST | 批量下载多个会话 |
+
+### 配额管理端点 (`/api`)
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/quota/stats` | GET | 获取当前用户配额统计 |
+| `/api/admin/quota/stats` | GET | 获取所有用户配额统计（管理员） |
+| `/api/admin/quota/user/{user_id}` | GET | 获取指定用户配额（管理员） |
+| `/api/admin/quota/reset` | POST | 重置配额（管理员） |
+| `/api/admin/quota/set-limits` | POST | 设置配额限制（管理员） |
+
+### 清理管理端点 (`/api/admin/cleanup`)
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/admin/cleanup/rules` | GET | 获取所有清理规则 |
+| `/api/admin/cleanup/rules` | POST | 创建清理规则 |
+| `/api/admin/cleanup/rules/{rule_id}` | DELETE | 删除清理规则 |
+| `/api/admin/cleanup/manual` | POST | 执行手动清理 |
+| `/api/admin/cleanup/preview` | POST | 预览清理结果 |
+| `/api/admin/cleanup/auto/status` | GET | 获取自动清理状态 |
+| `/api/admin/cleanup/auto/trigger` | POST | 手动触发自动清理 |
+| `/api/admin/cleanup/auto/history` | GET | 获取自动清理历史 |
+
+### 日志端点
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/logs` | GET | 获取实时日志（旧版） |
+
+### 翻译端点 (`/translate`)
 
 **JSON Body 端点**（接收 JSON 格式的请求）：
-- `POST /translate/json` - 翻译图片，返回 JSON
-- `POST /translate/bytes` - 翻译图片，返回自定义字节格式
-- `POST /translate/image` - 翻译图片，返回图片
-- `POST /translate/json/stream` - 流式翻译，返回 JSON（支持进度）
-- `POST /translate/bytes/stream` - 流式翻译，返回字节格式（支持进度）
-- `POST /translate/image/stream` - 流式翻译，返回图片（支持进度）
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/translate/json` | POST | 翻译图片，返回 JSON |
+| `/translate/bytes` | POST | 翻译图片，返回自定义字节格式 |
+| `/translate/image` | POST | 翻译图片，返回图片 |
+| `/translate/json/stream` | POST | 流式翻译，返回 JSON（支持进度） |
+| `/translate/bytes/stream` | POST | 流式翻译，返回字节格式（支持进度） |
+| `/translate/image/stream` | POST | 流式翻译，返回图片（支持进度） |
 
 **Form 表单端点**（接收 multipart/form-data）：
-- `POST /translate/with-form/json` - 翻译图片，返回 JSON
-- `POST /translate/with-form/bytes` - 翻译图片，返回字节格式
-- `POST /translate/with-form/image` - 翻译图片，返回图片
-- `POST /translate/with-form/json/stream` - 流式翻译，返回 JSON（支持进度）
-- `POST /translate/with-form/bytes/stream` - 流式翻译，返回字节格式（支持进度）
-- `POST /translate/with-form/image/stream` - 流式翻译，返回图片（推荐，适合脚本）
-- `POST /translate/with-form/image/stream/web` - 流式翻译，返回图片（Web 前端优化）
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/translate/with-form/json` | POST | 翻译图片，返回 JSON |
+| `/translate/with-form/bytes` | POST | 翻译图片，返回字节格式 |
+| `/translate/with-form/image` | POST | 翻译图片，返回图片 |
+| `/translate/with-form/json/stream` | POST | 流式翻译，返回 JSON（支持进度） |
+| `/translate/with-form/bytes/stream` | POST | 流式翻译，返回字节格式（支持进度） |
+| `/translate/with-form/image/stream` | POST | 流式翻译，返回图片（推荐，适合脚本） |
+| `/translate/with-form/image/stream/web` | POST | 流式翻译，返回图片（Web 前端优化） |
 
 **批量翻译端点**：
-- `POST /translate/batch/json` - 批量翻译，返回 JSON 数组
-- `POST /translate/batch/images` - 批量翻译，返回 ZIP 压缩包
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/translate/batch/json` | POST | 批量翻译，返回 JSON 数组 |
+| `/translate/batch/images` | POST | 批量翻译，返回 ZIP 压缩包 |
 
 > ⚠️ **重要**：批量端点使用 JSON 格式请求，图片需要 base64 编码，不是 multipart/form-data 格式！
 
@@ -602,36 +714,54 @@ if response.status_code == 200:
 ```
 
 **导出端点**（导出翻译结果）：
-- `POST /translate/export/original` - 导出原文（ZIP：JSON + TXT）
-- `POST /translate/export/original/stream` - 导出原文（流式，支持进度）
-- `POST /translate/export/translated` - 导出译文（ZIP：JSON + TXT）
-- `POST /translate/export/translated/stream` - 导出译文（流式，支持进度）
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/translate/export/original` | POST | 导出原文（ZIP：JSON + TXT） |
+| `/translate/export/original/stream` | POST | 导出原文（流式，支持进度） |
+| `/translate/export/translated` | POST | 导出译文（ZIP：JSON + TXT） |
+| `/translate/export/translated/stream` | POST | 导出译文（流式，支持进度） |
 
 **处理端点**（图片处理）：
-- `POST /translate/upscale` - 仅超分（返回高清图片）
-- `POST /translate/upscale/stream` - 仅超分（流式，支持进度）
-- `POST /translate/colorize` - 仅上色（返回彩色图片）
-- `POST /translate/colorize/stream` - 仅上色（流式，支持进度）
-- `POST /translate/inpaint` - 仅修复（检测文字并修复图片）
-- `POST /translate/inpaint/stream` - 仅修复（流式，支持进度）
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/translate/upscale` | POST | 仅超分（返回高清图片） |
+| `/translate/upscale/stream` | POST | 仅超分（流式，支持进度） |
+| `/translate/colorize` | POST | 仅上色（返回彩色图片） |
+| `/translate/colorize/stream` | POST | 仅上色（流式，支持进度） |
+| `/translate/inpaint` | POST | 仅修复（检测文字并修复图片） |
+| `/translate/inpaint/stream` | POST | 仅修复（流式，支持进度） |
 
 **导入端点**（导入翻译并渲染）：
-- `POST /translate/import/json` - 导入 JSON + 图片，返回渲染后的图片
-- `POST /translate/import/json/stream` - 导入 JSON + 图片（流式，支持进度）
-- `POST /translate/import/txt` - 导入 TXT + JSON + 图片，返回渲染后的图片（支持模板和模糊匹配）
-- `POST /translate/import/txt/stream` - 导入 TXT + JSON + 图片（流式，支持进度）
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/translate/import/json` | POST | 导入 JSON + 图片，返回渲染后的图片 |
+| `/translate/import/json/stream` | POST | 导入 JSON + 图片（流式，支持进度） |
+| `/translate/import/txt` | POST | 导入 TXT + JSON + 图片，返回渲染后的图片 |
+| `/translate/import/txt/stream` | POST | 导入 TXT + JSON + 图片（流式，支持进度） |
 
 **其他端点**：
-- `POST /translate/complete` - 翻译图片，返回完整结果（JSON + 图片，multipart 格式）
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/translate/complete` | POST | 翻译图片，返回完整结果（JSON + 图片，multipart 格式） |
 
 **结果管理端点**：
-- `GET /results/list` - 列出所有结果目录
-- `GET /result/{folder_name}/final.png` - 获取指定结果图片
-- `DELETE /results/{folder_name}` - 删除指定结果目录
-- `DELETE /results/clear` - 清空所有结果目录
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/results/list` | GET | 列出所有结果目录 |
+| `/result/{folder_name}/final.png` | GET | 获取指定结果图片 |
+| `/results/{folder_name}` | DELETE | 删除指定结果目录 |
+| `/results/clear` | DELETE | 清空所有结果目录 |
 
 **维护端点**：
-- `POST /cleanup/temp` - 清理临时文件（默认清理24小时前的文件）
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/cleanup/temp` | POST | 清理临时文件（默认清理24小时前的文件） |
 
 ---
 
@@ -1200,6 +1330,91 @@ python -m manga_translator shared --models-ttl 300 --retry-attempts 3
 
 ---
 
+## 用户认证与权限系统
+
+Web 模式支持完整的用户认证和权限管理系统。
+
+### 初始设置
+
+首次启动服务器时，需要创建管理员账户：
+
+```bash
+# 方式1：通过环境变量自动设置
+set MANGA_TRANSLATOR_ADMIN_PASSWORD=your_password_here
+python -m manga_translator web
+
+# 方式2：通过 Web 界面设置
+# 访问 http://127.0.0.1:8000/admin 进行初始设置
+
+# 方式3：通过 API 设置
+curl -X POST http://127.0.0.1:8000/auth/setup \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "your_password"}'
+```
+
+### 用户登录
+
+```python
+import requests
+
+# 登录获取 token
+response = requests.post('http://localhost:8000/auth/login', json={
+    'username': 'your_username',
+    'password': 'your_password'
+})
+data = response.json()
+token = data['token']
+
+# 后续请求携带 token
+headers = {'X-Session-Token': token}
+response = requests.get('http://localhost:8000/api/history', headers=headers)
+```
+
+### 用户组与权限
+
+系统支持基于用户组的权限管理：
+
+- **admin** - 管理员组，拥有所有权限
+- **default** - 默认用户组
+- **guest** - 访客组（受限权限）
+
+**权限类型**：
+- `allowed_translators` - 允许使用的翻译器（白名单）
+- `denied_translators` - 禁止使用的翻译器（黑名单）
+- `allowed_workflows` - 允许使用的工作流
+- `allowed_parameters` - 允许调整的参数
+- `max_concurrent_tasks` - 最大并发任务数
+- `daily_quota` - 每日翻译配额（-1 表示无限制）
+- `can_upload_files` - 是否可以上传文件
+- `can_delete_files` - 是否可以删除文件
+
+### 配额管理
+
+```python
+# 获取当前用户配额
+response = requests.get('http://localhost:8000/api/quota/stats', headers=headers)
+quota = response.json()
+print(f"今日已用: {quota['used_today']}/{quota['daily_limit']}")
+```
+
+### 历史记录管理
+
+```python
+# 获取翻译历史
+response = requests.get('http://localhost:8000/api/history', headers=headers)
+history = response.json()
+
+# 下载历史记录
+response = requests.get(
+    f'http://localhost:8000/api/history/{session_token}/download',
+    headers=headers
+)
+with open('history.zip', 'wb') as f:
+    f.write(response.content)
+```
+
+---
+
 ## 常见问题
 
 ### Q: 如何查看所有可用参数？
@@ -1258,4 +1473,4 @@ python -m manga_translator --help
 
 ---
 
-**生成时间**: 2025-01-21
+**生成时间**: 2025-12-07

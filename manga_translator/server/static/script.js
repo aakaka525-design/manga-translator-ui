@@ -1,4 +1,4 @@
-document.addEventListener('DOMContentLoaded', () => {
+﻿document.addEventListener('DOMContentLoaded', () => {
     init();
 });
 
@@ -55,6 +55,10 @@ const hiddenKeys = [
     'render.gimp_font',  // 已废弃，使用 font_path 代替
 ];
 
+// User session and permissions
+let userSession = null;
+let userPermissions = null;
+
 // DOM Elements
 const els = {
     fileInput: document.getElementById('file-input'),
@@ -77,26 +81,202 @@ const els = {
 
 let configOptions = {};  // 存储参数选项
 
+// ===== Authentication and Permission Functions =====
+
+async function checkAuthentication() {
+    // Check if user has a session token
+    const sessionToken = localStorage.getItem('session_token');
+    
+    if (!sessionToken) {
+        // No session token, redirect to login
+        window.location.href = '/static/login.html';
+        return false;
+    }
+    
+    try {
+        // Verify session with server
+        const res = await fetch('/auth/check', {
+            headers: {
+                'X-Session-Token': sessionToken
+            }
+        });
+        
+        if (!res.ok) {
+            // Session invalid, redirect to login
+            localStorage.removeItem('session_token');
+            window.location.href = '/static/login.html';
+            return false;
+        }
+        
+        const data = await res.json();
+        
+        if (!data.valid) {
+            // Session invalid, redirect to login
+            localStorage.removeItem('session_token');
+            window.location.href = '/static/login.html';
+            return false;
+        }
+        
+        // Store user session info
+        userSession = {
+            username: data.user.username,
+            role: data.user.role
+        };
+        
+        // Update UI with user info
+        updateUserInfo();
+        
+        return true;
+    } catch (e) {
+        console.error('Failed to check authentication:', e);
+        localStorage.removeItem('session_token');
+        window.location.href = '/static/login.html';
+        return false;
+    }
+}
+
+async function loadUserPermissions() {
+    const sessionToken = localStorage.getItem('session_token');
+    
+    if (!sessionToken) {
+        return;
+    }
+    
+    try {
+        // Load config with authenticated mode to get user permissions
+        const res = await fetch('/config?mode=authenticated', {
+            headers: {
+                'X-Session-Token': sessionToken
+            }
+        });
+        
+        if (!res.ok) {
+            throw new Error('Failed to load user permissions');
+        }
+        
+        const data = await res.json();
+        
+        // Extract user permissions from config response
+        if (data.user_permissions) {
+            userPermissions = data.user_permissions;
+            console.log('User permissions loaded:', userPermissions);
+            
+            // Apply permission-based UI filtering
+            applyPermissionFiltering();
+            
+            // Update workflow select based on allowed_workflows
+            if (userPermissions.allowed_workflows) {
+                availableWorkflows = userPermissions.allowed_workflows;
+                updateWorkflowSelect();
+            }
+        }
+    } catch (e) {
+        console.error('Failed to load user permissions:', e);
+    }
+}
+
+function updateUserInfo() {
+    if (!userSession) return;
+    
+    // Show user info
+    const userInfoEl = document.getElementById('user-info');
+    const usernameEl = document.getElementById('username-display');
+    const logoutBtn = document.getElementById('logout-btn');
+    
+    if (userInfoEl && usernameEl) {
+        usernameEl.textContent = userSession.username;
+        userInfoEl.style.display = 'inline';
+    }
+    
+    // Show logout button
+    if (logoutBtn) {
+        logoutBtn.style.display = 'inline-block';
+    }
+    
+    // Show admin link only for admin users
+    const adminLink = document.getElementById('admin-link');
+    if (adminLink && userSession.role === 'admin') {
+        adminLink.style.display = 'inline-block';
+    }
+}
+
+function applyPermissionFiltering() {
+    if (!userPermissions) return;
+    
+    console.log('Applying permission filtering...');
+    
+    // Hide parameters that user doesn't have permission for
+    document.querySelectorAll('[data-key]').forEach(el => {
+        const fullKey = el.dataset.key;
+        
+        // Check if user has permission for this parameter
+        const hasPermission = userPermissions.allowed_parameters.includes('*') || 
+                            userPermissions.allowed_parameters.includes(fullKey);
+        
+        if (!hasPermission) {
+            // Hide the entire form group
+            const formGroup = el.closest('.form-group');
+            if (formGroup) {
+                formGroup.style.display = 'none';
+            }
+        }
+    });
+}
+
+async function logout() {
+    const sessionToken = localStorage.getItem('session_token');
+    
+    if (sessionToken) {
+        try {
+            await fetch('/auth/logout', {
+                method: 'POST',
+                headers: {
+                    'X-Session-Token': sessionToken
+                }
+            });
+        } catch (e) {
+            console.error('Logout error:', e);
+        }
+    }
+    
+    // Clear session token and redirect to login
+    localStorage.removeItem('session_token');
+    window.location.href = '/static/login.html';
+}
+
 async function init() {
-    // 检查是否需要密码
-    await checkUserAccess();
+    // Check authentication first
+    const isAuthenticated = await checkAuthentication();
+    if (!isAuthenticated) {
+        return; // Will redirect to login
+    }
     
     // 加载公告
     await loadAnnouncement();
     
     setupEventListeners();
     await loadI18n(); // Load i18n first
+    await loadUserPermissions(); // Load user permissions
     await loadUserSettings(); // Load user visibility settings
-    await loadConfigOptions(); // Load parameter options
-    await loadConfig();
-    await loadFonts();
-    await loadPrompts();
+    await loadConfigOptions(); // Load parameter options (先加载选项数据)
+    await loadConfig(); // 创建配置表单（会使用 configOptions 填充下拉框）
+    // 更新字体和提示词管理列表（不是下拉框，是管理面板中的列表）
+    if (configOptions['font_path']) {
+        updateFontList(configOptions['font_path']);
+    }
+    if (configOptions['high_quality_prompt_path']) {
+        updatePromptList(configOptions['high_quality_prompt_path']);
+    }
     await loadTranslators(); // Load translators
     await loadLanguages(); // Load languages
     await loadWorkflows(); // Load workflows
+    await loadPresets(); // Load presets
     
     // 在所有数据加载完成后，填充下拉菜单
     populateDropdowns();
+    
+    // 添加预设选择器到基础设置
+    addPresetSelectorToUI();
     
     // 只有在允许用户编辑 API keys 时才从 localStorage 恢复
     // 否则清除旧数据，避免覆盖服务器的 API keys
@@ -132,7 +312,16 @@ async function init() {
     // 加载保存的翻译结果
     loadResults();
     
+    // 加载翻译历史
+    await loadTranslationHistory();
+    
     startLogPolling(); // Start polling logs
+    
+    // 初始化移动端菜单
+    initMobileMenu();
+    
+    // 初始化移动端图片查看器（双指缩放、双击重置）
+    initMobileImageViewer();
 }
 
 async function checkUserAccess() {
@@ -245,12 +434,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function loadConfigOptions() {
     try {
-        const res = await fetch('/config/options');
+        const sessionToken = localStorage.getItem('session_token');
+        const headers = {};
+        if (sessionToken) {
+            headers['X-Session-Token'] = sessionToken;
+        }
+        const res = await fetch('/config/options?mode=user', { headers });
         configOptions = await res.json();
         console.log('Loaded config options:', configOptions);
         console.log('high_quality_prompt_path options:', configOptions['high_quality_prompt_path']);
         console.log('font_path options:', configOptions['font_path']);
         console.log('layout_mode options:', configOptions['layout_mode']);
+        
+        // 字体和提示词选项将在 init 函数中 loadConfig 之后更新
     } catch (e) {
         console.error('Error loading config options:', e);
     }
@@ -430,6 +626,12 @@ function setupEventListeners() {
     els.importConfigBtn.addEventListener('click', () => els.configInput.click());
     els.configInput.addEventListener('change', importConfig);
 
+    // Logout button
+    const logoutBtn = document.getElementById('logout-btn');
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', logout);
+    }
+
     // Language selector
     const langSelect = document.getElementById('language-select');
     if (langSelect) {
@@ -474,32 +676,97 @@ function setupEventListeners() {
 
 async function loadConfig() {
     try {
-        const res = await fetch('/config');
-        configSchema = await res.json();
+        const sessionToken = localStorage.getItem('session_token');
+        const headers = {};
+        
+        // Use authenticated mode if we have a session token
+        let url = '/config';
+        if (sessionToken) {
+            url = '/config?mode=authenticated';
+            headers['X-Session-Token'] = sessionToken;
+        }
+        
+        const res = await fetch(url, { headers });
+        const data = await res.json();
+        
+        // Extract user permissions if present
+        if (data.user_permissions) {
+            userPermissions = data.user_permissions;
+            console.log('User permissions from config:', userPermissions);
+            
+            // Update workflow select based on allowed_workflows
+            if (userPermissions.allowed_workflows) {
+                availableWorkflows = userPermissions.allowed_workflows;
+                updateWorkflowSelect();
+            }
+            
+            // Remove user_permissions from config before generating UI
+            delete data.user_permissions;
+        }
+        
+        configSchema = data;
         generateConfigUI(configSchema);
     } catch (e) {
         log(`Error loading config: ${e.message}`, 'error');
     }
 }
 
-async function loadFonts() {
-    try {
-        const res = await fetch('/fonts');
-        const fonts = await res.json();
-        updateFontSelects(fonts);
-    } catch (e) {
-        log(`Error loading fonts: ${e.message}`, 'error');
+function updateFontList(fonts) {
+    const container = document.getElementById('font-list');
+    if (!container) return;
+    
+    if (fonts.length === 0) {
+        container.innerHTML = '<p style="color: #666;">暂无已上传的字体</p>';
+        return;
     }
+    
+    let html = '<div style="display: flex; flex-direction: column; gap: 8px;">';
+    fonts.forEach(font => {
+        // 判断是否是用户上传的字体（路径包含 user_resources）
+        const isUserFont = font.includes('user_resources');
+        const displayName = isUserFont ? font.split('/').pop() : font;
+        const deleteBtn = isUserFont 
+            ? `<button onclick="deleteFont('${font}')" class="secondary-btn" style="padding: 4px 12px; font-size: 12px; background: #F44336; color: white;">删除</button>`
+            : '<span style="color: #999; font-size: 11px;">服务器字体</span>';
+        
+        html += `
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px; background: #F5F7FA; border-radius: 4px;">
+                <span style="font-family: monospace; font-size: 13px;">${displayName}</span>
+                ${deleteBtn}
+            </div>
+        `;
+    });
+    html += '</div>';
+    container.innerHTML = html;
 }
 
-async function loadPrompts() {
-    try {
-        const res = await fetch('/prompts');
-        const prompts = await res.json();
-        updatePromptSelects(prompts);
-    } catch (e) {
-        log(`Error loading prompts: ${e.message}`, 'error');
+function updatePromptList(prompts) {
+    const container = document.getElementById('prompt-list');
+    if (!container) return;
+    
+    if (prompts.length === 0) {
+        container.innerHTML = '<p style="color: #666;">暂无已上传的提示词</p>';
+        return;
     }
+    
+    let html = '<div style="display: flex; flex-direction: column; gap: 8px;">';
+    prompts.forEach(prompt => {
+        // 判断是否是用户上传的提示词（路径包含 user_resources）
+        const isUserPrompt = prompt.includes('user_resources');
+        const displayName = isUserPrompt ? prompt.split('/').pop() : prompt;
+        const deleteBtn = isUserPrompt 
+            ? `<button onclick="deletePrompt('${prompt}')" class="secondary-btn" style="padding: 4px 12px; font-size: 12px; background: #F44336; color: white;">删除</button>`
+            : '<span style="color: #999; font-size: 11px;">服务器提示词</span>';
+        
+        html += `
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px; background: #F5F7FA; border-radius: 4px;">
+                <span style="font-family: monospace; font-size: 13px;">${displayName}</span>
+                ${deleteBtn}
+            </div>
+        `;
+    });
+    html += '</div>';
+    container.innerHTML = html;
 }
 
 let availableTranslators = [];
@@ -507,7 +774,17 @@ let availableLanguages = [];
 
 async function loadTranslators() {
     try {
-        const res = await fetch('/translators');
+        const sessionToken = localStorage.getItem('session_token');
+        const headers = {};
+        
+        // Use authenticated mode if we have a session token
+        let url = '/translators?mode=user';
+        if (sessionToken) {
+            url = '/translators?mode=authenticated';
+            headers['X-Session-Token'] = sessionToken;
+        }
+        
+        const res = await fetch(url, { headers });
         availableTranslators = await res.json();
         console.log('Available translators:', availableTranslators);
     } catch (e) {
@@ -517,7 +794,17 @@ async function loadTranslators() {
 
 async function loadLanguages() {
     try {
-        const res = await fetch('/languages');
+        const sessionToken = localStorage.getItem('session_token');
+        const headers = {};
+        
+        // Use authenticated mode if we have a session token
+        let url = '/languages?mode=user';
+        if (sessionToken) {
+            url = '/languages?mode=authenticated';
+            headers['X-Session-Token'] = sessionToken;
+        }
+        
+        const res = await fetch(url, { headers });
         availableLanguages = await res.json();
         console.log('Available languages:', availableLanguages);
     } catch (e) {
@@ -530,7 +817,12 @@ let userSettings = {};
 
 async function loadUserSettings() {
     try {
-        const res = await fetch('/user/settings');
+        const sessionToken = localStorage.getItem('session_token');
+        const headers = {};
+        if (sessionToken) {
+            headers['X-Session-Token'] = sessionToken;
+        }
+        const res = await fetch('/user/settings', { headers });
         userSettings = await res.json();
         console.log('User settings:', userSettings);
         
@@ -557,7 +849,17 @@ async function loadUserSettings() {
 
 async function loadWorkflows() {
     try {
-        const res = await fetch('/workflows');
+        const sessionToken = localStorage.getItem('session_token');
+        const headers = {};
+        
+        // Use authenticated mode if we have a session token
+        let url = '/workflows?mode=user';
+        if (sessionToken) {
+            url = '/workflows?mode=authenticated';
+            headers['X-Session-Token'] = sessionToken;
+        }
+        
+        const res = await fetch(url, { headers });
         availableWorkflows = await res.json();
         console.log('Available workflows:', availableWorkflows);
         updateWorkflowSelect();
@@ -598,6 +900,179 @@ function updateWorkflowSelect() {
     // 恢复之前的选择（如果还在列表中）
     if (availableWorkflows.includes(currentValue)) {
         workflowSelect.value = currentValue;
+    }
+}
+
+// --- Presets Management ---
+let availablePresets = [];
+let currentPresetId = null;
+
+async function loadPresets() {
+    try {
+        const sessionToken = localStorage.getItem('session_token');
+        if (!sessionToken) return;
+        
+        const res = await fetch('/api/presets', {
+            headers: {
+                'X-Session-Token': sessionToken
+            }
+        });
+        
+        if (!res.ok) {
+            console.log('Presets not available');
+            return;
+        }
+        
+        const data = await res.json();
+        if (data.success && data.presets) {
+            availablePresets = data.presets;
+            console.log('Available presets:', availablePresets);
+        }
+    } catch (e) {
+        console.error('Error loading presets:', e);
+    }
+}
+
+function createPresetSelector() {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'form-group preset-selector';
+    wrapper.style.marginBottom = '20px';
+    wrapper.style.padding = '15px';
+    wrapper.style.backgroundColor = '#E3F2FD';
+    wrapper.style.borderRadius = '8px';
+    wrapper.style.border = '1px solid #2196F3';
+    
+    const label = document.createElement('label');
+    label.textContent = t('preset_select', '配置预设');
+    label.style.fontWeight = 'bold';
+    label.style.color = '#1976D2';
+    wrapper.appendChild(label);
+    
+    const hint = document.createElement('p');
+    hint.textContent = t('preset_hint', '选择预设可快速应用管理员配置的参数组合');
+    hint.style.fontSize = '12px';
+    hint.style.color = '#666';
+    hint.style.margin = '5px 0 10px 0';
+    wrapper.appendChild(hint);
+    
+    // 如果没有预设，显示提示信息
+    if (!availablePresets || availablePresets.length === 0) {
+        const noPresetHint = document.createElement('p');
+        noPresetHint.textContent = t('preset_empty', '暂无可用预设');
+        noPresetHint.style.color = '#999';
+        noPresetHint.style.fontStyle = 'italic';
+        wrapper.appendChild(noPresetHint);
+        return wrapper;
+    }
+    
+    const select = document.createElement('select');
+    select.id = 'preset-select';
+    select.className = 'full-width-select';
+    
+    // 添加默认选项
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = t('preset_none', '-- 不使用预设 --');
+    select.appendChild(defaultOption);
+    
+    // 添加预设选项
+    availablePresets.forEach(preset => {
+        const option = document.createElement('option');
+        option.value = preset.id;
+        option.textContent = preset.name + (preset.description ? ` - ${preset.description}` : '');
+        select.appendChild(option);
+    });
+    
+    // 恢复之前选择的预设
+    const savedPresetId = localStorage.getItem('selected_preset_id');
+    if (savedPresetId && availablePresets.some(p => p.id === savedPresetId)) {
+        select.value = savedPresetId;
+        currentPresetId = savedPresetId;
+    }
+    
+    select.addEventListener('change', async (e) => {
+        const presetId = e.target.value;
+        if (presetId) {
+            await applyPreset(presetId);
+        } else {
+            // 清除预设，恢复默认配置
+            currentPresetId = null;
+            localStorage.removeItem('selected_preset_id');
+            log(t('preset_cleared', '已清除预设，使用默认配置'), 'info');
+        }
+    });
+    
+    wrapper.appendChild(select);
+    return wrapper;
+}
+
+async function applyPreset(presetId) {
+    try {
+        const sessionToken = localStorage.getItem('session_token');
+        if (!sessionToken) return;
+        
+        log(t('preset_applying', '正在应用预设...'), 'info');
+        
+        const res = await fetch(`/api/presets/${presetId}/apply`, {
+            method: 'POST',
+            headers: {
+                'X-Session-Token': sessionToken,
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+        }
+        
+        const data = await res.json();
+        
+        if (data.success && data.config) {
+            // 应用预设配置到UI
+            applyConfigToUI(data.config);
+            currentPresetId = presetId;
+            localStorage.setItem('selected_preset_id', presetId);
+            
+            const preset = availablePresets.find(p => p.id === presetId);
+            log(t('preset_applied', '预设已应用') + `: ${preset?.name || presetId}`, 'info');
+        } else {
+            throw new Error(data.error || 'Unknown error');
+        }
+    } catch (e) {
+        console.error('Error applying preset:', e);
+        log(t('preset_apply_failed', '应用预设失败') + `: ${e.message}`, 'error');
+    }
+}
+
+function applyConfigToUI(config) {
+    // 遍历配置并更新UI元素
+    for (const [section, content] of Object.entries(config)) {
+        if (typeof content === 'object' && content !== null) {
+            for (const [key, value] of Object.entries(content)) {
+                const fullKey = `${section}.${key}`;
+                const input = document.querySelector(`[data-key="${fullKey}"]`);
+                if (input) {
+                    if (input.tagName === 'SELECT') {
+                        input.value = value;
+                    } else if (input.type === 'checkbox') {
+                        input.checked = value;
+                    } else if (input.type === 'number') {
+                        input.value = value;
+                    } else {
+                        input.value = value || '';
+                    }
+                }
+            }
+        }
+    }
+}
+
+function addPresetSelectorToUI() {
+    const presetSelector = createPresetSelector();
+    const basicLeft = document.getElementById('basic-left');
+    if (basicLeft && presetSelector) {
+        // 插入到基础设置的最前面
+        basicLeft.insertBefore(presetSelector, basicLeft.firstChild);
     }
 }
 
@@ -665,7 +1140,12 @@ function generateConfigUI(config) {
                     input.onfocus = async () => {
                         const currentValue = input.value;
                         try {
-                            const res = await fetch('/config/options');
+                            const sessionToken = localStorage.getItem('session_token');
+                            const headers = {};
+                            if (sessionToken) {
+                                headers['X-Session-Token'] = sessionToken;
+                            }
+                            const res = await fetch('/config/options', { headers });
                             const newOptions = await res.json();
                             const optionsList = newOptions[key] || [];
                             
@@ -681,7 +1161,8 @@ function generateConfigUI(config) {
                             optionsList.forEach(opt => {
                                 const option = document.createElement('option');
                                 option.value = opt;
-                                option.textContent = opt;
+                                // 显示简短文件名
+                                option.textContent = opt.includes('/') ? opt.split('/').pop() : opt;
                                 input.appendChild(option);
                             });
                             
@@ -703,41 +1184,39 @@ function generateConfigUI(config) {
                     input.appendChild(emptyOption);
                 }
                 
-                // 对于 high_quality_prompt_path，跳过初始选项填充，等待 updatePromptSelects
-                if (key === 'high_quality_prompt_path') {
-                    // 不添加任何选项，updatePromptSelects 会填充
-                } else {
-                    // 排版模式的翻译映射
-                    const layoutModeMap = {
-                        'default': t('layout_mode_default'),
-                        'smart_scaling': t('layout_mode_smart_scaling'),
-                        'strict': t('layout_mode_strict'),
-                        'fixed_font': t('layout_mode_fixed_font'),
-                        'disable_all': t('layout_mode_disable_all'),
-                        'balloon_fill': t('layout_mode_balloon_fill')
-                    };
-                    
-                    options.forEach(opt => {
-                        const option = document.createElement('option');
-                        option.value = opt;
-                        // 如果是排版模式，使用翻译
-                        if (key === 'layout_mode' && layoutModeMap[opt]) {
-                            option.textContent = layoutModeMap[opt];
-                        } else if (key === 'translator') {
-                            // 如果是翻译器，使用翻译
-                            option.textContent = t(`translator_${opt}`, opt);
-                        } else if (key === 'target_lang') {
-                            // 如果是目标语言，使用翻译
-                            option.textContent = t(`lang_${opt}`, opt);
-                        } else {
-                            option.textContent = opt;
-                        }
-                        if (opt === value) {
-                            option.selected = true;
-                        }
-                        input.appendChild(option);
-                    });
-                }
+                // 排版模式的翻译映射
+                const layoutModeMap = {
+                    'default': t('layout_mode_default'),
+                    'smart_scaling': t('layout_mode_smart_scaling'),
+                    'strict': t('layout_mode_strict'),
+                    'fixed_font': t('layout_mode_fixed_font'),
+                    'disable_all': t('layout_mode_disable_all'),
+                    'balloon_fill': t('layout_mode_balloon_fill')
+                };
+                
+                options.forEach(opt => {
+                    const option = document.createElement('option');
+                    option.value = opt;
+                    // 如果是排版模式，使用翻译
+                    if (key === 'layout_mode' && layoutModeMap[opt]) {
+                        option.textContent = layoutModeMap[opt];
+                    } else if (key === 'translator') {
+                        // 如果是翻译器，使用翻译
+                        option.textContent = t(`translator_${opt}`, opt);
+                    } else if (key === 'target_lang') {
+                        // 如果是目标语言，使用翻译
+                        option.textContent = t(`lang_${opt}`, opt);
+                    } else if (key === 'font_path' || key === 'high_quality_prompt_path') {
+                        // 字体和提示词显示简短文件名
+                        option.textContent = opt.includes('/') ? opt.split('/').pop() : opt;
+                    } else {
+                        option.textContent = opt;
+                    }
+                    if (opt === value) {
+                        option.selected = true;
+                    }
+                    input.appendChild(option);
+                });
                 
                 // 如果当前值是null或空，选择空选项
                 if (!value) {
@@ -856,15 +1335,28 @@ function setupUpscalerDependency() {
     updateUpscaleRatioOptions(upscalerSelect.value, upscaleRatioSelect);
 }
 
+// 用于保存不同模式下的选择值
+let lastRatioValue = '不使用';
+let lastRealcuganModel = '不使用';
+
 function updateUpscaleRatioOptions(upscaler, ratioSelect) {
     if (!ratioSelect) return;
     
     const currentValue = ratioSelect.value;
+    const ratioOptions = ['不使用', '2', '3', '4'];
+    const realcuganModels = configOptions['realcugan_model'] || [];
+    
+    // 保存当前值到对应的变量
+    if (ratioOptions.includes(currentValue)) {
+        lastRatioValue = currentValue;
+    } else if (realcuganModels.includes(currentValue) || currentValue === '不使用') {
+        lastRealcuganModel = currentValue;
+    }
+    
     ratioSelect.innerHTML = '';
     
     if (upscaler === 'realcugan') {
         // 显示 Real-CUGAN 模型列表
-        const realcuganModels = configOptions['realcugan_model'] || [];
         const options = ['不使用', ...realcuganModels];
         
         options.forEach(opt => {
@@ -874,26 +1366,24 @@ function updateUpscaleRatioOptions(upscaler, ratioSelect) {
             ratioSelect.appendChild(option);
         });
         
-        // 尝试恢复之前的值
-        if (realcuganModels.includes(currentValue)) {
-            ratioSelect.value = currentValue;
+        // 恢复之前保存的 realcugan 模型值
+        if (options.includes(lastRealcuganModel)) {
+            ratioSelect.value = lastRealcuganModel;
         } else {
             ratioSelect.value = '不使用';
         }
     } else {
         // 显示普通倍率选项
-        const options = ['不使用', '2', '3', '4'];
-        
-        options.forEach(opt => {
+        ratioOptions.forEach(opt => {
             const option = document.createElement('option');
             option.value = opt;
             option.textContent = opt;
             ratioSelect.appendChild(option);
         });
         
-        // 尝试恢复之前的值
-        if (options.includes(currentValue)) {
-            ratioSelect.value = currentValue;
+        // 恢复之前保存的倍率值
+        if (ratioOptions.includes(lastRatioValue)) {
+            ratioSelect.value = lastRatioValue;
         } else {
             ratioSelect.value = '不使用';
         }
@@ -939,9 +1429,34 @@ function replaceWithSelectTranslated(fullKey, options) {
 }
 
 function updateFontSelects(fonts) {
-    // Find font_path input and replace/update
-    const input = document.querySelector(`input[data-key="render.font_path"]`);
-    if (input) {
+    // 查找 font_path 元素（select 或 input）
+    let element = document.querySelector(`select[data-key="render.font_path"]`);
+    if (!element) {
+        element = document.querySelector(`input[data-key="render.font_path"]`);
+    }
+    
+    if (!element) return;
+    
+    const currentValue = element.value;
+    
+    if (element.tagName === 'SELECT') {
+        // 已经是 select，直接更新选项
+        element.innerHTML = '';
+        const defaultOpt = document.createElement('option');
+        defaultOpt.value = '';
+        defaultOpt.textContent = '-- 不使用 --';
+        element.appendChild(defaultOpt);
+        
+        fonts.forEach(f => {
+            const option = document.createElement('option');
+            option.value = f;
+            // 显示简短的文件名
+            option.textContent = f.includes('/') ? f.split('/').pop() : f;
+            if (f === currentValue) option.selected = true;
+            element.appendChild(option);
+        });
+    } else {
+        // 是 input，替换为 select
         const select = document.createElement('select');
         select.className = 'full-width-select';
         select.dataset.key = 'render.font_path';
@@ -954,12 +1469,12 @@ function updateFontSelects(fonts) {
         fonts.forEach(f => {
             const option = document.createElement('option');
             option.value = f;
-            option.textContent = f;
-            if (f === input.value) option.selected = true;
+            option.textContent = f.includes('/') ? f.split('/').pop() : f;
+            if (f === currentValue) option.selected = true;
             select.appendChild(option);
         });
 
-        input.parentNode.replaceChild(select, input);
+        element.parentNode.replaceChild(select, element);
     }
 }
 
@@ -1276,6 +1791,13 @@ function collectConfig() {
             config.upscale.realcugan_model = null;
         }
     }
+    
+    // 同步 cli.attempts 到 translator.attempts（简化后端逻辑）
+    if (config.cli && config.cli.attempts !== undefined && config.cli.attempts !== null) {
+        if (config.translator) {
+            config.translator.attempts = config.cli.attempts;
+        }
+    }
 
     return config;
 }
@@ -1285,12 +1807,13 @@ let translationFiles = {}; // 存储翻译文件 {imageName: textFile}
 
 // 检查上传限制的共享函数
 function checkUploadLimits(imageFiles, currentFileCount) {
-    const maxImageSizeMB = userSettings.max_image_size_mb || 0;
-    const maxImagesPerBatch = userSettings.max_images_per_batch || 0;
+    // 使用 ?? 而不是 || 来正确处理0值（0表示不限制）
+    const maxImageSizeMB = userSettings.max_image_size_mb ?? 0;
+    const maxImagesPerBatch = userSettings.max_images_per_batch ?? 0;
     
     console.log(`[Upload Limits] Max size: ${maxImageSizeMB}MB, Max count: ${maxImagesPerBatch}, Current: ${currentFileCount}, Adding: ${imageFiles.length}`);
     
-    // 检查数量限制
+    // 检查数量限制（0表示不限制）
     if (maxImagesPerBatch > 0 && currentFileCount + imageFiles.length > maxImagesPerBatch) {
         const msg = currentLocale.startsWith('zh') 
             ? `超过最大上传数量限制（${maxImagesPerBatch}张），当前已有${currentFileCount}张，尝试添加${imageFiles.length}张`
@@ -1327,18 +1850,53 @@ function checkUploadLimits(imageFiles, currentFileCount) {
     return true;
 }
 
-function handleFileSelect(e) {
+async function handleFileSelect(e) {
     const files = Array.from(e.target.files);
     
-    // 分离图片文件和文本文件
+    // 分离图片文件、PDF文件和文本文件
     const imageFiles = files.filter(f => f.type.startsWith('image/'));
+    const pdfFiles = files.filter(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
     const textFiles = files.filter(f => 
         f.name.endsWith('.json') || 
         f.name.endsWith('_original.txt') || 
         f.name.endsWith('_translated.txt')
     );
     
-    // 检查上传限制
+    // 处理 PDF 文件，提取图片
+    if (pdfFiles.length > 0) {
+        // 先检查 PDF 文件大小限制
+        const maxPdfSizeMB = userSettings.max_pdf_size_mb ?? 50; // 默认 50MB
+        if (maxPdfSizeMB > 0) {
+            const maxPdfSizeBytes = maxPdfSizeMB * 1024 * 1024;
+            const oversizedPdfs = pdfFiles.filter(f => f.size > maxPdfSizeBytes);
+            if (oversizedPdfs.length > 0) {
+                const msg = currentLocale.startsWith('zh')
+                    ? `以下PDF文件超过大小限制（${maxPdfSizeMB}MB）：\n${oversizedPdfs.map(f => `${f.name} (${(f.size / 1024 / 1024).toFixed(2)}MB)`).join('\n')}`
+                    : `PDF files exceed size limit (${maxPdfSizeMB}MB):\n${oversizedPdfs.map(f => `${f.name} (${(f.size / 1024 / 1024).toFixed(2)}MB)`).join('\n')}`;
+                log(msg, 'error');
+                alert(msg);
+                e.target.value = '';
+                return;
+            }
+        }
+        
+        log(`${t('extracting_pdf', '正在提取PDF页面')}...`, 'info');
+        for (const pdfFile of pdfFiles) {
+            try {
+                // 获取配额限制
+                const maxImagesPerBatch = userSettings.max_images_per_batch ?? 0;
+                const remainingQuota = maxImagesPerBatch > 0 ? maxImagesPerBatch - fileList.length - imageFiles.length : Infinity;
+                
+                const extractedImages = await extractImagesFromPDF(pdfFile, remainingQuota);
+                imageFiles.push(...extractedImages);
+                log(`${t('pdf_extracted', 'PDF提取完成')}: ${pdfFile.name} -> ${extractedImages.length} ${t('pages', '页')}`, 'info');
+            } catch (err) {
+                log(`${t('pdf_extract_failed', 'PDF提取失败')}: ${pdfFile.name} - ${err.message}`, 'error');
+            }
+        }
+    }
+    
+    // 检查上传限制（图片大小和总数量）
     if (!checkUploadLimits(imageFiles, fileList.length)) {
         e.target.value = '';
         return;
@@ -1374,6 +1932,64 @@ function handleFileSelect(e) {
     
     updateFileCount();
     e.target.value = ''; // Reset
+}
+
+/**
+ * 从 PDF 文件中提取页面为图片
+ * @param {File} pdfFile - PDF 文件
+ * @param {number} maxPages - 最大提取页数限制（Infinity 表示不限制）
+ * @returns {Promise<File[]>} - 提取的图片文件数组
+ */
+async function extractImagesFromPDF(pdfFile, maxPages = Infinity) {
+    if (typeof pdfjsLib === 'undefined') {
+        throw new Error('pdf.js 库未加载');
+    }
+    
+    const arrayBuffer = await pdfFile.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const images = [];
+    const baseName = pdfFile.name.replace(/\.pdf$/i, '');
+    
+    // 获取 PDF 页面数量，受配额限制
+    const totalPages = pdf.numPages;
+    const numPages = Math.min(totalPages, maxPages);
+    
+    if (numPages < totalPages) {
+        log(`${t('pdf_page_limit', 'PDF页数受配额限制')}: ${pdfFile.name} - ${t('extracting', '提取')} ${numPages}/${totalPages} ${t('pages', '页')}`, 'warning');
+    }
+    
+    for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+        const page = await pdf.getPage(pageNum);
+        
+        // 设置渲染比例（2x 以获得更好的质量）
+        const scale = 2;
+        const viewport = page.getViewport({ scale });
+        
+        // 创建 canvas
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        
+        // 渲染页面到 canvas
+        await page.render({
+            canvasContext: context,
+            viewport: viewport
+        }).promise;
+        
+        // 将 canvas 转换为 Blob
+        const blob = await new Promise(resolve => {
+            canvas.toBlob(resolve, 'image/png');
+        });
+        
+        // 创建 File 对象，文件名包含页码
+        const pageNumStr = String(pageNum).padStart(3, '0');
+        const fileName = `${baseName}_page_${pageNumStr}.png`;
+        const file = new File([blob], fileName, { type: 'image/png' });
+        images.push(file);
+    }
+    
+    return images;
 }
 
 function handleFolderSelect(e) {
@@ -1481,7 +2097,8 @@ async function startTask() {
 
     els.startBtn.disabled = true;
     const startMsg = currentLocale.startsWith('zh') ? '开始任务' : 'Task started';
-    log(`${startMsg}: ${mode} - ${fileList.length} 个文件`);
+    log(`${startMsg}: ${mode} - ${fileList.length} 个文件, batchSize=${batchSize}`);
+    console.log(`[DEBUG] mode=${mode}, fileList.length=${fileList.length}, batchSize=${batchSize}, useBatch=${mode === 'normal' && fileList.length > 1}`);
 
     try {
         // 对于普通翻译模式，如果有多个文件，使用批量接口
@@ -1532,54 +2149,115 @@ async function processBatch(files, config) {
             });
         }));
         
+        // 获取原始文件名列表
+        const filenames = files.map(file => file.name);
+        
         // 调用批量翻译接口
         const batchSize = parseInt(config.cli?.batch_size) || 5;
-        const response = await fetch('/translate/batch/images', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                images: images,
-                config: config,
-                batch_size: Math.min(batchSize, files.length)
-            })
-        });
+        const headers = {
+            'Content-Type': 'application/json'
+        };
+        // 添加 session token
+        const sessionToken = localStorage.getItem('session_token');
+        if (sessionToken) {
+            headers['X-Session-Token'] = sessionToken;
+        }
+        // 使用 AbortController 设置超时（30分钟）
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30 * 60 * 1000);
         
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
+        let response;
+        try {
+            response = await fetch('/translate/batch/images', {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify({
+                    images: images,
+                    config: config,
+                    batch_size: Math.min(batchSize, files.length),
+                    filenames: filenames
+                }),
+                signal: controller.signal
+            });
+        } finally {
+            clearTimeout(timeoutId);
         }
         
-        // 获取返回的 ZIP 文件
-        const blob = await response.blob();
+        // 打印响应信息
+        console.log('Response status:', response.status);
         
-        // 解压并显示每张图片（不自动下载ZIP）
-        try {
-            if (typeof JSZip !== 'undefined') {
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error('Batch translation error:', response.status, errorText);
+            throw new Error(`HTTP ${response.status}: ${errorText}`);
+        }
+        
+        // 检查自定义 header 确认是 ZIP 文件
+        const xContentType = response.headers.get('x-content-type');
+        console.log('X-Content-Type:', xContentType);
+        
+        // 先获取 blob
+        const blob = await response.blob();
+        console.log('Blob info - size:', blob.size, 'type:', blob.type);
+        
+        // 检查响应是否有效
+        if (blob.size === 0) {
+            throw new Error('服务器返回空响应，可能被 IDM 拦截，请在 IDM 设置中排除 localhost');
+        }
+        
+        // 检查是否是有效的 ZIP
+        if (blob.size === 0) {
+            throw new Error('服务器返回空响应');
+        }
+        
+        // 解压并显示每张图片
+        if (typeof JSZip !== 'undefined') {
+            try {
                 const zip = new JSZip();
                 const zipContent = await zip.loadAsync(blob);
+                console.log('ZIP content files:', Object.keys(zipContent.files));
                 
-                // 遍历 ZIP 中的所有文件
-                const imageFiles = Object.keys(zipContent.files).filter(name => 
-                    name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg')
-                );
+                // 遍历 ZIP 中的所有图片文件（支持多种格式）
+                const imageExtensions = ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'];
+                const imageFiles = Object.keys(zipContent.files).filter(name => {
+                    const lowerName = name.toLowerCase();
+                    return imageExtensions.some(ext => lowerName.endsWith(ext));
+                });
+                console.log('Image files found:', imageFiles);
                 
                 for (const filename of imageFiles) {
-                    const imageBlob = await zipContent.files[filename].async('blob');
+                    // 获取图片数据
+                    const imageData = await zipContent.files[filename].async('uint8array');
+                    
+                    // 根据扩展名确定 MIME 类型
+                    const ext = filename.toLowerCase().split('.').pop();
+                    const mimeTypes = {
+                        'png': 'image/png',
+                        'jpg': 'image/jpeg',
+                        'jpeg': 'image/jpeg',
+                        'webp': 'image/webp',
+                        'gif': 'image/gif',
+                        'bmp': 'image/bmp'
+                    };
+                    const mimeType = mimeTypes[ext] || 'image/png';
+                    
+                    // 创建带正确 MIME 类型的 blob
+                    const imageBlob = new Blob([imageData], { type: mimeType });
                     const imageUrl = URL.createObjectURL(imageBlob);
                     addResult(filename, imageUrl, 'image');
                 }
                 
                 log(`${currentLocale.startsWith('zh') ? '批量翻译完成，已添加' : 'Batch completed, added'} ${imageFiles.length} ${currentLocale.startsWith('zh') ? '张图片到结果列表' : 'images to results'}`, 'info');
-            } else {
-                // 如果没有 JSZip，提示用户手动下载
-                log(`${currentLocale.startsWith('zh') ? '无法解压ZIP文件，请手动下载' : 'Cannot extract ZIP, please download manually'}`, 'warning');
+            } catch (zipError) {
+                console.error('Failed to extract zip:', zipError);
+                log(`${currentLocale.startsWith('zh') ? '解压失败，下载ZIP文件: ' : 'Extraction failed, downloading ZIP: '}${zipError.message}`, 'warning');
                 const zipFilename = `batch_translated_${Date.now()}.zip`;
                 downloadBlob(blob, zipFilename);
+                // 解压失败但不触发回退，因为翻译已完成
             }
-        } catch (e) {
-            console.error('Failed to extract zip:', e);
-            log(`${currentLocale.startsWith('zh') ? '解压失败，自动下载ZIP文件' : 'Extraction failed, downloading ZIP'}`, 'warning');
+        } else {
+            // 如果没有 JSZip，提示用户手动下载
+            log(`${currentLocale.startsWith('zh') ? '无法解压ZIP文件，请手动下载' : 'Cannot extract ZIP, please download manually'}`, 'warning');
             const zipFilename = `batch_translated_${Date.now()}.zip`;
             downloadBlob(blob, zipFilename);
         }
@@ -1587,15 +2265,8 @@ async function processBatch(files, config) {
         log(`${currentLocale.startsWith('zh') ? '批量翻译完成' : 'Batch translation completed'}`, 'info');
     } catch (e) {
         console.error('Batch translation failed:', e);
-        log(`${currentLocale.startsWith('zh') ? '批量翻译失败，切换到逐个处理' : 'Batch failed, processing individually'}`, 'warning');
-        
-        // 回退到逐个处理
-        for (let i = 0; i < files.length; i++) {
-            const file = files[i];
-            const processingMsg = currentLocale.startsWith('zh') ? '正在处理' : 'Processing';
-            log(`${processingMsg} [${i + 1}/${files.length}]: ${file.name}...`);
-            await processFile(file, 'normal', config);
-        }
+        log(`${currentLocale.startsWith('zh') ? '批量翻译失败: ' : 'Batch translation failed: '}${e.message}`, 'error');
+        // 不再回退到逐个处理，直接报错
     }
 }
 
@@ -1643,9 +2314,16 @@ async function processFile(file, mode, config) {
         await processStream(endpoint, formData, file.name);
     } else {
         // Standard download endpoints
+        const sessionToken = localStorage.getItem('session_token');
+        const headers = {};
+        if (sessionToken) {
+            headers['X-Session-Token'] = sessionToken;
+        }
+        
         const res = await fetch(endpoint, {
             method: 'POST',
-            body: formData
+            body: formData,
+            headers: headers
         });
 
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1663,9 +2341,16 @@ async function processFile(file, mode, config) {
 }
 
 async function processStream(endpoint, formData, filename) {
+    const sessionToken = localStorage.getItem('session_token');
+    const headers = {};
+    if (sessionToken) {
+        headers['X-Session-Token'] = sessionToken;
+    }
+    
     const res = await fetch(endpoint, {
         method: 'POST',
-        body: formData
+        body: formData,
+        headers: headers
     });
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1747,9 +2432,34 @@ async function processStream(endpoint, formData, filename) {
         log(`${filename} 处理失败: ${error.message}`, 'error');
         throw error;
     } finally {
-        // 任务完成或失败后，清除 task_id 和时间戳
+        // 任务完成或失败后，获取所有任务日志
+        const finishedTaskId = currentTaskId;
+        if (finishedTaskId) {
+            // 获取该任务的所有日志（不使用时间戳过滤，获取完整日志）
+            try {
+                const url = `/api/logs?limit=500&task_id=${finishedTaskId}`;
+                const res = await fetch(url, {
+                    headers: { 'X-Session-Token': sessionToken }
+                });
+                const logs = await res.json();
+                if (logs.length > 0) {
+                    // 获取所有未显示的日志（使用时间戳过滤）
+                    const newLogs = lastLogTimestamp
+                        ? logs.filter(l => new Date(l.timestamp) > new Date(lastLogTimestamp))
+                        : logs;
+                    if (newLogs.length > 0) {
+                        log(`--- 详细日志 (${newLogs.length} 条) ---`, 'info', true);
+                        newLogs.forEach(l => {
+                            log(`[${l.level}] ${l.message}`, l.level.toLowerCase(), false);
+                        });
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to fetch final logs:', e);
+            }
+        }
         currentTaskId = null;
-        lastLogTimestamp = null; // 重置时间戳，下次任务从头开始
+        lastLogTimestamp = null;
     }
 }
 
@@ -1796,9 +2506,13 @@ function startLogPolling() {
                 return; // 没有任务，不轮询
             }
             
-            // 获取当前任务的日志
-            const url = `/logs?limit=50&task_id=${currentTaskId}`;
-            const res = await fetch(url);
+            // 获取当前任务的日志（增加限制到200条以获取更多详细日志）
+            const url = `/api/logs?limit=200&task_id=${currentTaskId}`;
+            const res = await fetch(url, {
+                headers: {
+                    'X-Session-Token': sessionToken
+                }
+            });
             const logs = await res.json();
 
             if (logs.length > 0) {
@@ -1818,7 +2532,7 @@ function startLogPolling() {
         } catch (e) {
             // console.error("Log poll failed", e);
         }
-    }, 2000); // Poll every 2s
+    }, 500); // Poll every 500ms for more responsive log updates
 }
 
 function log(msg, type = 'normal', isLocal = true) {
@@ -1885,16 +2599,29 @@ async function handleFontUpload(e) {
     const formData = new FormData();
     formData.append('file', file);
     
+    const sessionToken = localStorage.getItem('session_token');
+    const headers = {};
+    if (sessionToken) {
+        headers['X-Session-Token'] = sessionToken;
+    }
+    
     try {
-        const res = await fetch('/upload/font', {
+        // 使用用户资源上传端点
+        const res = await fetch('/api/resources/fonts', {
             method: 'POST',
+            headers: headers,
             body: formData
         });
         
         if (res.ok) {
             log(`${t('font_uploaded', '字体上传成功')}: ${file.name}`, 'info');
-            // 重新加载字体列表
-            await loadFonts();
+            // 重新加载配置选项以获取新字体
+            await loadConfigOptions();
+            // 更新字体下拉框和管理列表
+            if (configOptions['font_path']) {
+                updateFontSelects(configOptions['font_path']);
+                updateFontList(configOptions['font_path']);
+            }
         } else {
             const error = await res.text();
             log(`${t('font_upload_failed', '字体上传失败')}: ${error}`, 'error');
@@ -1913,16 +2640,29 @@ async function handlePromptUpload(e) {
     const formData = new FormData();
     formData.append('file', file);
     
+    const sessionToken = localStorage.getItem('session_token');
+    const headers = {};
+    if (sessionToken) {
+        headers['X-Session-Token'] = sessionToken;
+    }
+    
     try {
-        const res = await fetch('/upload/prompt', {
+        // 使用用户资源上传端点
+        const res = await fetch('/api/resources/prompts', {
             method: 'POST',
+            headers: headers,
             body: formData
         });
         
         if (res.ok) {
             log(`${t('prompt_uploaded', '提示词上传成功')}: ${file.name}`, 'info');
-            // 重新加载提示词列表
-            await loadPrompts();
+            // 重新加载配置选项以获取新提示词
+            await loadConfigOptions();
+            // 更新提示词下拉框和管理列表
+            if (configOptions['high_quality_prompt_path']) {
+                updatePromptSelects(configOptions['high_quality_prompt_path']);
+                updatePromptList(configOptions['high_quality_prompt_path']);
+            }
         } else {
             const error = await res.text();
             log(`${t('prompt_upload_failed', '提示词上传失败')}: ${error}`, 'error');
@@ -1934,6 +2674,79 @@ async function handlePromptUpload(e) {
     e.target.value = ''; // Reset
 }
 
+async function deleteFont(fontPath) {
+    const displayName = fontPath.split('/').pop();
+    if (!confirm(`确定要删除字体 "${displayName}" 吗？`)) {
+        return;
+    }
+    
+    const sessionToken = localStorage.getItem('session_token');
+    const headers = {};
+    if (sessionToken) {
+        headers['X-Session-Token'] = sessionToken;
+    }
+    
+    try {
+        // 用户字体通过文件名删除
+        const filename = fontPath.split('/').pop();
+        const res = await fetch(`/api/resources/fonts/by-name/${encodeURIComponent(filename)}`, {
+            method: 'DELETE',
+            headers: headers
+        });
+        
+        if (res.ok) {
+            log(`${t('font_deleted', '字体删除成功')}: ${displayName}`, 'info');
+            // 重新加载配置选项并更新UI
+            await loadConfigOptions();
+            if (configOptions['font_path']) {
+                updateFontSelects(configOptions['font_path']);
+                updateFontList(configOptions['font_path']);
+            }
+        } else {
+            const error = await res.text();
+            log(`${t('font_delete_failed', '字体删除失败')}: ${error}`, 'error');
+        }
+    } catch (error) {
+        log(`${t('font_delete_error', '字体删除错误')}: ${error.message}`, 'error');
+    }
+}
+
+async function deletePrompt(promptPath) {
+    const displayName = promptPath.split('/').pop();
+    if (!confirm(`确定要删除提示词 "${displayName}" 吗？`)) {
+        return;
+    }
+    
+    const sessionToken = localStorage.getItem('session_token');
+    const headers = {};
+    if (sessionToken) {
+        headers['X-Session-Token'] = sessionToken;
+    }
+    
+    try {
+        // 用户提示词通过文件名删除
+        const filename = promptPath.split('/').pop();
+        const res = await fetch(`/api/resources/prompts/by-name/${encodeURIComponent(filename)}`, {
+            method: 'DELETE',
+            headers: headers
+        });
+        
+        if (res.ok) {
+            log(`${t('prompt_deleted', '提示词删除成功')}: ${displayName}`, 'info');
+            // 重新加载配置选项并更新UI
+            await loadConfigOptions();
+            if (configOptions['high_quality_prompt_path']) {
+                updatePromptSelects(configOptions['high_quality_prompt_path']);
+                updatePromptList(configOptions['high_quality_prompt_path']);
+            }
+        } else {
+            const error = await res.text();
+            log(`${t('prompt_delete_failed', '提示词删除失败')}: ${error}`, 'error');
+        }
+    } catch (error) {
+        log(`${t('prompt_delete_error', '提示词删除错误')}: ${error.message}`, 'error');
+    }
+}
 
 // --- Results Management ---
 let resultsList = [];
@@ -2295,3 +3108,250 @@ document.getElementById('image-viewer-modal')?.addEventListener('click', (e) => 
         closeImageViewer();
     }
 });
+
+// 翻译历史功能已移至 /static/js/history-gallery.js
+
+
+// ========== 移动端菜单功能 ==========
+let mobileMenuOpen = false;
+
+/**
+ * 防抖函数
+ * @param {Function} func - 要防抖的函数
+ * @param {number} wait - 等待时间（毫秒）
+ * @returns {Function} 防抖后的函数
+ */
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+/**
+ * 检测是否为移动端视图
+ * @returns {boolean} 是否为移动端视图（宽度 < 768px）
+ */
+function isMobileView() {
+    return window.innerWidth < 768;
+}
+
+/**
+ * 检测是否为平板视图
+ * @returns {boolean} 是否为平板视图（768px <= 宽度 <= 1024px）
+ */
+function isTabletView() {
+    return window.innerWidth >= 768 && window.innerWidth <= 1024;
+}
+
+/**
+ * 初始化移动端菜单功能
+ * 在 init() 函数中调用
+ * 移动端布局：左侧面板（文件操作）在主页面，右侧面板（设置）在抽屉中
+ */
+function initMobileMenu() {
+    const menuBtn = document.getElementById('mobile-menu-btn');
+    const overlay = document.getElementById('mobile-overlay');
+    const rightPanel = document.querySelector('.right-panel');
+    
+    if (!menuBtn || !overlay || !rightPanel) {
+        console.warn('Mobile menu elements not found');
+        return;
+    }
+    
+    // 菜单按钮点击事件 - 打开设置面板
+    menuBtn.addEventListener('click', toggleMobileMenu);
+    
+    // 遮罩层点击关闭
+    overlay.addEventListener('click', closeMobileMenu);
+    
+    // 监听窗口大小变化
+    window.addEventListener('resize', debounce(handleResize, 250));
+    
+    // 初始化时检查是否需要显示菜单按钮
+    updateMobileMenuVisibility();
+    
+    // 阻止右侧面板内的点击事件冒泡到遮罩层
+    rightPanel.addEventListener('click', (e) => e.stopPropagation());
+}
+
+/**
+ * 切换移动端菜单（设置面板）
+ */
+function toggleMobileMenu() {
+    if (mobileMenuOpen) {
+        closeMobileMenu();
+    } else {
+        openMobileMenu();
+    }
+}
+
+/**
+ * 打开移动端菜单（设置面板）
+ */
+function openMobileMenu() {
+    const rightPanel = document.querySelector('.right-panel');
+    const overlay = document.getElementById('mobile-overlay');
+    const menuBtn = document.getElementById('mobile-menu-btn');
+    
+    if (rightPanel) rightPanel.classList.add('open');
+    if (overlay) overlay.classList.add('active');
+    if (menuBtn) menuBtn.innerHTML = '✕';
+    
+    mobileMenuOpen = true;
+    
+    // 防止背景滚动
+    document.body.style.overflow = 'hidden';
+}
+
+/**
+ * 关闭移动端菜单（设置面板）
+ */
+function closeMobileMenu() {
+    const rightPanel = document.querySelector('.right-panel');
+    const overlay = document.getElementById('mobile-overlay');
+    const menuBtn = document.getElementById('mobile-menu-btn');
+    
+    if (rightPanel) rightPanel.classList.remove('open');
+    if (overlay) overlay.classList.remove('active');
+    if (menuBtn) menuBtn.innerHTML = '⚙️';
+    
+    mobileMenuOpen = false;
+    
+    // 恢复背景滚动
+    document.body.style.overflow = '';
+}
+
+/**
+ * 处理窗口大小变化
+ */
+function handleResize() {
+    updateMobileMenuVisibility();
+    
+    // 如果从移动端切换到桌面端，关闭菜单
+    if (window.innerWidth >= 768 && mobileMenuOpen) {
+        closeMobileMenu();
+    }
+}
+
+/**
+ * 更新移动端菜单按钮可见性
+ */
+function updateMobileMenuVisibility() {
+    const menuBtn = document.getElementById('mobile-menu-btn');
+    if (menuBtn) {
+        menuBtn.style.display = isMobileView() ? 'flex' : 'none';
+    }
+}
+
+// ========== 移动端图片查看器增强 ==========
+let imageViewerScale = 1;
+let imageViewerLastDistance = 0;
+let imageViewerLastTap = 0;
+
+/**
+ * 初始化移动端图片查看器
+ * 支持双指缩放和双击重置缩放
+ */
+function initMobileImageViewer() {
+    const previewContainer = document.getElementById('preview-container');
+    if (!previewContainer) {
+        console.warn('Preview container not found for mobile image viewer');
+        return;
+    }
+    
+    // 双指缩放手势
+    previewContainer.addEventListener('touchstart', handleImageTouchStart, { passive: false });
+    previewContainer.addEventListener('touchmove', handleImageTouchMove, { passive: false });
+    previewContainer.addEventListener('touchend', handleImageTouchEnd, { passive: false });
+    
+    console.log('Mobile image viewer initialized');
+}
+
+/**
+ * 处理图片触摸开始事件
+ * @param {TouchEvent} e - 触摸事件
+ */
+function handleImageTouchStart(e) {
+    if (e.touches.length === 2) {
+        // 双指触摸，记录初始距离
+        imageViewerLastDistance = getDistance(e.touches[0], e.touches[1]);
+    }
+}
+
+/**
+ * 处理图片触摸移动事件（双指缩放）
+ * @param {TouchEvent} e - 触摸事件
+ */
+function handleImageTouchMove(e) {
+    if (e.touches.length === 2) {
+        e.preventDefault();
+        
+        const distance = getDistance(e.touches[0], e.touches[1]);
+        if (imageViewerLastDistance > 0) {
+            const delta = distance / imageViewerLastDistance;
+            imageViewerScale = Math.min(Math.max(imageViewerScale * delta, 0.5), 3);
+            
+            const previewContainer = document.getElementById('preview-container');
+            const img = previewContainer?.querySelector('img');
+            if (img) {
+                img.style.transform = `scale(${imageViewerScale})`;
+                img.style.transformOrigin = 'center center';
+            }
+        }
+        
+        imageViewerLastDistance = distance;
+    }
+}
+
+/**
+ * 处理图片触摸结束事件（双击重置缩放）
+ * @param {TouchEvent} e - 触摸事件
+ */
+function handleImageTouchEnd(e) {
+    // 重置双指缩放距离
+    if (e.touches.length < 2) {
+        imageViewerLastDistance = 0;
+    }
+    
+    // 双击检测（仅单指触摸时）
+    if (e.touches.length === 0 && e.changedTouches.length === 1) {
+        const currentTime = new Date().getTime();
+        const tapLength = currentTime - imageViewerLastTap;
+        
+        if (tapLength < 300 && tapLength > 0) {
+            // 双击，重置缩放
+            resetImageViewerZoom();
+        }
+        imageViewerLastTap = currentTime;
+    }
+}
+
+/**
+ * 重置图片查看器缩放
+ */
+function resetImageViewerZoom() {
+    imageViewerScale = 1;
+    const previewContainer = document.getElementById('preview-container');
+    const img = previewContainer?.querySelector('img');
+    if (img) {
+        img.style.transform = 'scale(1)';
+    }
+}
+
+/**
+ * 计算两个触摸点之间的距离
+ * @param {Touch} touch1 - 第一个触摸点
+ * @param {Touch} touch2 - 第二个触摸点
+ * @returns {number} 两点之间的距离
+ */
+function getDistance(touch1, touch2) {
+    const dx = touch1.clientX - touch2.clientX;
+    const dy = touch1.clientY - touch2.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+}

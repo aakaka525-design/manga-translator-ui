@@ -45,6 +45,9 @@
     </style>
 </head>
 <body>
+    <!-- Mobile Overlay -->
+    <div class="mobile-overlay" id="mobile-overlay"></div>
+
     <!-- User Login Screen -->
     <div id="user-login-screen" class="user-login-container">
         <div class="user-login-box">
@@ -60,7 +63,11 @@
         <header class="app-header">
             <h1>Manga Translator</h1>
             <div class="header-controls">
-                <a href="/admin" class="admin-link" title="管理员面板">
+                <span id="user-info" style="display: none; margin-right: 15px; color: #666;">
+                    <span id="username-display"></span>
+                </span>
+                <button id="logout-btn" class="secondary-btn" style="display: none; margin-right: 10px;">注销</button>
+                <a href="/admin" id="admin-link" class="admin-link" title="管理员面板" style="display: none;">
                     <span>⚙️</span>
                     <span id="admin-link-text">管理</span>
                 </a>
@@ -72,6 +79,8 @@
                     <option value="ko_KR">한국어</option>
                     <option value="es_ES">Español</option>
                 </select>
+                <!-- Mobile Settings Button - 打开设置面板 -->
+                <button class="mobile-menu-btn" id="mobile-menu-btn" style="display: none;" title="设置">⚙️</button>
             </div>
         </header>
 
@@ -90,7 +99,7 @@
                             <button id="add-files-btn" class="secondary-btn">添加文件</button>
                             <button id="add-folder-btn" class="secondary-btn">添加文件夹</button>
                             <button id="clear-list-btn" class="secondary-btn">清空</button>
-                            <input type="file" id="file-input" multiple accept="image/*,.json,.txt" style="display: none;">
+                            <input type="file" id="file-input" multiple accept="image/*,.pdf,.json,.txt" style="display: none;">
                             <input type="file" id="folder-input" webkitdirectory directory multiple style="display: none;">
                         </div>
                     </div>
@@ -147,6 +156,23 @@
                             <!-- Result items will be added here -->
                         </ul>
                         <div id="results-empty" class="empty-hint">暂无翻译结果</div>
+                    </div>
+                </div>
+
+                <!-- History Section -->
+                <div class="panel-section history-section">
+                    <div class="section-header">
+                        <h3>翻译历史</h3>
+                        <div class="button-group">
+                            <button id="open-gallery-btn" class="secondary-btn" title="打开相册" onclick="openHistoryGallery()">📷</button>
+                            <button id="refresh-history-btn" class="secondary-btn" title="刷新">🔄</button>
+                        </div>
+                    </div>
+                    <div class="history-list-container" style="max-height: 150px; overflow-y: auto;">
+                        <ul id="history-list" class="history-list" style="list-style: none; padding: 0; margin: 0;">
+                            <!-- History items will be added here -->
+                        </ul>
+                        <div id="history-empty" class="empty-hint">暂无翻译历史</div>
                     </div>
                 </div>
 
@@ -213,6 +239,12 @@
                                             <button id="font-upload-btn" class="secondary-btn">上传字体文件</button>
                                             <p class="upload-hint">支持 TTF, OTF, TTC 格式</p>
                                         </div>
+                                        <div id="font-list-container" style="margin-top: 15px;">
+                                            <h5 style="margin-bottom: 10px;">已上传的字体</h5>
+                                            <div id="font-list" style="max-height: 200px; overflow-y: auto; border: 1px solid #E0E0E0; border-radius: 4px; padding: 10px;">
+                                                <p style="color: #666;">加载中...</p>
+                                            </div>
+                                        </div>
                                     </div>
                                     
                                     <!-- Prompt Upload Section -->
@@ -222,6 +254,12 @@
                                             <input type="file" id="prompt-upload-input" accept=".json" style="display: none;">
                                             <button id="prompt-upload-btn" class="secondary-btn">上传提示词文件</button>
                                             <p class="upload-hint">支持 JSON 格式</p>
+                                        </div>
+                                        <div id="prompt-list-container" style="margin-top: 15px;">
+                                            <h5 style="margin-bottom: 10px;">已上传的提示词</h5>
+                                            <div id="prompt-list" style="max-height: 200px; overflow-y: auto; border: 1px solid #E0E0E0; border-radius: 4px; padding: 10px;">
+                                                <p style="color: #666;">加载中...</p>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -278,6 +316,14 @@
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        // 设置 pdf.js worker
+        if (typeof pdfjsLib !== 'undefined') {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        }
+    </script>
+    <script src="/static/js/history-gallery.js"></script>
     <script src="/static/script.js"></script>
 </body>
 </html>

@@ -426,6 +426,9 @@ class PropertyPanel(QWidget):
         # 实时更新（textChanged）
         self.original_text_box.textChanged.connect(self._on_original_text_changed)
         # self.original_text_box.focusOutEvent = self._make_focus_out_handler(self.original_text_box, self._on_original_text_focus_out)
+        self.ocr_model_combo.currentTextChanged.connect(self._on_ocr_model_change)
+        self.translator_combo.currentTextChanged.connect(self._on_translator_change)
+        self.target_language_combo.currentTextChanged.connect(self._on_target_language_change)
         self.ocr_button.clicked.connect(self.ocr_requested.emit)
         self.translate_button.clicked.connect(self.translation_requested.emit)
         self.insert_placeholder_button.clicked.connect(self._insert_placeholder)
@@ -1118,16 +1121,21 @@ class PropertyPanel(QWidget):
             cursor.insertText(f"⇄{selected_text}⇄")
 
     def _on_ocr_model_change(self, text):
-        # Placeholder: This should emit a signal to the controller
+        """OCR模型变化时保存配置"""
         print(f"OCR Model changed to: {text}")
+        self.app_logic.update_single_config('ocr.ocr', text)
 
     def _on_translator_change(self, display_name):
+        """翻译器变化时保存配置"""
         translator_key = self.translator_display_to_key.get(display_name, display_name)
-        # Placeholder: This should emit a signal to the controller
         print(f"Translator changed to: {translator_key}")
+        self.app_logic.update_single_config('translator.translator', translator_key)
 
     def _on_target_language_change(self, display_name):
+        """目标语言变化时保存配置"""
         lang_code = self.lang_name_to_code.get(display_name, "CHS")
-        # Placeholder: This should emit a signal to the controller
         print(f"Target language changed to: {lang_code}")
+        self.app_logic.update_single_config('translator.target_lang', lang_code)
+        # 同时更新翻译服务的目标语言
+        self.app_logic.translation_service.set_target_language(lang_code)
 

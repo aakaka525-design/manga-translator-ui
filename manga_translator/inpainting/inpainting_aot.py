@@ -15,11 +15,6 @@ class AotInpainter(LamaMPEInpainter):
             'hash': '878d541c68648969bc1b042a6e997f3a58e49b6c07c5636ad55130736977149f',
             'file': '.',
         },
-        'onnx': {
-            'url': 'https://github.com/frederik-uni/manga-image-translator-rust/releases/download/lama_aot/model.onnx',
-            'hash': 'c5965aca4e5ffa8269051dca1fc30e379d2bded46e0a55366e299ade47086cfc',
-            'file': 'lamaaotl.onnx',
-        },
     }
 
     def __init__(self, *args, **kwargs):
@@ -27,143 +22,19 @@ class AotInpainter(LamaMPEInpainter):
         if os.path.exists('inpainting.ckpt'):
             shutil.move('inpainting.ckpt', self._get_file_path('inpainting.ckpt'))
         super().__init__(*args, **kwargs)
-    
-    def _check_downloaded_map(self, map_key: str) -> bool:
-        """如果ONNX模型存在，跳过PyTorch模型检查"""
-        onnx_path = self._get_file_path('lamaaotl.onnx')
-        if os.path.isfile(onnx_path):
-            return True  # ONNX存在，不检查.ckpt
-        return super()._check_downloaded_map(map_key)
 
     async def _load(self, device: str):
         self.device = device
-        
-        # ✅ CPU模式使用ONNX（解决虚拟内存泄漏，22MB小模型）
-        if not device.startswith('cuda') and device != 'mps':
-            try:
-                import onnxruntime as ort
-                onnx_path = self._get_file_path('lamaaotl.onnx')
-                self.logger.info(f'使用ONNX模型（CPU优化，22MB小模型）: {onnx_path}')
-                
-                # 🔧 内存优化配置
-                sess_options = ort.SessionOptions()
-                sess_options.enable_mem_pattern = False  # 禁用内存模式优化可以减少内存占用
-                sess_options.enable_cpu_mem_arena = False  # 禁用CPU内存池，按需分配
-                
-                self.session = ort.InferenceSession(
-                    onnx_path,
-                    sess_options=sess_options,
-                    providers=['CPUExecutionProvider']
-                )
-                self.backend = 'onnx'
-                self.logger.info(f'ONNX Runtime版本: {ort.__version__}（内存优化模式）')
-                return
-            except Exception as e:
-                self.logger.warning(f'ONNX加载失败，回退到PyTorch: {e}')
-        
-        # ✅ GPU模式或ONNX失败时使用PyTorch
         self.model = AOTGenerator()
         sd = torch.load(self._get_file_path('inpainting.ckpt'), map_location='cpu')
         self.model.load_state_dict(sd['model'] if 'model' in sd else sd)
         self.model.eval()
-        self.backend = 'torch'
         if device.startswith('cuda') or device == 'mps':
             self.model.to(device)
     
     async def _unload(self):
-        if hasattr(self, 'backend'):
-            if self.backend == 'onnx':
-                del self.session
-            elif self.backend == 'torch':
-                del self.model
-        elif hasattr(self, 'model'):
+        if hasattr(self, 'model'):
             del self.model
-    
-    async def _infer(self, image: np.ndarray, mask: np.ndarray, config, inpainting_size: int = 1024, verbose: bool = False) -> np.ndarray:
-        # ✅ ONNX推理（AOT模型，2个输入，不含MPE），失败时自动降级到PyTorch
-        if hasattr(self, 'backend') and self.backend == 'onnx':
-            try:
-                return await self._infer_onnx_aot(image, mask, inpainting_size, verbose)
-            except Exception as e:
-                self.logger.warning(f'ONNX推理失败（{str(e)[:100]}），本次降级到PyTorch')
-                # 降级：需要加载PyTorch模型
-                if not hasattr(self, 'model'):
-                    self.logger.info('正在加载PyTorch模型...')
-                    self.model = AOTGenerator()
-                    sd = torch.load(self._get_file_path('inpainting.ckpt'), map_location='cpu')
-                    self.model.load_state_dict(sd['model'] if 'model' in sd else sd)
-                    self.model.eval()
-                    if self.device.startswith('cuda') or self.device == 'mps':
-                        self.model.to(self.device)
-        
-        # ✅ PyTorch推理（调用父类）
-        return await super()._infer(image, mask, config, inpainting_size, verbose)
-    
-    async def _infer_onnx_aot(self, image: np.ndarray, mask: np.ndarray, inpainting_size: int = 1024, verbose: bool = False) -> np.ndarray:
-        """ONNX推理方法（AOT模型，只需image和mask）"""
-        import cv2
-        from ..utils import resize_keep_aspect
-        
-        img_original = np.copy(image)
-        mask_original = np.copy(mask)
-        mask_original[mask_original < 127] = 0
-        mask_original[mask_original >= 127] = 1
-        mask_original = mask_original[:, :, None]
-        
-        height, width, c = image.shape
-        if max(image.shape[0: 2]) > inpainting_size:
-            image = resize_keep_aspect(image, inpainting_size)
-            mask_resized = resize_keep_aspect(mask, inpainting_size)
-            mask_original_resized = resize_keep_aspect(mask_original, inpainting_size)
-        else:
-            mask_resized = mask
-            mask_original_resized = mask_original
-        
-        pad_size = 8
-        h, w, c = image.shape
-        new_h = h if h % pad_size == 0 else (pad_size - (h % pad_size)) + h
-        new_w = w if w % pad_size == 0 else (pad_size - (w % pad_size)) + w
-        
-        # Padding
-        img_pad = np.pad(image, ((0, new_h - h), (0, new_w - w), (0, 0)), mode='symmetric')
-        # 根据 mask_original_resized 的维度决定 padding 参数
-        if len(mask_original_resized.shape) == 3:
-            mask_pad = np.pad(mask_original_resized, ((0, new_h - h), (0, new_w - w), (0, 0)), mode='symmetric')
-        else:
-            mask_pad = np.pad(mask_original_resized, ((0, new_h - h), (0, new_w - w)), mode='symmetric')
-            mask_pad = mask_pad[:, :, None]  # 扩展为3维
-        
-        # 准备输入（0-1归一化）
-        img = img_pad.astype(np.float32) / 255.0
-        img = np.transpose(img, (2, 0, 1))[None, ...]  # [1, 3, H, W]
-        
-        mask_input = mask_pad.astype(np.float32)[:, :, 0:1]
-        mask_input = np.transpose(mask_input, (2, 0, 1))[None, ...]  # [1, 1, H, W]
-        
-        # ONNX推理（只需2个输入：image和mask）
-        ort_inputs = {
-            'image': img.astype(np.float32),
-            'mask': mask_input.astype(np.float32)
-        }
-        img_inpainted = self.session.run(None, ort_inputs)[0]
-        
-        # 后处理
-        img_inpainted = np.transpose(img_inpainted[0], (1, 2, 0))  # [H, W, 3]
-        img_inpainted = (img_inpainted * 255.).astype(np.uint8)
-        
-        # Remove padding
-        img_inpainted = img_inpainted[:h, :w, :]
-        
-        # Resize back
-        if max(height, width) > inpainting_size:
-            img_inpainted = cv2.resize(img_inpainted, (width, height), interpolation=cv2.INTER_LINEAR)
-            mask_original_resized = cv2.resize(mask_original_resized, (width, height), interpolation=cv2.INTER_LINEAR)
-            if len(mask_original_resized.shape) == 2:
-                mask_original_resized = mask_original_resized[:, :, None]
-        
-        ans = img_inpainted * mask_original_resized + img_original * (1 - mask_original_resized)
-        
-        return ans
 
 
 def relu_nf(x):

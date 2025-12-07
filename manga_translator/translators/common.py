@@ -1,8 +1,10 @@
 import re
 import time
 import asyncio
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any
 from abc import abstractmethod
+import numpy as np
+import cv2
 
 from ..utils import InfererModule, ModelWrapper, repeating_sequence, is_valuable_text
 
@@ -101,6 +103,171 @@ class MultimodalUnsupportedException(Exception):
             f"模型 {model_name} 不支持多模态输入（图片+文本）"
         )
 
+def draw_text_boxes_on_image(image, text_regions: List[Any], text_order: List[int], 
+                             upscaled_size: Tuple[int, int] = None):
+    """
+    在图片上绘制带编号的文本框
+    
+    Args:
+        image: 原始图片 (numpy array 或 PIL Image)
+        text_regions: 文本区域列表，每个区域应该有 xyxy 或 min_rect 属性
+        text_order: 文本顺序列表，对应每个文本框的编号
+        upscaled_size: 超分后的图片尺寸 (height, width)，用于坐标转换。如果为None则不转换
+    
+    Returns:
+        绘制了文本框的图片（与输入类型相同）
+    """
+    if image is None or len(text_regions) == 0:
+        return image
+    
+    # 检查是否为PIL Image，如果是则转换为numpy数组
+    from PIL import Image as PILImage
+    is_pil = isinstance(image, PILImage.Image)
+    if is_pil:
+        # 处理各种图片模式，统一转换为RGB
+        pil_image = image
+        if pil_image.mode == "P":
+            pil_image = pil_image.convert("RGBA" if "transparency" in pil_image.info else "RGB")
+        if pil_image.mode == "RGBA":
+            background = PILImage.new('RGB', pil_image.size, (255, 255, 255))
+            background.paste(pil_image, mask=pil_image.split()[-1])
+            pil_image = background
+        elif pil_image.mode in ("LA", "L", "1", "CMYK"):
+            if pil_image.mode == "LA":
+                pil_image = pil_image.convert("RGBA")
+                background = PILImage.new('RGB', pil_image.size, (255, 255, 255))
+                background.paste(pil_image, mask=pil_image.split()[-1])
+                pil_image = background
+            else:
+                pil_image = pil_image.convert("RGB")
+        elif pil_image.mode != "RGB":
+            pil_image = pil_image.convert("RGB")
+        canvas = np.array(pil_image)
+    else:
+        canvas = image.copy()
+    
+    h, w = canvas.shape[:2]
+    
+    # 计算坐标缩放比例（超分坐标 -> 原图坐标）
+    scale_x, scale_y = 1.0, 1.0
+    if upscaled_size is not None:
+        upscaled_h, upscaled_w = upscaled_size
+        if upscaled_w > 0 and upscaled_h > 0:
+            scale_x = w / upscaled_w
+            scale_y = h / upscaled_h
+    
+    # 计算线宽
+    lw = max(round(sum(canvas.shape[:2]) / 2 * 0.003), 2)
+    
+    # 定义多种颜色（RGB格式）
+    colors = [
+        (255, 0, 0),     # 红
+        (0, 255, 0),     # 绿
+        (0, 0, 255),     # 蓝
+        (255, 165, 0),   # 橙
+        (128, 0, 128),   # 紫
+        (0, 255, 255),   # 青
+        (255, 0, 255),   # 品红
+        (255, 255, 0),   # 黄
+        (0, 128, 0),     # 深绿
+        (128, 0, 0),     # 深红
+    ]
+    
+    # 先收集所有框的边界信息
+    all_boxes = []
+    for region in text_regions:
+        if hasattr(region, 'xyxy'):
+            x1, y1, x2, y2 = region.xyxy
+            x1, x2 = x1 * scale_x, x2 * scale_x
+            y1, y2 = y1 * scale_y, y2 * scale_y
+            all_boxes.append((int(x1), int(y1), int(x2), int(y2)))
+        elif hasattr(region, 'min_rect'):
+            pts = region.min_rect.astype(np.float64)
+            pts[:, 0] *= scale_x
+            pts[:, 1] *= scale_y
+            bx1, by1 = int(pts[:, 0].min()), int(pts[:, 1].min())
+            bx2, by2 = int(pts[:, 0].max()), int(pts[:, 1].max())
+            all_boxes.append((bx1, by1, bx2, by2))
+    
+    def check_overlap(lx, ly, lw_size, lh_size, exclude_idx):
+        """检查标签区域是否与其他框重叠"""
+        label_rect = (lx, ly - lh_size, lx + lw_size, ly)
+        for i, (bx1, by1, bx2, by2) in enumerate(all_boxes):
+            if i == exclude_idx:
+                continue
+            # 检查矩形是否重叠
+            if not (label_rect[2] < bx1 or label_rect[0] > bx2 or label_rect[3] < by1 or label_rect[1] > by2):
+                return True
+        return False
+    
+    # 遍历每个文本区域并绘制
+    for idx, region in enumerate(text_regions):
+        if idx >= len(text_order):
+            break
+            
+        order_num = text_order[idx]
+        color = colors[idx % len(colors)]
+        
+        # 获取文本框坐标并转换
+        if hasattr(region, 'xyxy'):
+            x1, y1, x2, y2 = region.xyxy
+            x1, x2 = x1 * scale_x, x2 * scale_x
+            y1, y2 = y1 * scale_y, y2 * scale_y
+            box_x1, box_y1, box_x2, box_y2 = int(x1), int(y1), int(x2), int(y2)
+            cv2.rectangle(canvas, (box_x1, box_y1), (box_x2, box_y2), color, lw)
+        elif hasattr(region, 'min_rect'):
+            pts = region.min_rect.astype(np.float64)
+            pts[:, 0] *= scale_x
+            pts[:, 1] *= scale_y
+            pts = pts.astype(np.int32)
+            cv2.polylines(canvas, [pts], True, color, lw)
+            box_x1, box_y1 = int(pts[:, 0].min()), int(pts[:, 1].min())
+            box_x2, box_y2 = int(pts[:, 0].max()), int(pts[:, 1].max())
+        else:
+            continue
+        
+        # 绘制编号标签
+        label_text = str(order_num)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = max(lw / 2, 0.6)
+        font_thickness = max(lw, 2)
+        
+        (text_width, text_height), _ = cv2.getTextSize(label_text, font, font_scale, font_thickness)
+        margin = 3
+        
+        # 四个候选位置：上、下、左、右
+        candidates = [
+            (box_x1, box_y1 - margin),                          # 上
+            (box_x1, box_y2 + text_height + margin),            # 下
+            (box_x1 - text_width - margin, box_y1 + text_height), # 左
+            (box_x2 + margin, box_y1 + text_height),            # 右
+        ]
+        
+        # 选择不重叠且在图片范围内的位置
+        label_x, label_y = candidates[0]  # 默认上方
+        for cx, cy in candidates:
+            # 检查是否在图片范围内
+            if cx < 0 or cy - text_height < 0 or cx + text_width > w or cy > h:
+                continue
+            # 检查是否与其他框重叠
+            if not check_overlap(cx, cy, text_width, text_height, idx):
+                label_x, label_y = cx, cy
+                break
+        
+        # 最终边界检查
+        label_x = max(0, min(label_x, w - text_width))
+        label_y = max(text_height, min(label_y, h))
+        
+        # 绘制编号文本（带黑色描边）
+        cv2.putText(canvas, label_text, (label_x, label_y), font, font_scale, (0, 0, 0), font_thickness + 2, cv2.LINE_AA)
+        cv2.putText(canvas, label_text, (label_x, label_y), font, font_scale, color, font_thickness, cv2.LINE_AA)
+    
+    # 如果输入是PIL Image，转换回PIL格式
+    if is_pil:
+        return PILImage.fromarray(canvas)
+    return canvas
+
+
 class MTPEAdapter():
     async def dispatch(self, queries: List[str], translations: List[str]) -> List[str]:
         # TODO: Make it work in windows (e.g. through os.startfile)
@@ -157,6 +324,36 @@ class CommonTranslator(InfererModule):
         if self._cancel_check_callback and self._cancel_check_callback():
             raise asyncio.CancelledError("Translation cancelled by user")
 
+    def _get_retry_temperature(self, base_temperature: float, retry_attempt: int, retry_reason: str = "") -> float:
+        """
+        根据重试次数和原因动态调整温度，帮助模型跳出错误模式
+        
+        Args:
+            base_temperature: 基础温度（首次请求使用）
+            retry_attempt: 当前重试次数（0表示首次请求）
+            retry_reason: 重试原因（模型输出问题才提高温度，网络/链接错误不提高）
+            
+        Returns:
+            调整后的温度值
+        """
+        if retry_attempt <= 0:
+            return base_temperature
+        
+        # 只有模型输出问题才提高温度（数量不匹配、质量检查失败、BR检查失败）
+        # 网络错误、链接错误、返回空内容等不需要提高温度
+        should_increase_temp = (
+            "Translation count mismatch" in retry_reason or
+            "Quality check failed" in retry_reason or 
+            "BR markers missing" in retry_reason
+        )
+        
+        if not should_increase_temp:
+            return base_temperature
+        
+        # 每次重试增加 0.2，最高不超过 1.0
+        adjusted_temp = base_temperature + (retry_attempt * 0.2)
+        return min(adjusted_temp, 1.0)
+
     def _get_retry_hint(self, attempt: int, reason: str = "") -> str:
         """
         生成重试提示信息，用于避免模型服务器缓存导致的重复错误
@@ -206,10 +403,6 @@ class CommonTranslator(InfererModule):
             enable_ai_break = getattr(ctx.config.render, 'disable_auto_wrap', False)
 
         prompt = ""
-        
-        # 添加重试提示（如果是重试）
-        if retry_attempt > 0:
-            prompt += self._get_retry_hint(retry_attempt, retry_reason)
 
         # 添加多页上下文（如果有）
         if prev_context:
@@ -232,6 +425,10 @@ class CommonTranslator(InfererModule):
                 prompt += f"{i+1}. {text_to_translate}\n"
 
         prompt += "\nCRITICAL: Provide translations in the exact same order as the numbered input text regions. Your first line of output must be the translation for text region #1, your second line for #2, and so on. DO NOT CHANGE THE ORDER."
+
+        # 添加重试提示到结尾（如果是重试）- 放在结尾以便利用 DeepSeek 等 API 的前缀缓存
+        if retry_attempt > 0:
+            prompt += "\n\n" + self._get_retry_hint(retry_attempt, retry_reason)
 
         return prompt
 
@@ -256,10 +453,6 @@ class CommonTranslator(InfererModule):
             enable_ai_break = getattr(ctx.config.render, 'disable_auto_wrap', False)
 
         prompt = ""
-        
-        # 添加重试提示（如果是重试）
-        if retry_attempt > 0:
-            prompt += self._get_retry_hint(retry_attempt, retry_reason)
 
         # 添加多页上下文（如果有）
         if prev_context:
@@ -294,6 +487,10 @@ class CommonTranslator(InfererModule):
                 text_index += 1
 
         prompt += "\nCRITICAL: Provide translations in the exact same order as the numbered input text regions. Your first line of output must be the translation for text region #1, your second line for #2, and so on. DO NOT CHANGE THE ORDER."
+
+        # 添加重试提示到结尾（如果是重试）- 放在结尾以便利用 DeepSeek 等 API 的前缀缓存
+        if retry_attempt > 0:
+            prompt += "\n\n" + self._get_retry_hint(retry_attempt, retry_reason)
 
         return prompt
 

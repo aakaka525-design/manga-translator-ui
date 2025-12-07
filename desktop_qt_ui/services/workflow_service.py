@@ -205,7 +205,7 @@ def parse_template(template_string: str):
     # 提取前缀空格（从行首到<original>）
     leading_spaces = first_item_line[:original_start_index]
 
-    # Define prefix（包含前缀空格）
+    # Define prefix（包含第一个item的前缀空格）
     prefix_lines = lines[:first_item_line_index]
     prefix = "".join(prefix_lines) + leading_spaces
 
@@ -255,6 +255,10 @@ def parse_template(template_string: str):
     logger.debug(f"Parsed template parts: prefix='{prefix.strip()}', separator='{separator.strip()}', suffix='{suffix.strip()}'")
     logger.debug(f"Item template: '{item_template}'")
     logger.debug(f"Item template (repr): {repr(item_template)}")
+    logger.debug(f"Prefix (repr): {repr(prefix)}")
+    logger.debug(f"Separator (repr): {repr(separator)}")
+    logger.debug(f"Prefix spaces: {prefix.count(' ')}")
+    logger.debug(f"Separator spaces: {separator.count(' ')}")
     return prefix, item_template, separator, suffix
 
 def generate_original_text(

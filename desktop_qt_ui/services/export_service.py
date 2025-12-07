@@ -260,6 +260,16 @@ class ExportService:
         finally:
             # 强制执行垃圾回收，释放内存
             gc.collect()
+            
+            # 清理GPU显存
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                    self.logger.info("GPU显存已清理")
+            except Exception:
+                pass
     
     def _save_regions_data(self, regions_data: List[Dict[str, Any]], json_path: str, mask: Optional[np.ndarray] = None, config: Optional[Dict[str, Any]] = None):
         """保存区域数据到JSON文件，确保格式与TextBlock兼容"""
@@ -396,9 +406,15 @@ class ExportService:
         
         # 如果有蒙版数据，则添加到JSON中
         if mask is not None:
-            self.logger.info("在导出JSON中加入预计算的蒙版。")
-            formatted_data[image_key]['mask_raw'] = mask.tolist()
-            formatted_data[image_key]['mask_is_refined'] = True
+            self.logger.info("在导出JSON中加入预计算的蒙版（已编辑的refined mask）。")
+            # 使用base64编码保存蒙版，避免JSON文件过大
+            import base64
+            import cv2
+            _, encoded_mask = cv2.imencode('.png', mask)
+            mask_base64 = base64.b64encode(encoded_mask).decode('utf-8')
+            formatted_data[image_key]['mask_raw'] = mask_base64
+            formatted_data[image_key]['mask_is_refined'] = True  # 标记为已精炼的蒙版，跳过后端的蒙版优化
+            self.logger.info(f"蒙版已保存（base64编码），标记为已精炼，后端将跳过蒙版优化")
 
         # 添加调试信息
         self.logger.info(f"保存区域数据到: {json_path}")

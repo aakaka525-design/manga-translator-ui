@@ -113,49 +113,53 @@ exit /b 1
 
 :env_check_ok
 
-REM 激活conda环境（兼容命名环境和路径环境）
-REM 优先尝试命名环境
-call conda activate "%CONDA_ENV_NAME%" 2>nul
-if %ERRORLEVEL% == 0 (
-    echo [INFO] 已激活命名环境: %CONDA_ENV_NAME%
-    goto :activated_ok
-)
+REM 先确保 conda 已初始化
+if not exist "%MINICONDA_ROOT%\Scripts\activate.bat" goto :try_activate_s2
+call "%MINICONDA_ROOT%\Scripts\activate.bat"
 
-REM 尝试路径环境（旧版本兼容）
-if exist "%CONDA_ENV_PATH%\python.exe" (
-    echo [INFO] 激活路径环境（旧版本）...
-    REM 使用MINICONDA_ROOT兼容性更好，支持中文路径
-    if exist "%MINICONDA_ROOT%\Scripts\activate.bat" (
-        call "%MINICONDA_ROOT%\Scripts\activate.bat" "%CONDA_ENV_PATH%" 2>nul
-        if %ERRORLEVEL% == 0 (
-            goto :activated_ok
-        )
-    )
+:try_activate_s2
+REM 方法1: conda activate 命名环境
+call conda activate "%CONDA_ENV_NAME%" 2>nul && goto :activated_ok_s2
 
-    REM 如果activate.bat失败，尝试conda activate
-    call conda activate "%CONDA_ENV_PATH%" 2>nul
-    if %ERRORLEVEL% == 0 (
-        goto :activated_ok
-    )
+REM 方法2: activate.bat 激活命名环境
+echo [INFO] 尝试备用激活方式...
+if not exist "%MINICONDA_ROOT%\Scripts\activate.bat" goto :try_manual_path_s2
+call "%MINICONDA_ROOT%\Scripts\activate.bat" "%CONDA_ENV_NAME%" 2>nul && goto :activated_ok_s2
 
-    REM 最后尝试手动设置PATH（兜底方案）
-    echo [INFO] 使用手动PATH激活方式...
-    set "PATH=%CONDA_ENV_PATH%;%CONDA_ENV_PATH%\Library\mingw-w64\bin;%CONDA_ENV_PATH%\Library\usr\bin;%CONDA_ENV_PATH%\Library\bin;%CONDA_ENV_PATH%\Scripts;%CONDA_ENV_PATH%\bin;%PATH%"
-    set "CONDA_PREFIX=%CONDA_ENV_PATH%"
-    set "CONDA_DEFAULT_ENV=%CONDA_ENV_PATH%"
-    goto :activated_ok
-)
+:try_manual_path_s2
+REM 方法3: 获取环境路径并手动设置PATH
+for /f "tokens=2" %%i in ('conda info --envs 2^>nul ^| findstr /B /C:"%CONDA_ENV_NAME%"') do set "ENV_PATH=%%i"
+if not defined ENV_PATH goto :try_legacy_env_s2
+if not exist "!ENV_PATH!\python.exe" goto :try_legacy_env_s2
+echo [INFO] 使用手动PATH激活方式...
+set "PATH=!ENV_PATH!;!ENV_PATH!\Library\mingw-w64\bin;!ENV_PATH!\Library\usr\bin;!ENV_PATH!\Library\bin;!ENV_PATH!\Scripts;!ENV_PATH!\bin;%PATH%"
+set "CONDA_PREFIX=!ENV_PATH!"
+set "CONDA_DEFAULT_ENV=%CONDA_ENV_NAME%"
+echo [INFO] 已激活环境: %CONDA_ENV_NAME%
+goto :activated_ok_s2
 
+:try_legacy_env_s2
+REM 方法4: 旧版本路径环境
+if not exist "%CONDA_ENV_PATH%\python.exe" goto :activate_failed_s2
+echo [INFO] 激活路径环境（旧版本）...
+echo [INFO] 使用手动PATH激活方式...
+set "PATH=%CONDA_ENV_PATH%;%CONDA_ENV_PATH%\Library\mingw-w64\bin;%CONDA_ENV_PATH%\Library\usr\bin;%CONDA_ENV_PATH%\Library\bin;%CONDA_ENV_PATH%\Scripts;%CONDA_ENV_PATH%\bin;%PATH%"
+set "CONDA_PREFIX=%CONDA_ENV_PATH%"
+set "CONDA_DEFAULT_ENV=%CONDA_ENV_PATH%"
+goto :activated_ok_s2
+
+:activate_failed_s2
 echo [ERROR] 无法激活环境
+echo 请尝试: 打开新命令提示符，运行 conda init cmd.exe，然后重试
 pause
 exit /b 1
 
-:activated_ok
+:activated_ok_s2
 
 REM 检查是否有便携版 Git
-if exist "PortableGit\cmd\git.exe" (
-    set "PATH=%SCRIPT_DIR%\PortableGit\cmd;%PATH%"
-)
+if not exist "PortableGit\cmd\git.exe" goto :skip_git_s2
+set "PATH=%SCRIPT_DIR%\PortableGit\cmd;%PATH%"
+:skip_git_s2
 
 REM 切换到项目根目录(确保Python能正确找到模块)
 cd /d "%~dp0"
