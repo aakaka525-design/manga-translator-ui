@@ -466,7 +466,7 @@ docker run -e MANGA_TRANSLATOR_ADMIN_PASSWORD=your_password_here ...
 - 🔒 **管理员登录** - 独立的管理员密码保护
 
 **3. 翻译配置**
-- 🔧 **翻译器选择** - OpenAI、Gemini、DeepL、Sakura等
+- 🔧 **翻译器选择** - OpenAI、Gemini、Sakura等
 - 🎯 **目标语言** - 支持中文、英文、日文、韩文等多种语言
 - 🔍 **检测器配置** - 文本检测参数、YOLO OBB等
 - 👁️ **OCR配置** - OCR引擎选择、混合OCR等
