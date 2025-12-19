@@ -268,6 +268,19 @@ class GraphicsView(QGraphicsView):
             print(f"[VIEW WARN] Failed to convert image to numpy array: {convert_error}")
             self._image_np = None
 
+        # 修复：ImageQt 不支持 'LA' 模式，需要转换为支持的模式
+        # 支持的模式：'1', 'L', 'P', 'RGB', 'RGBA'
+        if image.mode not in ('1', 'L', 'P', 'RGB', 'RGBA'):
+            if image.mode == 'LA':
+                # LA (灰度+Alpha) -> RGBA
+                image = image.convert('RGBA')
+            elif 'A' in image.mode:
+                # 其他带Alpha通道的模式 -> RGBA
+                image = image.convert('RGBA')
+            else:
+                # 其他模式 -> RGB
+                image = image.convert('RGB')
+        
         self._q_image_ref = ImageQt(image)
         pixmap = QPixmap.fromImage(self._q_image_ref)
 
@@ -419,6 +432,15 @@ class GraphicsView(QGraphicsView):
             self._inpainted_q_image_ref = None
             return
 
+        # 修复：ImageQt 不支持 'LA' 模式，需要转换为支持的模式
+        if image.mode not in ('1', 'L', 'P', 'RGB', 'RGBA'):
+            if image.mode == 'LA':
+                image = image.convert('RGBA')
+            elif 'A' in image.mode:
+                image = image.convert('RGBA')
+            else:
+                image = image.convert('RGB')
+        
         self._inpainted_q_image_ref = ImageQt(image)
         pixmap = QPixmap.fromImage(self._inpainted_q_image_ref)
 
