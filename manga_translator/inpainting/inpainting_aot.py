@@ -23,7 +23,7 @@ class AotInpainter(LamaMPEInpainter):
             shutil.move('inpainting.ckpt', self._get_file_path('inpainting.ckpt'))
         super().__init__(*args, **kwargs)
 
-    async def _load(self, device: str):
+    async def _load(self, device: str, **kwargs):
         self.device = device
         self.model = AOTGenerator()
         sd = torch.load(self._get_file_path('inpainting.ckpt'), map_location='cpu')

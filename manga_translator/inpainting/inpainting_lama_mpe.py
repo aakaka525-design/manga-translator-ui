@@ -147,7 +147,7 @@ class LamaMPEInpainter(OfflineInpainter):
         """
         return super()._check_downloaded_map(map_key)
 
-    async def _load(self, device: str):
+    async def _load(self, device: str, **kwargs):
         self.device = device
         
         # ✅ CPU模式使用ONNX（解决虚拟内存泄漏）
