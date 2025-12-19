@@ -1086,10 +1086,40 @@ def parse_json_or_text_response(result_text: str) -> List[str]:
         # 检查是否看起来像JSON但解析失败（可能是格式问题）
         stripped_text = result_text.strip()
         if stripped_text.startswith('[') or stripped_text.startswith('{'):
-            logger.error("响应看起来像JSON但解析失败，这通常意味着AI返回了格式错误的JSON")
-            logger.error(f"原始响应: {original_text}")
-            # 不要回退到按行分割，直接返回空列表触发重试
-            return []
+            logger.warning("响应看起来像JSON但解析失败，尝试修复常见格式问题")
+            
+            # 尝试修复常见的JSON格式问题
+            try:
+                # 1. 尝试使用更宽松的JSON解析器（json5）
+                try:
+                    import json5
+                    parsed_json = json5.loads(result_text)
+                    if isinstance(parsed_json, list) and parsed_json:
+                        logger.info("使用json5成功解析")
+                        if isinstance(parsed_json[0], dict):
+                            translations = [str(item.get('translation') or item.get('text') or list(item.values())[0]) for item in parsed_json]
+                        else:
+                            translations = [str(item) for item in parsed_json]
+                        return translations
+                except ImportError:
+                    pass
+                
+                # 2. 尝试提取JSON对象中的translation字段（使用正则表达式）
+                import re
+                translation_pattern = r'"translation"\s*:\s*"([^"]*(?:\\.[^"]*)*)"'
+                matches = re.findall(translation_pattern, result_text)
+                if matches:
+                    logger.info(f"使用正则表达式提取到{len(matches)}条翻译")
+                    translations = [match.replace('\\"', '"').replace('\\n', '\n') for match in matches]
+                    return translations
+                
+                # 3. 如果以上都失败，记录错误并返回空列表触发重试
+                logger.error(f"JSON修复失败，原始响应: {original_text[:500]}")
+                return []
+                
+            except Exception as repair_error:
+                logger.error(f"JSON修复过程出错: {repair_error}")
+                return []
         
         # 只有当响应明确不是JSON格式时，才回退到按行分割
         for line in result_text.split('\n'):
