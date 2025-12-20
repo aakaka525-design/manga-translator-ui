@@ -14,11 +14,6 @@ try:
 except Exception:
     unidic_datas = []
 
-try:
-    manga_ocr_datas = collect_data_files('manga_ocr')
-except Exception:
-    manga_ocr_datas = []
-
 # 使用collect_all自动收集onnxruntime的所有内容
 try:
     onnx_datas, onnx_binaries, onnx_hiddenimports = collect_all('onnxruntime')
@@ -39,7 +34,7 @@ a = Analysis(
     ['../desktop_qt_ui/main.py'],  # 相对于packaging目录
     pathex=[],
     binaries=onnx_binaries,
-    datas=py3langid_datas + unidic_datas + manga_ocr_datas + onnx_datas,  # 添加所有数据文件
+    datas=py3langid_datas + unidic_datas + onnx_datas,  # 添加所有数据文件
     hiddenimports=['pydensecrf.eigen', 'bsdiff4.core', 'PyQt6.QtCore', 'PyQt6.QtGui', 'PyQt6.QtWidgets', 'matplotlib', 'matplotlib.pyplot'] + onnx_hiddenimports,  # 添加隐式导入
     hookspath=[],
     hooksconfig={},
