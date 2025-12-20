@@ -15,7 +15,7 @@ from desktop_qt_ui.editor.core import ResourceManager
 from .config_service import ConfigService
 from .file_service import FileService
 from .history_service import EditorStateManager as HistoryService
-from .i18n_service import I18nManager, get_i18n_manager
+from .i18n_service import I18nManager
 from .log_service import LogService, setup_logging
 from .ocr_service import OcrService
 from .preset_service import PresetService

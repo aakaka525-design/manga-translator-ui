@@ -831,7 +831,6 @@ def safe_update_large_json_from_text(
     import time
     import shutil
     import tempfile
-    from datetime import datetime
     
     # 检查文件存在
     for file_path, name in [(text_file_path, "TXT"), (json_file_path, "JSON"), (template_path, "模板")]:
@@ -1069,7 +1068,7 @@ def safe_update_large_json_from_text(
             logger.error("File integrity check failed! Restoring backup.")
             if backup_path and os.path.exists(backup_path):
                 shutil.copy2(backup_path, json_file_path)
-                return f"错误：文件写入后验证失败，已恢复备份。请检查磁盘空间和文件权限。"
+                return "错误：文件写入后验证失败，已恢复备份。请检查磁盘空间和文件权限。"
         
         # 10. 清理旧备份（可选，保留最近3个备份）
         try:

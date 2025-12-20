@@ -10,7 +10,7 @@ import sys
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from dotenv import dotenv_values, set_key, load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 from core.config_models import AppSettings
 
@@ -250,14 +250,10 @@ class ConfigService(QObject):
                 is_default_config = save_path == self.default_config_path
                 if is_default_config and not hasattr(sys, '_MEIPASS'):
                     # 读取现有模板配置，保留某些字段
-                    existing_font_path = None
-                    existing_prompt_path = None
                     if os.path.exists(save_path):
                         try:
                             with open(save_path, 'r', encoding='utf-8') as f:
-                                existing_template = json.load(f)
-                                existing_font_path = existing_template.get('render', {}).get('font_path')
-                                existing_prompt_path = existing_template.get('translator', {}).get('high_quality_prompt_path')
+                                json.load(f)
                         except:
                             pass
                     

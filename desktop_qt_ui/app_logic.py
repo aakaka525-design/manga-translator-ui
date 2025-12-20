@@ -242,7 +242,6 @@ class MainAppLogic(QObject):
             image_path: 输入图片的路径
             save_info: 包含输出配置的字典
                 - output_folder: 输出文件夹
-                - input_folders: 输入文件夹集合
                 - format: 输出格式（可选）
                 - save_to_source_dir: 是否输出到原图目录
                 
@@ -250,7 +249,6 @@ class MainAppLogic(QObject):
             str: 计算后的输出文件完整路径
         """
         output_folder = save_info.get('output_folder')
-        input_folders = save_info.get('input_folders', set())
         output_format = save_info.get('format')
         save_to_source_dir = save_info.get('save_to_source_dir', False)
         
@@ -484,7 +482,7 @@ class MainAppLogic(QObject):
                 if model and model.strip():
                     try:
                         # 尝试用该模型发送一个简单的测试请求
-                        response = await client.chat.completions.create(
+                        await client.chat.completions.create(
                             model=model,
                             messages=[{"role": "user", "content": "test"}],
                             max_tokens=5
@@ -495,7 +493,7 @@ class MainAppLogic(QObject):
                         return False, f"连接成功但模型 {model} 不可用: {str(e)}"
                 else:
                     # 没有指定模型，只测试连接
-                    models = await client.models.list()
+                    await client.models.list()
                     return True, "连接成功"
             
             elif "gemini" in translator_key.lower():
@@ -512,7 +510,7 @@ class MainAppLogic(QObject):
                     # 如果指定了模型，测试该模型
                     if model and model.strip():
                         try:
-                            response = await client.chat.completions.create(
+                            await client.chat.completions.create(
                                 model=model,
                                 messages=[{"role": "user", "content": "test"}],
                                 max_tokens=5
@@ -521,7 +519,7 @@ class MainAppLogic(QObject):
                         except Exception as e:
                             return False, f"连接成功但模型 {model} 不可用: {str(e)}"
                     else:
-                        models = await client.models.list()
+                        await client.models.list()
                         return True, "连接成功"
                 else:
                     # 使用官方Gemini API
@@ -531,12 +529,12 @@ class MainAppLogic(QObject):
                     if model and model.strip():
                         try:
                             test_model = genai.GenerativeModel(model)
-                            response = test_model.generate_content("test")
+                            test_model.generate_content("test")
                             return True, f"连接成功，模型 {model} 可用"
                         except Exception as e:
                             return False, f"连接成功但模型 {model} 不可用: {str(e)}"
                     else:
-                        models = genai.list_models()
+                        genai.list_models()
                         return True, "连接成功"
             
             elif "sakura" in translator_key.lower():
@@ -552,7 +550,7 @@ class MainAppLogic(QObject):
                 # 如果指定了模型，测试该模型
                 if model and model.strip():
                     try:
-                        response = await client.chat.completions.create(
+                        await client.chat.completions.create(
                             model=model,
                             messages=[{"role": "user", "content": "test"}],
                             max_tokens=5
@@ -561,7 +559,7 @@ class MainAppLogic(QObject):
                     except Exception as e:
                         return False, f"连接成功但模型 {model} 不可用: {str(e)}"
                 else:
-                    models = await client.models.list()
+                    await client.models.list()
                     return True, "连接成功"
             
             else:
@@ -1857,7 +1855,6 @@ class TranslationWorker(QObject):
             str: 计算后的输出文件完整路径
         """
         output_folder = save_info.get('output_folder')
-        input_folders = save_info.get('input_folders', set())
         output_format = save_info.get('format')
         save_to_source_dir = save_info.get('save_to_source_dir', False)
         
@@ -2417,7 +2414,7 @@ class TranslationWorker(QObject):
                 if skipped_files:
                     skip_msg = self._t("⏭️ Skipped {count} existing files.", count=len(skipped_files))
                     self.log_received.emit(skip_msg)
-                    self.log_received.emit(f"--- ℹ️ 跳过的文件将不会被处理，如需重新翻译请启用「覆盖已存在文件」选项")
+                    self.log_received.emit("--- ℹ️ 跳过的文件将不会被处理，如需重新翻译请启用「覆盖已存在文件」选项")
                     self.logger.info(f"已跳过 {len(skipped_files)} 个已存在的文件（覆盖检测已禁用）")
                     # Update files list to only include those needing processing
                     self.files = files_to_process
@@ -2698,7 +2695,7 @@ class TranslationWorker(QObject):
             try:
                 from manga_translator.translators import translator_cache
                 translator_cache.clear()
-                self.log_received.emit(f"--- [CLEANUP] Cleared translator cache")
+                self.log_received.emit("--- [CLEANUP] Cleared translator cache")
             except Exception as e:
                 self.log_received.emit(f"--- [CLEANUP] Warning: Failed to clear cache: {e}")
 

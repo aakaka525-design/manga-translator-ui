@@ -326,7 +326,7 @@ class ExportService:
                 if lines_arr.ndim == 2 and lines_arr.shape == (4, 2):
                     # 单个多边形，需要添加一个维度变成 (1, 4, 2)
                     lines_arr = lines_arr.reshape(1, 4, 2)
-                    self.logger.debug(f"Reshaped lines from (4, 2) to (1, 4, 2)")
+                    self.logger.debug("Reshaped lines from (4, 2) to (1, 4, 2)")
                 elif lines_arr.ndim != 3 or lines_arr.shape[1] != 4 or lines_arr.shape[2] != 2:
                     self.logger.warning(f"Invalid lines array shape: {lines_arr.shape}, expected (N, 4, 2)")
                     continue
@@ -422,7 +422,7 @@ class ExportService:
             mask_base64 = base64.b64encode(encoded_mask).decode('utf-8')
             formatted_data[image_key]['mask_raw'] = mask_base64
             formatted_data[image_key]['mask_is_refined'] = True  # 标记为已精炼的蒙版，跳过后端的蒙版优化
-            self.logger.info(f"蒙版已保存（base64编码），标记为已精炼，后端将跳过蒙版优化")
+            self.logger.info("蒙版已保存（base64编码），标记为已精炼，后端将跳过蒙版优化")
 
         # 添加调试信息
         self.logger.info(f"保存区域数据到: {json_path}")

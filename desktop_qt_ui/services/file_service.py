@@ -17,7 +17,7 @@ from PIL import Image
 
 # 添加项目根目录到路径以便导入path_manager
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from manga_translator.utils.path_manager import find_json_path, find_inpainted_path
+from manga_translator.utils.path_manager import find_json_path
 
 
 class FileService:
@@ -233,8 +233,6 @@ class FileService:
 
             if recursive:
                 # 递归搜索，按子文件夹分组排序
-                # 先收集所有子文件夹
-                subfolders = []
                 for root, dirs, files in os.walk(folder_path):
                     # 移除manga_translator_work目录，避免遍历
                     if 'manga_translator_work' in dirs:

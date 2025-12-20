@@ -9,7 +9,7 @@ import logging
 from typing import Coroutine, Optional
 
 # 使用绝对导入避免相对导入问题
-from desktop_qt_ui.editor.core import AsyncJobManager, JobPriority
+from desktop_qt_ui.editor.core import AsyncJobManager
 
 
 class AsyncService:
@@ -46,7 +46,7 @@ class AsyncService:
             
             # 直接提交协程到事件循环
             future = asyncio.run_coroutine_threadsafe(coro, loop)
-            self.logger.debug(f"Task submitted to event loop")
+            self.logger.debug("Task submitted to event loop")
             return future
             
         except Exception as e:
