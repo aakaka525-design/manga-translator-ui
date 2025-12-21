@@ -27,7 +27,8 @@
 - **GPT配置文件路径 (gpt_config)**：GPT 配置文件路径（用于 OpenAI/Gemini 翻译器）
   - 默认：`examples/gpt_config-example.yaml`
 
-- **高质量翻译提示词 (high_quality_prompt_path)**：高质量翻译提示词文件路径（用于高质量翻译模式）
+- **自定义提示词 (high_quality_prompt_path)**：自定义提示词文件路径
+  - 适用于：OpenAI、Gemini、高质量翻译 OpenAI、高质量翻译 Gemini 四个翻译器
   - 默认：`dict/prompt_example.json`
   - 可以在 `dict` 目录下创建新的 `.json` 文件
   - JSON 格式只需符合标准 JSON 规范即可加载
@@ -35,9 +36,9 @@
   - 添加新提示词文件后，直接点击下拉菜单即可看到新文件，无需重启
 
 - **自动提取新术语 (extract_glossary)**：自动从翻译结果中提取新术语
-  - 适用于高质量翻译器（OpenAI HQ/Gemini HQ）
+  - 适用于：OpenAI、Gemini、高质量翻译 OpenAI、高质量翻译 Gemini 四个翻译器
   - 勾选后，AI 会自动识别并提取人名、地名、组织名等专有名词
-  - 提取的术语会自动添加到提示词的术语表中
+  - 提取的术语会自动添加到自定义提示词的术语表中
   - 后续翻译时会参考这些术语，保持翻译一致性
   - 特别适合长篇漫画的连续翻译，确保角色名等专有名词前后一致
 
@@ -351,7 +352,7 @@ twitter
 - 用于配置 OpenAI/Gemini API 密钥和参数
 - 示例文件包含 API Key、模型名称、代理设置等
 
-**提示词路径**（`dict` 目录）：
+**自定义提示词路径**（`dict` 目录）：
 - **系统提示词**（程序内置，自动调用）：
   - `dict/system_prompt_hq.json` - 高质量翻译的系统提示词
   - `dict/system_prompt_line_break.json` - AI断句的系统提示词
@@ -359,20 +360,20 @@ twitter
 - **用户自定义提示词**（在界面中选择）：
   - `dict/prompt_example.json` - 提示词示例
   - 可以在此目录添加自己的 `.json` 提示词文件
-- 用于高质量翻译器（OpenAI HQ/Gemini HQ）
+- 适用于：OpenAI、Gemini、高质量翻译 OpenAI、高质量翻译 Gemini 四个翻译器
 - 可以自定义翻译风格、术语表、上下文说明等
 
-**如何添加高质量提示词**：
+**如何添加自定义提示词**：
 
-> 💡 **说明**：此提示词适用于以下 4 个翻译器：**高质量翻译 OpenAI**、**高质量翻译 Gemini**、**OpenAI**、**Gemini**。
+> 💡 **说明**：此提示词适用于以下 4 个翻译器：**OpenAI**、**Gemini**、**高质量翻译 OpenAI**、**高质量翻译 Gemini**。
 
 > ⚠️ **重要**：使用脚本版安装的用户，**不要直接修改** `prompt_example.json`，更新时会被覆盖！请新建文件。
 
-1. 点击"高质量翻译提示词"旁边的"打开目录"按钮，打开 `dict` 目录
+1. 点击"自定义提示词"旁边的"打开目录"按钮，打开 `dict` 目录
 2. 在该目录下新建一个 `.json` 文件（如 `my_prompt.json`）
 3. 打开 `prompt_example.json`，复制里面的内容到新文件中
 4. 编辑新文件，填入你的作品角色名、术语表等信息
-5. 回到界面，在"高质量翻译提示词"下拉菜单选择新创建的提示词文件
+5. 回到界面，在"自定义提示词"下拉菜单选择新创建的提示词文件
 
 **提示词示例**（JSON 无固定格式，只要是合法的 JSON 即可，以下只是一种写法）：
 
