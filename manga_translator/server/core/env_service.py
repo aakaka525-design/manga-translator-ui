@@ -65,13 +65,10 @@ class EnvService:
             # 构建 .env 文件内容
             lines = []
             for key, value in env_vars.items():
-                # 如果值包含空格或特殊字符，用引号包裹
-                if ' ' in value or any(c in value for c in ['#', '=', '\n', '\r']):
-                    # 转义引号
-                    value = value.replace("'", "\\'")
-                    lines.append(f"{key}='{value}'")
-                else:
-                    lines.append(f"{key}={value}")
+                # 统一使用双引号包裹所有值，确保 python-dotenv 正确解析
+                # 转义双引号和反斜杠
+                value = value.replace('\\', '\\\\').replace('"', '\\"')
+                lines.append(f'{key}="{value}"')
             
             # 写入文件
             env_path.write_text('\n'.join(lines) + '\n', encoding='utf-8')

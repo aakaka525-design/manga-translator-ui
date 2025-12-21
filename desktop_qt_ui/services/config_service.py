@@ -427,17 +427,21 @@ class ConfigService(QObject):
             return {}
     
     def save_env_var(self, key: str, value: str) -> bool:
-        """保存单个环境变量 - 使用手动处理避免set_key的自动引号"""
+        """保存单个环境变量 - 统一使用双引号包裹值"""
         try:
             # 去除首尾空格
             value = value.strip()
             
+            # 转义双引号和反斜杠，然后用双引号包裹
+            escaped_value = value.replace('\\', '\\\\').replace('"', '\\"')
+            formatted_line = f'{key}="{escaped_value}"\n'
+            
             if not os.path.exists(self.env_path):
                 os.makedirs(os.path.dirname(self.env_path), exist_ok=True)
                 with open(self.env_path, 'w', encoding='utf-8') as f:
-                    f.write(f"{key}={value}\n")
+                    f.write(formatted_line)
             else:
-                # 手动读取、更新、写入，避免set_key的自动处理
+                # 手动读取、更新、写入
                 lines = []
                 key_found = False
                 with open(self.env_path, 'r', encoding='utf-8') as f:
@@ -451,14 +455,14 @@ class ConfigService(QObject):
                             if '=' in stripped:
                                 existing_key = stripped.split('=', 1)[0].strip()
                                 if existing_key == key:
-                                    f.write(f"{key}={value}\n")
+                                    f.write(formatted_line)
                                     key_found = True
                                     continue
                         f.write(line)
                     
                     # 如果键不存在，追加到文件末尾
                     if not key_found:
-                        f.write(f"{key}={value}\n")
+                        f.write(formatted_line)
             
             # 重新加载环境变量到os.environ，使其立即生效
             load_dotenv(self.env_path, override=True)

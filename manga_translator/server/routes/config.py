@@ -784,8 +784,9 @@ async def get_user_env_vars():
 @router.post("/env")
 async def save_user_env_vars(env_vars: dict):
     """Save user's environment variables"""
-    from dotenv import set_key, load_dotenv
+    from dotenv import load_dotenv
     from fastapi import HTTPException
+    from manga_translator.server.core.env_service import EnvService
     
     # Check if users are allowed to edit .env
     show_env_to_users = admin_settings.get('show_env_to_users', False)
@@ -800,14 +801,14 @@ async def save_user_env_vars(env_vars: dict):
         # Don't save to server, just return success (actually temporary use)
         return {"success": True, "saved_to_server": False}
     
-    # Save to server .env file
+    # Save to server .env file using EnvService for consistent formatting
     env_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', '.env')
     try:
+        env_service = EnvService(env_path)
+        
         for key, value in env_vars.items():
             if value:  # Only save non-empty values
-                set_key(env_path, key, value)
-                # 立即更新到 os.environ 使其生效
-                os.environ[key] = value
+                env_service.update_env_var(key, value)
         
         # 重新加载 .env 文件确保所有变量都是最新的
         load_dotenv(env_path, override=True)

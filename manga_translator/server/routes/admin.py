@@ -569,23 +569,20 @@ async def save_env_vars(
     if token and token in valid_admin_tokens:
         logger.debug("Using legacy admin token authentication")
     
-    from dotenv import set_key, load_dotenv
+    from dotenv import load_dotenv
+    from manga_translator.server.core.env_service import EnvService
     env_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', '.env')
     
     try:
-        # Save to .env file
+        env_service = EnvService(env_path)
+        
+        # Save to .env file using EnvService for consistent formatting
         for key, value in env_vars.items():
             if value:  # Only save non-empty values
-                set_key(env_path, key, value)
-                # Immediately update to os.environ to make it effective
-                os.environ[key] = value
+                env_service.update_env_var(key, value)
             else:
                 # If value is empty, remove from .env (if exists)
-                try:
-                    # set_key doesn't support deletion, need manual handling
-                    pass
-                except:
-                    pass
+                env_service.delete_env_var(key)
         
         # Reload .env file to ensure all variables are up to date
         load_dotenv(env_path, override=True)

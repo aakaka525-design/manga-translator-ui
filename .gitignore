@@ -229,3 +229,6 @@ MangaJaNaiConverterGui/
 
 # Scripts directory (脚本目录)
 scripts/
+
+# CatieCli directory (克隆的外部仓库)
+CatieCli/
