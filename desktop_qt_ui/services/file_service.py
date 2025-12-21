@@ -82,13 +82,19 @@ class FileService:
             # - 数字: 2, 3, 4
             # - 字符串数字: "2", "3", "4"
             # - mangajanai格式: "x2", "x4", "DAT2 x4"
+            # - realcugan格式: "2x-conservative", "3x-denoise1x" 等
             try:
                 if isinstance(upscale_ratio, str):
                     # 移除空格并转小写
                     upscale_ratio = upscale_ratio.strip().lower()
-                    # 提取数字部分
+                    # 提取数字部分（支持 "2x-xxx" 和 "x2" 格式）
                     import re
-                    match = re.search(r'(\d+)', upscale_ratio)
+                    # 优先匹配开头的数字（如 "2x-conservative" 中的 2）
+                    match = re.match(r'^(\d+)x', upscale_ratio)
+                    if not match:
+                        # 如果没匹配到，尝试匹配任意位置的数字（如 "x2" 或 "DAT2 x4"）
+                        match = re.search(r'(\d+)', upscale_ratio)
+                    
                     if match:
                         upscale_ratio = float(match.group(1))
                     else:
