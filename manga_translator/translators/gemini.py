@@ -6,7 +6,7 @@ from typing import List, Dict, Any
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
-from .common import CommonTranslator, VALID_LANGUAGES, parse_json_or_text_response, parse_hq_response, get_glossary_extraction_prompt, merge_glossary_to_file
+from .common import CommonTranslator, VALID_LANGUAGES, parse_json_or_text_response, parse_hq_response, get_glossary_extraction_prompt, merge_glossary_to_file, validate_gemini_response
 from .keys import GEMINI_API_KEY
 from ..utils import Context
 
@@ -375,6 +375,9 @@ class GeminiTranslator(CommonTranslator):
                 
                 if self._MAX_REQUESTS_PER_MINUTE > 0:
                     GeminiTranslator._GLOBAL_LAST_REQUEST_TS[self._last_request_ts_key] = time.time()
+
+                # 验证响应对象是否有效
+                validate_gemini_response(response, self.logger)
 
                 # 检查finish_reason
                 if hasattr(response, 'candidates') and response.candidates:

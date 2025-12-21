@@ -7,7 +7,7 @@ import httpx
 import openai
 from openai import AsyncOpenAI
 
-from .common import CommonTranslator, VALID_LANGUAGES, parse_json_or_text_response, parse_hq_response, get_glossary_extraction_prompt, merge_glossary_to_file
+from .common import CommonTranslator, VALID_LANGUAGES, parse_json_or_text_response, parse_hq_response, get_glossary_extraction_prompt, merge_glossary_to_file, validate_openai_response
 from .keys import OPENAI_API_KEY, OPENAI_MODEL
 from ..utils import Context
 
@@ -319,19 +319,8 @@ class OpenAITranslator(CommonTranslator):
                 if self._MAX_REQUESTS_PER_MINUTE > 0:
                     OpenAITranslator._GLOBAL_LAST_REQUEST_TS[self._last_request_ts_key] = time.time()
 
-                # 检查 response 是否为 None
-                if response is None:
-                    retry_attempt += 1
-                    retry_reason = "OpenAI API returned None response"
-                    log_attempt = f"{attempt}/{max_retries}" if not is_infinite else f"Attempt {attempt}"
-                    self.logger.warning(f"[{log_attempt}] {retry_reason}. Retrying...")
-                    last_exception = Exception("OpenAI API 返回了空响应 (None)")
-                    
-                    if not is_infinite and attempt >= max_retries:
-                        raise last_exception
-                    
-                    await asyncio.sleep(2)
-                    continue
+                # 验证响应对象是否有效
+                validate_openai_response(response, self.logger)
 
                 # 检查成功条件
                 if response.choices and response.choices[0].message.content and response.choices[0].finish_reason != 'content_filter':

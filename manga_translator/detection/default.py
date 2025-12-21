@@ -65,6 +65,15 @@ class DefaultDetector(OfflineDetector):
             raw_mask: Raw detection mask
             bbox_debug_img: Debug image with all bboxes and scores (only if verbose=True), otherwise None
         """
+        # 验证输入图片
+        if image is None or image.size == 0:
+            self.logger.error("输入图片为空或无效")
+            return [], np.zeros((100, 100), dtype=np.uint8), None
+        
+        if len(image.shape) < 2:
+            self.logger.error(f"输入图片维度不正确: {image.shape}")
+            return [], np.zeros((100, 100), dtype=np.uint8), None
+        
         # TODO: Move det_rearrange_forward to common.py and refactor
         db, mask = det_rearrange_forward(image, det_batch_forward_default, detect_size, 4, device=self.device, verbose=verbose)
 

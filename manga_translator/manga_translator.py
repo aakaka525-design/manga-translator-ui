@@ -758,6 +758,19 @@ class MangaTranslator:
             ctx.upscaled = ctx.img_colorized
 
         ctx.img_rgb, ctx.img_alpha = load_image(ctx.upscaled)
+        
+        # 验证加载的图片
+        if ctx.img_rgb is None or ctx.img_rgb.size == 0:
+            logger.error(f"加载图片失败: img_rgb为空或无效")
+            if not self.ignore_errors:
+                raise Exception("加载图片失败: img_rgb为空或无效")
+            # 尝试从原始输入重新加载
+            ctx.img_rgb, ctx.img_alpha = load_image(ctx.input)
+        
+        if len(ctx.img_rgb.shape) < 2 or ctx.img_rgb.shape[0] == 0 or ctx.img_rgb.shape[1] == 0:
+            logger.error(f"加载的图片尺寸无效: {ctx.img_rgb.shape}")
+            if not self.ignore_errors:
+                raise Exception(f"加载的图片尺寸无效: {ctx.img_rgb.shape}")
 
         # -- Detection
         await self._report_progress('detection')
@@ -2658,6 +2671,15 @@ class MangaTranslator:
                         
                         ctx.img_rgb, ctx.img_alpha = load_image(ctx.upscaled)
                         
+                        # 验证加载的图片
+                        if ctx.img_rgb is None or ctx.img_rgb.size == 0:
+                            logger.error(f"[批量] 加载图片失败: img_rgb为空或无效")
+                            continue
+                        
+                        if len(ctx.img_rgb.shape) < 2 or ctx.img_rgb.shape[0] == 0 or ctx.img_rgb.shape[1] == 0:
+                            logger.error(f"[批量] 加载的图片尺寸无效: {ctx.img_rgb.shape}")
+                            continue
+                        
                         # 处理 mask
                         if loaded_mask is not None:
                             if mask_is_refined:
@@ -3006,6 +3028,15 @@ class MangaTranslator:
             
             ctx.img_rgb, ctx.img_alpha = load_image(ctx.upscaled)
             
+            # 验证加载的图片
+            if ctx.img_rgb is None or ctx.img_rgb.size == 0:
+                logger.error(f"[批量流程] 加载图片失败: img_rgb为空或无效")
+                raise Exception("加载图片失败: img_rgb为空或无效")
+            
+            if len(ctx.img_rgb.shape) < 2 or ctx.img_rgb.shape[0] == 0 or ctx.img_rgb.shape[1] == 0:
+                logger.error(f"[批量流程] 加载的图片尺寸无效: {ctx.img_rgb.shape}")
+                raise Exception(f"加载的图片尺寸无效: {ctx.img_rgb.shape}")
+            
             # Step 1: 检测 - 获取textlines（检测框）和mask_raw（原始蒙版）
             await self._report_progress('detection')
             try:
@@ -3117,6 +3148,19 @@ class MangaTranslator:
             return ctx
 
         ctx.img_rgb, ctx.img_alpha = load_image(ctx.upscaled)
+        
+        # 验证加载的图片
+        if ctx.img_rgb is None or ctx.img_rgb.size == 0:
+            logger.error(f"加载图片失败: img_rgb为空或无效")
+            if not self.ignore_errors:
+                raise Exception("加载图片失败: img_rgb为空或无效")
+            # 尝试从原始输入重新加载
+            ctx.img_rgb, ctx.img_alpha = load_image(ctx.input)
+        
+        if len(ctx.img_rgb.shape) < 2 or ctx.img_rgb.shape[0] == 0 or ctx.img_rgb.shape[1] == 0:
+            logger.error(f"加载的图片尺寸无效: {ctx.img_rgb.shape}")
+            if not self.ignore_errors:
+                raise Exception(f"加载的图片尺寸无效: {ctx.img_rgb.shape}")
 
         # -- Detection
         await self._report_progress('detection')

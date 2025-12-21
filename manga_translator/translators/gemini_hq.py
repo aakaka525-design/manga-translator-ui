@@ -9,7 +9,7 @@ from PIL import Image
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
-from .common import CommonTranslator, VALID_LANGUAGES, draw_text_boxes_on_image, parse_json_or_text_response, parse_hq_response, get_glossary_extraction_prompt, merge_glossary_to_file
+from .common import CommonTranslator, VALID_LANGUAGES, draw_text_boxes_on_image, parse_json_or_text_response, parse_hq_response, get_glossary_extraction_prompt, merge_glossary_to_file, validate_gemini_response
 from .keys import GEMINI_API_KEY
 from ..utils import Context
 
@@ -479,6 +479,9 @@ class GeminiHighQualityTranslator(CommonTranslator):
                 if self._MAX_REQUESTS_PER_MINUTE > 0:
                     GeminiHighQualityTranslator._GLOBAL_LAST_REQUEST_TS[self._last_request_ts_key] = time.time()
 
+                # 验证响应对象是否有效
+                validate_gemini_response(response, self.logger)
+
                 # 检查finish_reason，只有成功(1)才继续，其他都重试
                 if hasattr(response, 'candidates') and response.candidates:
                     candidate = response.candidates[0]
@@ -769,6 +772,9 @@ class GeminiHighQualityTranslator(CommonTranslator):
             # 在API调用成功后立即更新时间戳，确保所有请求（包括重试）都被计入速率限制
             if self._MAX_REQUESTS_PER_MINUTE > 0:
                 GeminiHighQualityTranslator._GLOBAL_LAST_REQUEST_TS[self._last_request_ts_key] = time.time()
+            
+            # 验证响应对象是否有效
+            validate_gemini_response(response, self.logger)
             
             if response and response.text:
                 result = response.text.strip()

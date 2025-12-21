@@ -9,7 +9,7 @@ except ImportError:
 import asyncio
 from typing import List, Dict, Callable, Tuple
 
-from .common import CommonTranslator
+from .common import CommonTranslator, validate_openai_response
 from .keys import SAKURA_API_BASE, SAKURA_VERSION, SAKURA_DICT_PATH
 
 import logging
@@ -551,6 +551,10 @@ class SakuraTranslator(CommonTranslator):
             seed=-1,
             extra_query=extra_query,
         )
+        
+        # 验证响应对象是否有效
+        validate_openai_response(response, self.logger)
+        
         # 提取并返回响应文本
         for choice in response.choices:
             if 'text' in choice:

@@ -104,6 +104,59 @@ class MultimodalUnsupportedException(Exception):
             f"模型 {model_name} 不支持多模态输入（图片+文本）"
         )
 
+def validate_openai_response(response, logger=None) -> bool:
+    """
+    验证OpenAI API响应对象的有效性
+    
+    Args:
+        response: API返回的响应对象
+        logger: 日志记录器（可选）
+    
+    Returns:
+        bool: 响应是否有效
+    
+    Raises:
+        Exception: 如果响应对象无效
+    """
+    # 检查响应对象是否有choices属性
+    if not hasattr(response, 'choices'):
+        error_msg = f"API返回了无效的响应对象: {type(response).__name__}, 内容: {str(response)[:200]}"
+        if logger:
+            logger.error(error_msg)
+        raise Exception(f"API返回了无效的响应对象，类型: {type(response).__name__}")
+    
+    return True
+
+def validate_gemini_response(response, logger=None) -> bool:
+    """
+    验证Gemini API响应对象的有效性
+    
+    Args:
+        response: API返回的响应对象
+        logger: 日志记录器（可选）
+    
+    Returns:
+        bool: 响应是否有效
+    
+    Raises:
+        Exception: 如果响应对象无效
+    """
+    # 检查响应对象是否有candidates属性
+    if not hasattr(response, 'candidates'):
+        error_msg = f"Gemini API返回了无效的响应对象: {type(response).__name__}, 内容: {str(response)[:200]}"
+        if logger:
+            logger.error(error_msg)
+        raise Exception(f"Gemini API返回了无效的响应对象，类型: {type(response).__name__}")
+    
+    # 检查是否有text属性（某些错误响应可能没有）
+    if not hasattr(response, 'text'):
+        error_msg = f"Gemini API响应缺少text属性: {type(response).__name__}"
+        if logger:
+            logger.error(error_msg)
+        raise Exception(f"Gemini API响应缺少text属性")
+    
+    return True
+
 def draw_text_boxes_on_image(image, text_regions: List[Any], text_order: List[int], 
                              upscaled_size: Tuple[int, int] = None):
     """

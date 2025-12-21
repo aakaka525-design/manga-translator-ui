@@ -73,7 +73,16 @@ class YOLOOBBDetector(OfflineDetector):
             gain: 缩放比例
             (pad_w, pad_h): 填充的宽度和高度（左/上的填充像素）
         """
+        # 验证输入
+        if img is None or img.size == 0:
+            self.logger.error("YOLO OBB letterbox: 输入图片为空")
+            raise ValueError("输入图片为空")
+        
         shape = img.shape[:2]  # 当前形状 [height, width]
+        
+        if shape[0] == 0 or shape[1] == 0:
+            self.logger.error(f"YOLO OBB letterbox: 输入图片尺寸无效: {shape}")
+            raise ValueError(f"输入图片尺寸无效: {shape}")
         
         # 计算缩放比例 (gain)
         gain = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
@@ -81,6 +90,11 @@ class YOLOOBBDetector(OfflineDetector):
         # 计算新的未填充尺寸
         new_unpad_w = int(round(shape[1] * gain))
         new_unpad_h = int(round(shape[0] * gain))
+        
+        # 确保尺寸有效
+        if new_unpad_w <= 0 or new_unpad_h <= 0:
+            self.logger.error(f"YOLO OBB letterbox: 计算的新尺寸无效: {new_unpad_w}x{new_unpad_h}, gain={gain}, 原始shape={shape}")
+            raise ValueError(f"计算的新尺寸无效: {new_unpad_w}x{new_unpad_h}")
         
         # Resize图像
         if (new_unpad_w, new_unpad_h) != (shape[1], shape[0]):
@@ -111,6 +125,15 @@ class YOLOOBBDetector(OfflineDetector):
     
     def preprocess(self, img: np.ndarray) -> Tuple[np.ndarray, float, Tuple[float, float]]:
         """预处理图像"""
+        # 验证输入图片
+        if img is None or img.size == 0:
+            self.logger.error("YOLO OBB预处理: 输入图片为空或无效")
+            raise ValueError("输入图片为空或无效")
+        
+        if len(img.shape) < 2:
+            self.logger.error(f"YOLO OBB预处理: 输入图片维度不正确: {img.shape}")
+            raise ValueError(f"输入图片维度不正确: {img.shape}")
+        
         # 检查图像通道数并转换为RGB格式
         if len(img.shape) == 2:
             # 灰度图 -> RGB
@@ -405,8 +428,21 @@ class YOLOOBBDetector(OfflineDetector):
             scores: (N,) 置信度
             class_ids: (N,) 类别ID
         """
-        # 预处理
-        blob, gain, pad = self.preprocess(patch)
+        # 验证patch
+        if patch is None or patch.size == 0:
+            self.logger.error(f"YOLO OBB: patch为空, offset=({offset_x}, {offset_y})")
+            return np.array([]), np.array([]), np.array([])
+        
+        if len(patch.shape) < 2 or patch.shape[0] == 0 or patch.shape[1] == 0:
+            self.logger.error(f"YOLO OBB: patch尺寸无效: {patch.shape}, offset=({offset_x}, {offset_y})")
+            return np.array([]), np.array([]), np.array([])
+        
+        try:
+            # 预处理
+            blob, gain, pad = self.preprocess(patch)
+        except Exception as e:
+            self.logger.error(f"YOLO OBB: patch预处理失败: {e}, patch.shape={patch.shape}, offset=({offset_x}, {offset_y})")
+            return np.array([]), np.array([]), np.array([])
         
         # 推理
         input_name = self.session.get_inputs()[0].name
@@ -472,7 +508,17 @@ class YOLOOBBDetector(OfflineDetector):
             scores: (N,) 置信度
             class_ids: (N,) 类别ID
         """
+        # 验证输入
+        if image is None or image.size == 0:
+            self.logger.error("YOLO OBB _rearrange_detect: 输入图片无效")
+            return np.array([]), np.array([]), np.array([])
+        
         h, w = image.shape[:2]
+        
+        if h == 0 or w == 0:
+            self.logger.error(f"YOLO OBB _rearrange_detect: 图片尺寸为0: {h}x{w}")
+            return np.array([]), np.array([]), np.array([])
+        
         transpose = False
         if h < w:
             transpose = True
@@ -498,6 +544,11 @@ class YOLOOBBDetector(OfflineDetector):
             t = ii * ph_step
             b = min(t + ph, h)
             patch = image[t:b, :, :]
+            
+            # 验证patch
+            if patch.size == 0 or patch.shape[0] == 0 or patch.shape[1] == 0:
+                self.logger.warning(f"YOLO OBB patch {ii}: 跳过无效patch, shape={patch.shape}, t={t}, b={b}")
+                continue
             
             # 如果patch高度不足，padding到patch_size
             if patch.shape[0] < ph:
@@ -558,7 +609,28 @@ class YOLOOBBDetector(OfflineDetector):
             raw_mask: None (YOLO OBB不生成mask)
             debug_img: None
         """
-        self.logger.debug(f"YOLO OBB输入图像: shape={image.shape}, dtype={image.dtype}")
+        # 详细的输入验证和日志
+        if image is None:
+            self.logger.error("YOLO OBB: 接收到的图片为None")
+            return [], None, None
+        
+        if not isinstance(image, np.ndarray):
+            self.logger.error(f"YOLO OBB: 接收到的不是numpy数组，类型: {type(image)}")
+            return [], None, None
+        
+        if image.size == 0:
+            self.logger.error("YOLO OBB: 接收到的图片大小为0")
+            return [], None, None
+        
+        if len(image.shape) < 2:
+            self.logger.error(f"YOLO OBB: 图片维度不足: {image.shape}")
+            return [], None, None
+        
+        if image.shape[0] == 0 or image.shape[1] == 0:
+            self.logger.error(f"YOLO OBB: 图片尺寸为0: {image.shape}")
+            return [], None, None
+        
+        self.logger.debug(f"YOLO OBB输入图像: shape={image.shape}, dtype={image.dtype}, min={image.min()}, max={image.max()}")
         
         img_shape = image.shape[:2]
         

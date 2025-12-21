@@ -11,7 +11,7 @@ import httpx
 import openai
 from openai import AsyncOpenAI
 
-from .common import CommonTranslator, VALID_LANGUAGES, draw_text_boxes_on_image, parse_json_or_text_response, merge_glossary_to_file, get_glossary_extraction_prompt, parse_hq_response
+from .common import CommonTranslator, VALID_LANGUAGES, draw_text_boxes_on_image, parse_json_or_text_response, merge_glossary_to_file, get_glossary_extraction_prompt, parse_hq_response, validate_openai_response
 from .keys import OPENAI_API_KEY, OPENAI_MODEL
 from ..utils import Context
 
@@ -445,6 +445,9 @@ This is an incorrect response because it includes extra text and explanations.
                 if self._MAX_REQUESTS_PER_MINUTE > 0:
                     OpenAIHighQualityTranslator._GLOBAL_LAST_REQUEST_TS[self._last_request_ts_key] = time.time()
 
+                # 验证响应对象是否有效
+                validate_openai_response(response, self.logger)
+
                 # 检查成功条件
                 if response.choices and response.choices[0].message.content and response.choices[0].finish_reason != 'content_filter':
                     result_text = response.choices[0].message.content.strip()
@@ -555,7 +558,7 @@ This is an incorrect response because it includes extra text and explanations.
                 # 如果不成功，则记录原因并准备重试
                 attempt += 1
                 log_attempt = f"{attempt}/{max_retries}" if not is_infinite else f"Attempt {attempt}"
-                finish_reason = response.choices[0].finish_reason if response.choices else "N/A"
+                finish_reason = response.choices[0].finish_reason if (hasattr(response, 'choices') and response.choices) else "N/A"
 
                 if finish_reason == 'content_filter':
                     self.logger.warning(f"OpenAI内容被安全策略拦截 ({log_attempt})。下次重试将不再发送图片")

@@ -184,8 +184,9 @@ class ConcurrentPipeline:
                     await asyncio.sleep(0)
                 else:
                     # 无文本，直接标记完成并放入渲染队列
-                    self.translation_done[ctx.image_name] = ctx
-                    self.inpaint_done[ctx.image_name] = ctx
+                    self.translation_done[ctx.image_name] = []  # 空列表而不是ctx对象
+                    self.inpaint_done[ctx.image_name] = True
+                    ctx.text_regions = []  # 确保text_regions是空列表
                     ctx.result = ctx.upscaled
                     await self.render_queue.put((ctx, config))
                     logger.debug(f"[检测+OCR] {ctx.image_name} 无文本，直接进入渲染队列")
@@ -325,7 +326,9 @@ class ConcurrentPipeline:
             # 标记所有上下文为失败
             for ctx, config in batch:
                 ctx.translation_error = str(e)
-                self.translation_done[ctx.image_name] = True
+                # 设置为空列表而不是True，避免渲染阶段类型错误
+                self.translation_done[ctx.image_name] = []
+                ctx.text_regions = []
     
     async def _inpaint_worker(self):
         """
@@ -387,8 +390,14 @@ class ConcurrentPipeline:
                     if render_ctx:
                         # 使用翻译后的text_regions
                         translated_regions = self.translation_done.get(ctx.image_name)
-                        if translated_regions:
+                        # 确保translated_regions是列表类型
+                        if isinstance(translated_regions, (list, tuple)):
                             render_ctx.text_regions = translated_regions
+                        elif translated_regions:
+                            logger.warning(f"[修复] {ctx.image_name} 的翻译结果类型异常: {type(translated_regions)}, 使用空列表")
+                            render_ctx.text_regions = []
+                        else:
+                            render_ctx.text_regions = []
                         # img_inpainted已经在上面设置好了
                         await self.render_queue.put((render_ctx, config))
                         logger.info(f"[修复] {ctx.image_name} 翻译+修复都完成，加入渲染队列")
@@ -455,8 +464,8 @@ class ConcurrentPipeline:
                 # 调试：检查关键数据
                 logger.debug(f"[渲染调试] img_rgb shape: {ctx.img_rgb.shape if hasattr(ctx, 'img_rgb') and ctx.img_rgb is not None else 'None'}")
                 logger.debug(f"[渲染调试] img_inpainted shape: {ctx.img_inpainted.shape if hasattr(ctx, 'img_inpainted') and ctx.img_inpainted is not None else 'None'}")
-                logger.debug(f"[渲染调试] text_regions count: {len(ctx.text_regions) if ctx.text_regions else 0}")
-                if ctx.text_regions:
+                logger.debug(f"[渲染调试] text_regions count: {len(ctx.text_regions) if isinstance(ctx.text_regions, (list, tuple)) else 0}")
+                if isinstance(ctx.text_regions, (list, tuple)) and ctx.text_regions:
                     for i, region in enumerate(ctx.text_regions[:3]):  # 只显示前3个
                         logger.debug(f"[渲染调试] Region {i}: translation='{region.translation[:30]}...', font_size={region.font_size}, xywh={region.xywh}")
                 
