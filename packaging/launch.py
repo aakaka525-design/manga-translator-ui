@@ -192,8 +192,32 @@ def run_pip_requirements(requirements_file, desc=None):
             if line:
                 packages.append(line)
     
-    # 需要从 extra-index-url 下载的包前缀列表
-    pytorch_packages = ['torch', 'torchvision', 'torchaudio', 'xformers']
+    # 需要从 PyTorch 源下载的包列表（包括 PyTorch 及其依赖）
+    pytorch_packages = [
+        'torch', 'torchvision', 'torchaudio', 'xformers',
+        # PyTorch 核心依赖
+        'pytorch-triton', 'pytorch-triton-rocm', 'pytorch-triton-xpu',
+        'torch-cuda80', 'torch-model-archiver', 'torch-tb-profiler',
+        'torch-tensorrt', 'torchao', 'torchaudio', 'torchcodec',
+        'torchcsprng', 'torchdata', 'torchmetrics', 'torchrec',
+        'torchrec-cpu', 'torchserve', 'torchtext', 'torchvision',
+        # NVIDIA CUDA 相关
+        'nvidia-cublas-cu12', 'nvidia-cuda-cupti-cu12', 'nvidia-cuda-nvrtc-cu12',
+        'nvidia-cuda-runtime-cu12', 'nvidia-cudnn-cu11', 'nvidia-cudnn-cu12',
+        'nvidia-cudnn-cu13', 'nvidia-cufft-cu12', 'nvidia-cufile-cu12',
+        'nvidia-curand-cu12', 'nvidia-cusolver-cu12', 'nvidia-cusparse-cu12',
+        'nvidia-cusparselt-cu12', 'nvidia-nccl-cu12', 'nvidia-nvjitlink-cu12',
+        'nvidia-nvshmem-cu12', 'nvidia-nvtx-cu12',
+        # Intel oneAPI 相关
+        'intel-cmplr-lib-rt', 'intel-cmplr-lib-ur', 'intel-cmplr-lic-rt',
+        'intel-opencl-rt', 'intel-openmp', 'intel-pti', 'intel-sycl-rt',
+        'oneccl', 'oneccl-devel', 'onemkl-sycl-blas', 'onemkl-sycl-dft',
+        'onemkl-sycl-lapack', 'onemkl-sycl-rng', 'onemkl-sycl-sparse',
+        # 其他 PyTorch 生态依赖
+        'triton', 'fbgemm-gpu', 'fbgemm-gpu-genai', 'flashinfer',
+        'flashinfer-python', 'vllm', 'cuda-bindings', 'dpcpp-cpp-rt',
+        'mpi-rt', 'tcmlib'
+    ]
     
     def is_pytorch_package(pkg_name):
         """检查是否是需要从 PyTorch 源下载的包"""
