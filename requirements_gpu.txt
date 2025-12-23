@@ -1,5 +1,4 @@
 --index-url https://download.pytorch.org/whl/cu128
---extra-index-url https://pypi.org/simple
 
 torch
 torchvision
@@ -74,7 +73,7 @@ unidic_lite==1.0.8
 # bitsandbytes==0.45.0
 uvicorn==0.35.0
 websockets==14.2
-xformers==0.0.32.post2  # 从 https://download.pytorch.org/whl/cu129 下载
+xformers  # 从 https://download.pytorch.org/whl/cu128 下载
 torchsummary==1.5.1
 open_clip_torch==3.1.0
 google-generativeai==0.8.5
