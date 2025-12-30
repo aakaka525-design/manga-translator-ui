@@ -65,6 +65,12 @@
 
 - **行间距逻辑优化**：回退至基于间隙的计算方式，提升排版精确度，避免行间距过大
 
+### PaddleOCR 旋转裁剪尺寸限制修复
+- 修复 PaddleOCR 韩语模型在处理超大文本区域时的崩溃问题
+- 当文本区域透视变换目标尺寸超过 32767 像素时,采用局部裁剪策略
+- 先从原图裁剪包围框区域,再进行透视变换,避免触发 OpenCV `cv::remap` 的 `SHRT_MAX` 限制
+- 解决了大量 "Failed to extract rotated crop" 错误
+
 ### 显存优化
 - 在程序入口添加 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` 环境变量，优化显存分配
 

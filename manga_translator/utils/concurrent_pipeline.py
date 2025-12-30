@@ -536,7 +536,7 @@ class ConcurrentPipeline:
                 
                 if not ctx.text_regions:
                     # 无文本，直接使用upscaled
-                    from .utils.generic import dump_image
+                    from .generic import dump_image
                     ctx.result = dump_image(ctx.input, ctx.upscaled, ctx.img_alpha)
                 else:
                     # 渲染（直接在asyncio中执行）
