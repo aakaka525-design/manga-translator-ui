@@ -156,6 +156,65 @@ def compact_special_symbols(text: str) -> str:
     text = re.sub(pattern, r'\1', text)
     return text
 
+def should_force_wrap_for_mismatched_direction(config, logger) -> bool:
+    """
+    检测是否应该强制打开换行：
+    如果自动算法检测到是竖排（检测框宽高比 < 1）但被强制设置成横排，返回 True
+    如果自动算法检测到是横排（检测框宽高比 >= 1）但被强制设置成竖排，返回 True
+    
+    Args:
+        config: 配置对象，需要包含 _current_region 属性
+        logger: 日志对象
+    
+    Returns:
+        bool: 是否应该强制打开换行
+    """
+    if not config or not hasattr(config, '_current_region'):
+        return False
+    
+    region = config._current_region
+    
+    # 检查是否被强制设置了方向
+    if not hasattr(region, '_direction') or region._direction not in ['h', 'horizontal', 'v', 'vertical']:
+        return False
+    
+    forced_horizontal = region._direction in ['h', 'horizontal']
+    
+    # 检查自动检测的方向
+    if not hasattr(region, 'lines') or len(region.lines) == 0:
+        return False
+    
+    # 计算面积最大的检测框的宽高比
+    max_area = 0
+    largest_box_aspect_ratio = 1
+    
+    try:
+        from shapely.geometry import Polygon
+        for line in region.lines:
+            line_polygon = Polygon(line)
+            area = line_polygon.area
+            if area > max_area:
+                max_area = area
+                x_coords = line[:, 0]
+                y_coords = line[:, 1]
+                line_width = np.max(x_coords) - np.min(x_coords)
+                line_height = np.max(y_coords) - np.min(y_coords)
+                largest_box_aspect_ratio = line_width / line_height if line_height > 0 else 1
+    except Exception as e:
+        logger.warning(f"检测方向不匹配时出错: {e}")
+        return False
+    
+    auto_detected_horizontal = largest_box_aspect_ratio >= 1
+    
+    # 如果强制方向与自动检测方向不一致，返回 True
+    if forced_horizontal != auto_detected_horizontal:
+        direction_name = "横排" if forced_horizontal else "竖排"
+        auto_direction_name = "横排" if auto_detected_horizontal else "竖排"
+        logger.debug(f"[方向不匹配] 自动检测为{auto_direction_name}(宽高比={largest_box_aspect_ratio:.2f})但被强制设置为{direction_name}，打开换行")
+        return True
+    
+    return False
+
 def auto_add_horizontal_tags(text: str) -> str:
     """自动为竖排文本中的短英文单词或连续符号添加<H>标签，使其横向显示。
 
@@ -730,18 +789,24 @@ def put_text_vertical(font_size: int, text: str, h: int, alignment: str, fg: Tup
                 logger.debug(f"[VERTICAL DEBUG] AI断句开启但无BR标记，回退自动换行，effective_max_height={h}, region_count={region_count}")
     elif config and config.render.layout_mode == 'smart_scaling':
         # smart_scaling 模式下，检查是否有换行符
+        # 只在非AI断句模式下检测方向不匹配
+        force_wrap = should_force_wrap_for_mismatched_direction(config, logger)
+        
         if has_br:
             # 有换行符，使用传入的框高度
             effective_max_height = h
             logger.debug(f"[VERTICAL DEBUG] Smart scaling有换行符，effective_max_height={h}, region_count={region_count}")
         else:
             # 无换行符，单区域使用无限高度
-            if region_count <= 1:
+            if region_count <= 1 and not force_wrap:
                 effective_max_height = 99999
                 logger.debug(f"[VERTICAL DEBUG] Smart scaling单区域无换行符，effective_max_height=99999, region_count={region_count}")
             else:
                 effective_max_height = h
-                logger.debug(f"[VERTICAL DEBUG] Smart scaling多区域无换行符，effective_max_height={h}, region_count={region_count}")
+                if force_wrap:
+                    logger.debug(f"[VERTICAL DEBUG] Smart scaling强制换行模式，effective_max_height={h}, region_count={region_count}")
+                else:
+                    logger.debug(f"[VERTICAL DEBUG] Smart scaling多区域无换行符，effective_max_height={h}, region_count={region_count}")
     else:
         logger.debug(f"[VERTICAL DEBUG] 默认模式，effective_max_height={h}, region_count={region_count}")
 
@@ -1495,7 +1560,11 @@ def put_text_horizontal(font_size: int, text: str, width: int, height: int, alig
         # Otherwise, it expands without wrapping.
         # 统一处理所有类型的AI换行符
         text = re.sub(r'\s*(\[BR\]|<br>|【BR】)\s*', '\n', text, flags=re.IGNORECASE)
-        if '\n' not in text:
+        
+        # 只在非AI断句模式下检测方向不匹配
+        force_wrap = should_force_wrap_for_mismatched_direction(config, logger)
+        
+        if '\n' not in text and not force_wrap:
             # No manual breaks found, so disable wrapping by setting a large width.
             if region_count <= 1:
                 width = 99999
@@ -1503,7 +1572,10 @@ def put_text_horizontal(font_size: int, text: str, width: int, height: int, alig
             else:
                 logger.debug(f"[HORIZONTAL DEBUG] Smart scaling多区域无换行符，width={width}, region_count={region_count}")
         else:
-            logger.debug(f"[HORIZONTAL DEBUG] Smart scaling有换行符，width={width}, region_count={region_count}, line_count={text.count(chr(10))+1}")
+            if force_wrap:
+                logger.debug(f"[HORIZONTAL DEBUG] Smart scaling强制换行模式，width={width}, region_count={region_count}")
+            else:
+                logger.debug(f"[HORIZONTAL DEBUG] Smart scaling有换行符，width={width}, region_count={region_count}, line_count={text.count(chr(10))+1}")
     bg_size = int(max(font_size * stroke_ratio, 1)) if bg is not None else 0
     # line_spacing 是基本间距的倍率
     # 横排基本间距: 0.01

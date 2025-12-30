@@ -286,11 +286,6 @@
 
 #### 常用路径
 
-**GPT配置文件路径**：
-- 默认：`examples/gpt_config-example.yaml`
-- 用于配置 OpenAI/Gemini API 密钥和参数
-- 示例文件包含 API Key、模型名称、代理设置等
-
 **提示词路径**（`dict` 目录）：
 - **系统提示词**（程序内置，自动调用）：
   - `dict/system_prompt_hq.json` - 高质量翻译的系统提示词

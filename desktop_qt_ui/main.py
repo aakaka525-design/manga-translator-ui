@@ -274,7 +274,10 @@ def main():
     app.processEvents()  # 处理所有待处理事件
 
     # 4. 启动事件循环
-    sys.exit(app.exec())
+    # 使用 os._exit(0) 强制退出，防止因守护线程未结束导致进程无法终止
+    ret = app.exec()
+    logging.info("Exiting application...")
+    os._exit(ret)
 
 if __name__ == '__main__':
     # 在创建QApplication之前设置DPI策略，这是解决DPI问题的另一种稳妥方式

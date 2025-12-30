@@ -672,16 +672,26 @@ def resize_regions_to_font_size(img: np.ndarray, text_regions: List['TextBlock']
             font_size = target_font_size
             min_shrink_font_size = max(min_font_size, 8)
 
+            # AI 断句适配：如果开启了 AI 断句且有 BR 标记，使用无限宽度/高度
+            use_ai_break = config.render.disable_auto_wrap and has_br
+            if use_ai_break:
+                calc_max_width = 99999
+                calc_max_height = 99999
+                logger.debug(f"[STRICT MODE] AI断句开启，使用无限尺寸")
+            else:
+                calc_max_width = region.unrotated_size[0]
+                calc_max_height = region.unrotated_size[1]
+
             # Step 1: 先缩小字体直到文本能放进文本框
             iteration_count = 0
             while font_size >= min_shrink_font_size:
                 iteration_count += 1
                 if region.horizontal:
-                    lines, _ = text_render.calc_horizontal(font_size, region.translation, max_width=region.unrotated_size[0], max_height=region.unrotated_size[1], language=region.target_lang)
+                    lines, _ = text_render.calc_horizontal(font_size, region.translation, max_width=calc_max_width, max_height=calc_max_height, language=region.target_lang)
                     if len(lines) <= len(region.texts):
                         break
                 else:
-                    lines, _ = text_render.calc_vertical(font_size, region.translation, max_height=region.unrotated_size[1])
+                    lines, _ = text_render.calc_vertical(font_size, region.translation, max_height=calc_max_height)
                     if len(lines) <= len(region.texts):
                         break
                 font_size -= 1
@@ -693,14 +703,14 @@ def resize_regions_to_font_size(img: np.ndarray, text_regions: List['TextBlock']
 
             while test_font_size <= target_font_size:
                 if region.horizontal:
-                    test_lines, _ = text_render.calc_horizontal(test_font_size, region.translation, max_width=region.unrotated_size[0], max_height=region.unrotated_size[1], language=region.target_lang)
+                    test_lines, _ = text_render.calc_horizontal(test_font_size, region.translation, max_width=calc_max_width, max_height=calc_max_height, language=region.target_lang)
                     if len(test_lines) <= len(region.texts):
                         max_fitting_font_size = test_font_size
                         test_font_size += 1
                     else:
                         break
                 else:
-                    test_lines, _ = text_render.calc_vertical(test_font_size, region.translation, max_height=region.unrotated_size[1])
+                    test_lines, _ = text_render.calc_vertical(test_font_size, region.translation, max_height=calc_max_height)
                     if len(test_lines) <= len(region.texts):
                         max_fitting_font_size = test_font_size
                         test_font_size += 1
@@ -1385,6 +1395,9 @@ def render(
         # If AI line breaking is enabled, standardize all break tags ([BR], <br>, and 【BR】) to \n
         if config and config.render.disable_auto_wrap:
             text_to_render = re.sub(r'\s*(\[BR\]|<br>|【BR】)\s*', '\n', text_to_render, flags=re.IGNORECASE)
+        else:
+            # 如果没有开启AI断句，移除所有BR标记（避免显示在渲染结果中）
+            text_to_render = re.sub(r'\s*(\[BR\]|<br>|【BR】)\s*', ' ', text_to_render, flags=re.IGNORECASE)
 
         # Automatically add horizontal tags for vertical text
         if region.vertical and config.render.auto_rotate_symbols:
@@ -1412,6 +1425,10 @@ def render(
     # 如果最终判断为横排,删除所有 <H> 标签,防止打印出来
     if render_horizontally:
         text_to_render = re.sub(r'<H>(.*?)</H>', r'\1', text_to_render, flags=re.IGNORECASE | re.DOTALL)
+
+    # 将当前region传递给config，用于方向不匹配检测
+    if config:
+        config._current_region = region
 
     # 使用 freetype 渲染器（稳定可靠）
     # 检测是否需要使用高质量渲染（针对低分辨率优化）

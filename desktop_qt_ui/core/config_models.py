@@ -9,29 +9,10 @@ class TranslatorSettings(BaseModel):
     target_lang: str = "CHS"
     no_text_lang_skip: bool = False
     # 相对路径，后端会用BASE_PATH拼接（打包后=_internal，开发时=项目根目录）
-    gpt_config: Optional[str] = "examples/gpt_config-example.yaml"
     high_quality_prompt_path: Optional[str] = "dict/prompt_example.json"
     extract_glossary: bool = False
     max_requests_per_minute: int = 0
     attempts: int = -1  # 翻译重试次数，-1 表示无限重试
-    
-    @property
-    def chatgpt_config(self):
-        """加载GPT配置文件"""
-        if self.gpt_config is not None:
-            try:
-                from omegaconf import OmegaConf
-                from manga_translator.utils.generic import BASE_PATH
-                
-                config_path = self.gpt_config
-                if not os.path.isabs(config_path):
-                    config_path = os.path.join(BASE_PATH, config_path)
-                
-                if os.path.exists(config_path):
-                    return OmegaConf.load(config_path)
-            except Exception:
-                pass
-        return None
 
 class OcrSettings(BaseModel):
     use_mocr_merge: bool = False

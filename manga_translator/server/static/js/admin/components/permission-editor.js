@@ -419,7 +419,6 @@ class PermissionEditor {
                 ${this.createFormRow(this.t('label_high_quality_prompt_path', '自定义提示词'), this.createSelect('translator', 'high_quality_prompt_path', opts.high_quality_prompt_path), '', 'translator', 'high_quality_prompt_path')}
                 ${this.createFormRow(this.t('label_extract_glossary', '自动提取新术语'), this.createCheckbox('translator', 'extract_glossary'), '自动从翻译中提取新术语并保存到提示词文件', 'translator', 'extract_glossary')}
                 ${this.createFormRow(this.t('label_no_text_lang_skip', '不跳过目标语言文本'), this.createCheckbox('translator', 'no_text_lang_skip'), '即使文本已是目标语言也进行翻译', 'translator', 'no_text_lang_skip')}
-                ${this.createFormRow(this.t('label_gpt_config', 'GPT 配置文件'), this.createInput('translator', 'gpt_config', 'text'), '相对路径，如：examples/gpt_config-example.yaml', 'translator', 'gpt_config')}
                 ${this.createFormRow(this.t('label_max_requests_per_minute', '每分钟最大请求数'), this.createInput('translator', 'max_requests_per_minute', 'number'), '0表示无限制', 'translator', 'max_requests_per_minute')}
             </div>
             <div class="form-section">

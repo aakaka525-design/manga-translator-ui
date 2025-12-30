@@ -235,3 +235,6 @@ CatieCli/
 
 .gemini/
 gha-creds-*.json
+
+# PCL demo directory (点云处理项目)
+pcl_demo/

@@ -232,8 +232,6 @@ class TranslatorConfig(BaseModel):
     """Dont skip text that is seemingly already in the target language."""
     skip_lang: Optional[str] = None
     """Skip translation if source image is one of the provide languages, use comma to separate multiple languages. Example: JPN,ENG"""
-    gpt_config: Optional[str] = None  # todo: no more path
-    """Path to GPT config file, more info in README"""
     high_quality_prompt_path: Optional[str] = None
     """Path to a JSON file containing custom prompts for high-quality translation."""
     extract_glossary: bool = False
@@ -272,7 +270,6 @@ class TranslatorConfig(BaseModel):
     
     # 使用 PrivateAttr 确保每个实例有独立的缓存
     _translator_gen: Any = PrivateAttr(default=None)
-    _gpt_config: Any = PrivateAttr(default=None)
 
     @property
     def translator_gen(self):
@@ -289,22 +286,6 @@ class TranslatorConfig(BaseModel):
             else:
                 self._translator_gen = TranslatorChain(f'{str(self.translator)}:{self.target_lang}')
         return self._translator_gen
-
-    @property
-    def chatgpt_config(self):
-        if self.gpt_config is not None and self._gpt_config is None:
-            import os
-            from manga_translator.utils.generic import BASE_PATH
-            
-            config_path = self.gpt_config
-            if not os.path.isabs(config_path):
-                config_path = os.path.join(BASE_PATH, config_path)
-            
-            if os.path.exists(config_path):
-                self._gpt_config = OmegaConf.load(config_path)
-            else:
-                self._gpt_config = None
-        return self._gpt_config
 
 
 class DetectorConfig(BaseModel):

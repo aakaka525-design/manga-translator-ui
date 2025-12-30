@@ -23,9 +23,6 @@
 
 - **不跳过目标语言文本 (no_text_lang_skip)**：不跳过已是目标语言的文本（强制翻译）
 
-- **GPT配置文件路径 (gpt_config)**：GPT 配置文件路径（用于 OpenAI/Gemini 翻译器）
-  - 默认：`examples/gpt_config-example.yaml`
-
 - **自定义提示词 (high_quality_prompt_path)**：自定义提示词文件路径
   - 适用于：OpenAI、Gemini、高质量翻译 OpenAI、高质量翻译 Gemini 四个翻译器
   - 默认：`dict/prompt_example.json`
@@ -82,7 +79,7 @@
   - 需要安装 Photoshop
   - 导出包含：原图、修复图、可编辑文本层
   - 导出路径：`原图目录/manga_translator_work/psd/`
-- **PSD 默认字体 (psd_font)**：PSD 文本图层使用的默认字体
+- **PSD 默认字体 (psd_font)**：在 Photoshop 中显示的文本图层字体（支持字体显示名称或 PostScript 名称）
 - **仅生成 PSD 脚本 (psd_script_only)**：只生成 .jsx 脚本，不自动运行 Photoshop
 
 - **生成并导出 (generate_and_export)**：生成并导出翻译结果
@@ -350,11 +347,6 @@ twitter
 - **开发版本**：相对于项目根目录
 
 ### 常用路径
-
-**GPT配置文件路径**：
-- 默认：`examples/gpt_config-example.yaml`
-- 用于配置 OpenAI/Gemini API 密钥和参数
-- 示例文件包含 API Key、模型名称、代理设置等
 
 **自定义提示词路径**（`dict` 目录）：
 - **系统提示词**（程序内置，自动调用）：

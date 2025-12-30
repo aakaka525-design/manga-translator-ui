@@ -9,8 +9,7 @@ import traceback
 import os
 from typing import List
 from datetime import datetime, timezone
-from concurrent.futures import ThreadPoolExecutor
-import functools
+# ✅ 移除ThreadPoolExecutor，避免与Qt UI的线程池冲突
 
 from . import Context, load_image
 
@@ -22,13 +21,16 @@ class ConcurrentPipeline:
     """
     流水线并发处理器
     
-    4个独立工作线程：
-    1. 检测+OCR线程（顺序）→ 完成后放入翻译队列和修复队列
-    2. 翻译线程（独立）→ 批量处理翻译队列
-    3. 修复线程（独立）→ 处理修复队列
-    4. 渲染线程（独立）→ 翻译+修复完成后渲染出图
+    4个独立协程任务：
+    1. 检测+OCR协程（顺序）→ 完成后放入翻译队列和修复队列
+    2. 翻译协程（独立）→ 批量处理翻译队列
+    3. 修复协程（独立）→ 处理修复队列
+    4. 渲染协程（独立）→ 翻译+修复完成后渲染出图
     
     batch_size 控制翻译批量大小（一次翻译多少个文本块）
+    
+    ⚠️ 注意：不再使用ThreadPoolExecutor，所有CPU/GPU密集操作直接在asyncio中运行
+    这样可以避免与Qt UI的QThreadPool产生冲突和资源竞争
     """
     
     def __init__(self, translator_instance, batch_size: int = 3, max_workers: int = 4):
@@ -38,15 +40,12 @@ class ConcurrentPipeline:
         Args:
             translator_instance: MangaTranslator实例
             batch_size: 批量大小（一次翻译多少个文本块）
-            max_workers: 线程池最大工作线程数（用于CPU/GPU密集型操作）
-                        默认4个：检测+OCR、修复、渲染可以同时执行
+            max_workers: 保留参数以兼容旧代码（不再使用）
         """
         self.translator = translator_instance
         self.batch_size = batch_size
         
-        # 线程池：用于执行CPU/GPU密集型操作
-        # 4个工作线程：允许检测、OCR、修复、渲染同时执行
-        self.executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="pipeline_worker")
+        # ✅ 不再创建ThreadPoolExecutor，避免与Qt UI的QThreadPool冲突
         
         # 队列
         self.translation_queue = asyncio.Queue()  # 翻译队列
@@ -140,24 +139,11 @@ class ConcurrentPipeline:
                 # 更新 img_rgb 为 upscaled 结果（现在都是 numpy.ndarray）
                 ctx.img_rgb = ctx.upscaled
                 
-                # 检测（在线程池中执行，避免阻塞事件循环）
-                loop = asyncio.get_event_loop()
-                detection_func = functools.partial(
-                    asyncio.run,
-                    self.translator._run_detection(config, ctx)
-                )
-                ctx.textlines, ctx.mask_raw, ctx.mask = await loop.run_in_executor(
-                    self.executor, detection_func
-                )
+                # 检测（直接在asyncio中执行，不使用线程池）
+                ctx.textlines, ctx.mask_raw, ctx.mask = await self.translator._run_detection(config, ctx)
                 
-                # OCR（在线程池中执行）
-                ocr_func = functools.partial(
-                    asyncio.run,
-                    self.translator._run_ocr(config, ctx)
-                )
-                ctx.textlines = await loop.run_in_executor(
-                    self.executor, ocr_func
-                )
+                # OCR（直接在asyncio中执行）
+                ctx.textlines = await self.translator._run_ocr(config, ctx)
                 
                 # 文本行合并
                 if ctx.textlines:
@@ -427,23 +413,13 @@ class ConcurrentPipeline:
                 
                 logger.info(f"[修复] 处理: {ctx.image_name}")
                 
-                # Mask refinement（在线程池中执行）
+                # Mask refinement（直接在asyncio中执行）
                 if ctx.mask is None and ctx.text_regions:
-                    loop = asyncio.get_event_loop()
-                    mask_func = functools.partial(
-                        asyncio.run,
-                        self.translator._run_mask_refinement(config, ctx)
-                    )
-                    ctx.mask = await loop.run_in_executor(self.executor, mask_func)
+                    ctx.mask = await self.translator._run_mask_refinement(config, ctx)
                 
-                # Inpainting（在线程池中执行）
+                # Inpainting（直接在asyncio中执行）
                 if ctx.text_regions:
-                    loop = asyncio.get_event_loop()
-                    inpaint_func = functools.partial(
-                        asyncio.run,
-                        self.translator._run_inpainting(config, ctx)
-                    )
-                    ctx.img_inpainted = await loop.run_in_executor(self.executor, inpaint_func)
+                    ctx.img_inpainted = await self.translator._run_inpainting(config, ctx)
                 
                 self.stats['inpaint'] += 1
                 inpaint_count += 1
@@ -563,14 +539,8 @@ class ConcurrentPipeline:
                     from .utils.generic import dump_image
                     ctx.result = dump_image(ctx.input, ctx.upscaled, ctx.img_alpha)
                 else:
-                    # 渲染（在线程池中执行）
-                    # img_rgb和img_inpainted已经在修复阶段更新为upscaled版本
-                    loop = asyncio.get_event_loop()
-                    render_func = functools.partial(
-                        asyncio.run,
-                        self.translator._run_text_rendering(config, ctx)
-                    )
-                    ctx.img_rendered = await loop.run_in_executor(self.executor, render_func)
+                    # 渲染（直接在asyncio中执行）
+                    ctx.img_rendered = await self.translator._run_text_rendering(config, ctx)
                     
                     # 使用dump_image合并alpha通道（与标准流程一致）
                     from .generic import dump_image
@@ -717,7 +687,7 @@ class ConcurrentPipeline:
         self.start_time = datetime.now(timezone.utc)
         
         logger.info(f"[并发流水线] 开始处理 {self.total_images} 张图片")
-        logger.info(f"[并发流水线] 流水线模式: 检测+OCR（顺序，分批加载）→ 翻译线程（批量={self.batch_size}）+ 修复线程 + 渲染线程")
+        logger.info(f"[并发流水线] 流水线模式: 检测+OCR（顺序，分批加载）→ 翻译协程（批量={self.batch_size}）+ 修复协程 + 渲染协程")
         
         # 重置统计
         for key in self.stats:
@@ -730,7 +700,7 @@ class ConcurrentPipeline:
         # 结果列表
         results = []
         
-        # 启动4个工作线程
+        # 启动4个工作协程
         tasks = [
             asyncio.create_task(self._detection_ocr_worker(file_paths, configs)),
             asyncio.create_task(self._translation_worker()),
@@ -748,8 +718,7 @@ class ConcurrentPipeline:
             raise
         finally:
             self.stop_workers = True
-            # 关闭线程池
-            self.executor.shutdown(wait=True)
+            # ✅ 不再需要关闭线程池
         
         # 检查是否有严重错误
         if self.has_critical_error:

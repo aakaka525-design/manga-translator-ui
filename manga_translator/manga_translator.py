@@ -2290,6 +2290,16 @@ class MangaTranslator:
             else:
                 logger.warning("Some translation regions failed post-translation check.")
 
+        # 清理翻译文本
+        for region in ctx.text_regions:
+            if region.translation:
+                # 1. 去掉BR标记周围的空白
+                region.translation = re.sub(r'\s*(\[BR\]|<br>|【BR】)\s*', r'\1', region.translation, flags=re.IGNORECASE)
+                
+                # 2. 如果没有开启AI断句，去掉所有BR标记（避免显示在结果中）
+                if not (config.render and config.render.disable_auto_wrap):
+                    region.translation = re.sub(r'(\[BR\]|<br>|【BR】)', ' ', region.translation, flags=re.IGNORECASE)
+
         # 过滤逻辑（简化版本，保留主要过滤条件）
         new_text_regions = []
         for region in ctx.text_regions:

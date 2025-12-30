@@ -818,7 +818,6 @@ class MainAppLogic(QObject):
                     "translator": self._t("label_translator"),
                     "target_lang": self._t("label_target_lang"),
                     "no_text_lang_skip": self._t("label_no_text_lang_skip"),
-                    "gpt_config": self._t("label_gpt_config"),
                     "high_quality_prompt_path": self._t("label_high_quality_prompt_path"),
                     "extract_glossary": self._t("label_extract_glossary"),
                     "use_mocr_merge": self._t("label_use_mocr_merge"),

@@ -62,6 +62,7 @@ def render_text_for_region(text_block: TextBlock, dst_points: np.ndarray, transf
         # 1. 当AI断句开启(disable_auto_wrap=True)且文本中有[BR]标记时，关闭自动换行
         # 2. 当AI断句开启但文本中没有[BR]标记时，启用自动换行（回退到自动换行模式）
         disable_auto_wrap_param = render_params.get('disable_auto_wrap', False)
+        layout_mode = render_params.get('layout_mode', 'default')
         
         # 检测文本中是否有BR标记
         has_br = bool(re.search(r'(\[BR\]|【BR】|<br>|\n)', processed_text, flags=re.IGNORECASE))
@@ -144,6 +145,10 @@ def render_text_for_region(text_block: TextBlock, dst_points: np.ndarray, transf
                 region_count = len(text_block.lines)
             except:
                 region_count = 1
+
+        # 将当前text_block传递给config，用于方向不匹配检测
+        if config_obj:
+            config_obj._current_region = text_block
 
         # 使用 freetype 渲染器（稳定可靠）
         if text_block.horizontal:

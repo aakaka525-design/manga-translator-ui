@@ -27,7 +27,7 @@ from .desktop_ui_geometry import get_polygon_center
 
 # 添加项目根目录到路径以便导入path_manager
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from manga_translator.utils.path_manager import find_inpainted_path
+from manga_translator.utils.path_manager import find_inpainted_path, find_json_path
 
 
 class EditorController(QObject):
@@ -232,9 +232,13 @@ class EditorController(QObject):
         image = self._get_current_image()
         raw_mask = self.model.get_raw_mask()
 
-        if image is not None and mask is not None and raw_mask is not None:
-            # 计算差异蒙版（只包含用户编辑的部分）
-            self.async_service.submit_task(self._async_incremental_inpaint(mask, raw_mask))
+        if image is not None and mask is not None:
+            if raw_mask is not None:
+                # 有raw_mask，使用增量修复（只修复变化的部分）
+                self.async_service.submit_task(self._async_incremental_inpaint(mask, raw_mask))
+            else:
+                # 没有raw_mask（未翻译的图片），使用完整修复
+                self.async_service.submit_task(self._async_full_inpaint_with_cache(mask))
 
     @pyqtSlot(dict)
     def update_multiple_translations(self, translations: dict):
@@ -535,20 +539,30 @@ class EditorController(QObject):
                     return {'type': 'translated', 'image_path': image_path, 'image': image}
 
                 # 3. 加载JSON
-                regions, raw_mask, original_size = self.file_service.load_translation_json(image_path)
+                # 检查JSON是否存在
+                json_path = find_json_path(image_path)
 
-                # 4. 查找和加载inpainted图片
-                inpainted_path = find_inpainted_path(image_path)
-                inpainted_image = None
-                if inpainted_path:
-                    try:
-                        inpainted_image = Image.open(inpainted_path)
-                        if inpainted_image.size != image.size:
-                            inpainted_image = inpainted_image.resize(image.size, Image.LANCZOS)
-                    except Exception as e:
-                        self.logger.error(f"Error loading inpainted image: {e}")
-                        inpainted_path = None
-                        inpainted_image = None
+                if not json_path:
+                    # 如果没有JSON，作为可编辑的空白图片加载（允许用户添加编辑）
+                    regions = []
+                    raw_mask = None
+                    inpainted_image = image.copy()  # 使用原图作为底图
+                    inpainted_path = None
+                else:
+                    regions, raw_mask, original_size = self.file_service.load_translation_json(image_path)
+    
+                    # 4. 查找和加载inpainted图片
+                    inpainted_path = find_inpainted_path(image_path)
+                    inpainted_image = None
+                    if inpainted_path:
+                        try:
+                            inpainted_image = Image.open(inpainted_path)
+                            if inpainted_image.size != image.size:
+                                inpainted_image = inpainted_image.resize(image.size, Image.LANCZOS)
+                        except Exception as e:
+                            self.logger.error(f"Error loading inpainted image: {e}")
+                            inpainted_path = None
+                            inpainted_image = None
 
                 return {
                     'type': 'normal',
@@ -583,6 +597,8 @@ class EditorController(QObject):
                 self._handle_load_error(result['error'])
             elif result['type'] == 'translated':
                 self._apply_translated_image_to_model(result['image_path'], result['image'])
+            elif result['type'] == 'untranslated':
+                self._apply_untranslated_image_to_model(result['image_path'], result['image'])
             else:
                 self._apply_loaded_data_to_model(
                     result['image_path'],
@@ -656,10 +672,12 @@ class EditorController(QObject):
 
             if inpainted_path:
                 self.model.set_inpainted_image_path(inpainted_path)
-                if inpainted_image:
-                    self.model.set_inpainted_image(inpainted_image)
             else:
                 self.model.set_inpainted_image_path(None)
+
+            if inpainted_image:
+                self.model.set_inpainted_image(inpainted_image)
+            else:
                 self.model.set_inpainted_image(None)
 
             # 触发后台处理

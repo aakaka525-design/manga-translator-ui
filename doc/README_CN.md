@@ -1041,7 +1041,6 @@ translator        使用的语言翻译器
 target_lang       目标语言
 no_text_lang_skip 不跳过看似已经是目标语言的文本
 skip_lang         如果源图像是指定语言之一则跳过翻译，使用逗号分隔多个语言。例如：JPN,ENG
-gpt_config        GPT配置文件路径，更多信息请参见README
 translator_chain  一个翻译器的输出作为另一个翻译器的输入，直到翻译为目标语言。例如：--translator-chain "google:JPN;sugoi:ENG"
 selective_translation 根据图像中检测到的语言选择翻译器。注意，如果未定义语言，第一个翻译服务将作为默认值。例如：--translator-chain "google:JPN;sugoi:ENG"
 ```
@@ -1206,18 +1205,7 @@ SAKURA_DICT_PATH=PATH_TO_YOUR_FILE
 
 *   `.env` 文件包含敏感信息，请多加小心防止意外泄露。
 
-#### GPT 配置参考
-
-由 `gpt_config` 参数使用。
-<details>  
-<summary>展开完整配置 YAML</summary>  
-
-```yaml  
-# 值将向上查找。  
-#  
-# 如果你想设置一个全局默认值：  
-#   将其设置为顶级条目。  
-# 如果你想为特定的翻译器配置设置不同的值：  
+#### 检测参数
 #   将其设置在配置名称下方  
 #   顶层配置选项：'chatgpt', 'ollama', 'deepseek', 'groq'  
 #     对于支持指定模型的翻译器：  
@@ -1247,9 +1235,6 @@ temperature: 0.5
 # 模型会考虑具有 top_p 概率质量的 token 的结果。  
 # 因此，0.1 表示只考虑包含前 10% 概率质量的 token。  
 top_p: 1  
-
-# 是否在命令行输出中显示 _CHAT_SYSTEM_TEMPLATE 和 _CHAT_SAMPLE  
-verbose_logging: False  
 
 # 在要翻译的文本之前，馈送给 ChatGPT 的提示。  
 # 使用 {to_lang} 表示目标语言名称插入的位置。  

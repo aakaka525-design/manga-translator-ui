@@ -34,6 +34,7 @@ class YOLOOBBDetector(OfflineDetector):
         # 类别列表（不包括other）
         self.classes = ['balloon', 'qipao', 'shuqing', 'changfangtiao', 'hengxie']
         self.input_size = 640
+        self.using_cuda = False  # 初始化标志
     
     async def _load(self, device: str):
         """加载ONNX模型"""
@@ -41,19 +42,75 @@ class YOLOOBBDetector(OfflineDetector):
         
         # 配置ONNX Runtime providers
         providers = []
+        use_cuda = False
+        
         if device == 'cuda':
-            providers.append('CUDAExecutionProvider')
+            # 检查 CUDA 是否真的可用
+            try:
+                available_providers = ort.get_available_providers()
+                if 'CUDAExecutionProvider' in available_providers:
+                    # 添加 CUDA provider 配置，限制内存使用
+                    cuda_options = {
+                        'device_id': 0,
+                        'arena_extend_strategy': 'kSameAsRequested',
+                        'gpu_mem_limit': 2 * 1024 * 1024 * 1024,  # 2GB
+                        'cudnn_conv_algo_search': 'EXHAUSTIVE',
+                    }
+                    providers.append(('CUDAExecutionProvider', cuda_options))
+                    use_cuda = True
+                    self.logger.info("CUDA 可用，将尝试使用 GPU")
+                else:
+                    self.logger.warning(f"CUDA 不在可用 providers 中: {available_providers}")
+            except Exception as e:
+                self.logger.warning(f"检查 CUDA 可用性时出错: {e}")
+        
         providers.append('CPUExecutionProvider')
         
         try:
-            self.session = ort.InferenceSession(model_path, providers=providers)
+            # 设置会话选项
+            sess_options = ort.SessionOptions()
+            sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+            
+            self.session = ort.InferenceSession(model_path, sess_options=sess_options, providers=providers)
+            actual_providers = self.session.get_providers()
             self.logger.info(f"YOLO OBB模型加载成功: {model_path}")
-            self.logger.info(f"Providers: {self.session.get_providers()}")
+            self.logger.info(f"实际使用的 Providers: {actual_providers}")
+            
+            # 检查是否成功使用 CUDA
+            if use_cuda and 'CUDAExecutionProvider' not in actual_providers:
+                self.logger.warning("CUDA 初始化失败，已自动回退到 CPU")
+            
+            # 测试推理以确保模型真的可用
+            try:
+                test_input = np.random.rand(1, 3, 640, 640).astype(np.float32)
+                test_input = np.ascontiguousarray(test_input)
+                input_name = self.session.get_inputs()[0].name
+                output_names = [output.name for output in self.session.get_outputs()]
+                _ = self.session.run(output_names, {input_name: test_input})
+                self.logger.info("YOLO OBB 模型测试推理成功")
+            except Exception as e:
+                self.logger.error(f"YOLO OBB 模型测试推理失败: {e}")
+                # 如果是 CUDA 错误，尝试只用 CPU 重新加载
+                if use_cuda and ('CUDA' in str(e) or 'access violation' in str(e).lower()):
+                    self.logger.warning("CUDA 测试失败，强制使用 CPU 模式重新加载")
+                    self.session = ort.InferenceSession(
+                        model_path, 
+                        sess_options=sess_options, 
+                        providers=['CPUExecutionProvider']
+                    )
+                    self.logger.info(f"已切换到 CPU 模式: {self.session.get_providers()}")
+                    # 再次测试
+                    _ = self.session.run(output_names, {input_name: test_input})
+                    self.logger.info("CPU 模式测试推理成功")
+                else:
+                    raise
+                    
         except Exception as e:
             self.logger.error(f"YOLO OBB模型加载失败: {e}")
             raise
         
         self.device = device
+        self.using_cuda = 'CUDAExecutionProvider' in self.session.get_providers()
     
     async def _unload(self):
         """卸载模型"""
@@ -168,7 +225,12 @@ class YOLOOBBDetector(OfflineDetector):
         # 归一化到 [0, 1]
         blob = img_expanded.astype(np.float32) / 255.0
         
-        self.logger.debug(f"YOLO OBB预处理完成: blob shape={blob.shape}, dtype={blob.dtype}")
+        # 确保数组是连续的（C-contiguous），避免 ONNX Runtime 访问违例
+        if not blob.flags['C_CONTIGUOUS']:
+            blob = np.ascontiguousarray(blob)
+            self.logger.debug("YOLO OBB: 转换为连续数组")
+        
+        self.logger.debug(f"YOLO OBB预处理完成: blob shape={blob.shape}, dtype={blob.dtype}, contiguous={blob.flags['C_CONTIGUOUS']}")
         
         return blob, gain, pad
     
@@ -501,7 +563,13 @@ class YOLOOBBDetector(OfflineDetector):
             # 推理
             input_name = self.session.get_inputs()[0].name
             output_names = [output.name for output in self.session.get_outputs()]
-            outputs = self.session.run(output_names, {input_name: blob})
+            
+            try:
+                outputs = self.session.run(output_names, {input_name: blob})
+            except Exception as e:
+                self.logger.error(f"YOLO OBB patch {ii} 推理失败: {e}")
+                self.logger.error(f"Patch shape: {patch.shape}, blob shape: {blob.shape}")
+                continue
             
             # 后处理
             patch_shape = patch.shape[:2]
@@ -677,6 +745,8 @@ class YOLOOBBDetector(OfflineDetector):
                 outputs = self.session.run(output_names, {input_name: blob})
             except Exception as e:
                 self.logger.error(f"YOLO OBB推理失败: {e}")
+                self.logger.error(f"输入 blob shape: {blob.shape}, dtype: {blob.dtype}, contiguous: {blob.flags['C_CONTIGUOUS']}")
+                self.logger.error(f"当前 providers: {self.session.get_providers()}")
                 raise
             
             boxes_corners, scores, class_ids = self.postprocess(

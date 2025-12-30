@@ -301,7 +301,6 @@
   "📊 Sequential processing mode: {total} images": "📊 循序處理模式：共 {total} 張圖片",
   "label_uppercase": "大写",
   "Newline↵": "換行↵",
-  "label_gpt_config": "GPT設定檔案路徑",
   "Show Boxes Only": "只顯示框線",
   "label_merge_gamma": "合并-距离容忍度",
   "realcugan_2x_denoise1x": "2倍-降噪1x",
