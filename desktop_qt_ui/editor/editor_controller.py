@@ -1510,7 +1510,7 @@ class EditorController(QObject):
         regions_to_delete = []  # 需要完全删除的区域索引
 
         for region_index in sorted_indices:
-            if 0 <= region_index < len(self.model._regions):
+            if 0 <= region_index < len(self.model.get_regions()):
                 # 获取对应的 region_item,检查 active_polygon_index
                 region_item = None
                 if self.view and hasattr(self.view, 'graphics_view'):
