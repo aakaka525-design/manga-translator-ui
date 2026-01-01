@@ -82,33 +82,44 @@ class Model48pxCTCOCR(OfflineOCR):
 
         ix = 0
         for indices in chunks(perm, max_chunk_size):
-            N = len(indices)
-            widths = [region_imgs[i].shape[1] for i in indices]
-            max_width = (4 * (max(widths) + 7) // 4) + 128
-            region = np.zeros((N, text_height, max_width, 3), dtype = np.uint8)
-            for i, idx in enumerate(indices):
-                W = region_imgs[idx].shape[1]
-                tmp = region_imgs[idx]
-                # Determine whether to skip the text block, and return True to skip.
+            # 先过滤掉非气泡区域
+            valid_indices = []
+            valid_region_imgs = []
+            valid_widths = []
+            
+            for idx in indices:
                 if ignore_bubble >=1 and ignore_bubble <=50 and is_ignore(region_imgs[idx], ignore_bubble):
                     self.logger.info(f'[FILTERED] Region {ix} ignored - Non-bubble area detected (ignore_bubble={ignore_bubble})')
                     ix+=1
                     continue
-                region[i, :, : W, :]=tmp
+                valid_indices.append(idx)
+                valid_region_imgs.append(region_imgs[idx])
+                valid_widths.append(region_imgs[idx].shape[1])
+                ix += 1
+            
+            # 如果所有区域都被过滤了，跳过这个 chunk
+            if len(valid_indices) == 0:
+                continue
+            
+            N = len(valid_indices)
+            max_width = (4 * (max(valid_widths) + 7) // 4) + 128
+            region = np.zeros((N, text_height, max_width, 3), dtype = np.uint8)
+            for i, idx in enumerate(valid_indices):
+                W = valid_region_imgs[i].shape[1]
+                region[i, :, : W, :] = valid_region_imgs[i]
                 if verbose:
                     ocr_result_dir = os.environ.get('MANGA_OCR_RESULT_DIR', 'result/ocrs/')
                     os.makedirs(ocr_result_dir, exist_ok=True)
                     if quadrilaterals[idx][1] == 'v':
-                        imwrite_unicode(os.path.join(ocr_result_dir, f'{ix}.png'), cv2.rotate(cv2.cvtColor(region[i, :, :, :], cv2.COLOR_RGB2BGR), cv2.ROTATE_90_CLOCKWISE), self.logger)
+                        imwrite_unicode(os.path.join(ocr_result_dir, f'{ix-N+i}.png'), cv2.rotate(cv2.cvtColor(region[i, :, :, :], cv2.COLOR_RGB2BGR), cv2.ROTATE_90_CLOCKWISE), self.logger)
                     else:
-                        imwrite_unicode(os.path.join(ocr_result_dir, f'{ix}.png'), cv2.cvtColor(region[i, :, :, :], cv2.COLOR_RGB2BGR), self.logger)
-                ix += 1
+                        imwrite_unicode(os.path.join(ocr_result_dir, f'{ix-N+i}.png'), cv2.cvtColor(region[i, :, :, :], cv2.COLOR_RGB2BGR), self.logger)
             images = (torch.from_numpy(region).float() - 127.5) / 127.5
             images = einops.rearrange(images, 'N H W C -> N C H W')
             if self.use_gpu:
                 images = images.to(self.device)
             with torch.inference_mode():
-                texts = self.model.decode(images, widths, 0, verbose = verbose)
+                texts = self.model.decode(images, valid_widths, 0, verbose = verbose)
             for i, single_line in enumerate(texts):
                 if not single_line:
                     continue
@@ -138,7 +149,7 @@ class Model48pxCTCOCR(OfflineOCR):
                 if prob < threshold:
                     self.logger.info(f'[FILTERED] prob: {prob:.4f} < threshold: {threshold} - Text: "{txt}"')
                     # Keep the textline with empty text for hybrid OCR to retry
-                    cur_region = quadrilaterals[indices[i]][0]
+                    cur_region = quadrilaterals[valid_indices[i]][0]
                     if isinstance(cur_region, Quadrilateral):
                         cur_region.text = ''  # Empty text for hybrid OCR
                         cur_region.prob = prob
@@ -160,7 +171,7 @@ class Model48pxCTCOCR(OfflineOCR):
                 bg = int(total_bg())
                 bb = int(total_bb())
                 self.logger.info(f'prob: {prob} {txt} fg: ({fr}, {fg}, {fb}) bg: ({br}, {bg}, {bb})')
-                cur_region = quadrilaterals[indices[i]][0]
+                cur_region = quadrilaterals[valid_indices[i]][0]
                 if isinstance(cur_region, Quadrilateral):
                     cur_region.text = txt
                     cur_region.prob = prob

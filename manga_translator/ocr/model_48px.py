@@ -99,19 +99,31 @@ class Model48pxOCR(OfflineOCR):
 
         ix = 0
         for indices in chunks(perm, max_chunk_size):
-            N = len(indices)
-            widths = [region_imgs[i].shape[1] for i in indices]
-            max_width = 4 * (max(widths) + 7) // 4
-            region = np.zeros((N, text_height, max_width, 3), dtype = np.uint8)
-            for i, idx in enumerate(indices):
-                W = region_imgs[idx].shape[1]
-                tmp = region_imgs[idx]
-                # Determine whether to skip the text block, and return True to skip.
+            # 先过滤掉非气泡区域
+            valid_indices = []
+            valid_region_imgs = []
+            valid_widths = []
+            
+            for idx in indices:
                 if ignore_bubble >=1 and ignore_bubble <=50 and is_ignore(region_imgs[idx], ignore_bubble):
                     self.logger.info(f'[FILTERED] Region {ix} ignored - Non-bubble area detected (ignore_bubble={ignore_bubble})')
                     ix+=1
                     continue
-                region[i, :, : W, :]=tmp
+                valid_indices.append(idx)
+                valid_region_imgs.append(region_imgs[idx])
+                valid_widths.append(region_imgs[idx].shape[1])
+                ix += 1
+            
+            # 如果所有区域都被过滤了，跳过这个 chunk
+            if len(valid_indices) == 0:
+                continue
+            
+            N = len(valid_indices)
+            max_width = 4 * (max(valid_widths) + 7) // 4
+            region = np.zeros((N, text_height, max_width, 3), dtype = np.uint8)
+            for i, idx in enumerate(valid_indices):
+                W = valid_region_imgs[i].shape[1]
+                region[i, :, : W, :] = valid_region_imgs[i]
                 if verbose:
                     # 保存OCR调试图片，使用优化的保存方式
                     ocr_result_dir = os.environ.get('MANGA_OCR_RESULT_DIR', 'result/ocrs/')
@@ -133,14 +145,13 @@ class Model48pxOCR(OfflineOCR):
                     
                     # 使用高压缩保存
                     compression_params = [cv2.IMWRITE_PNG_COMPRESSION, 9]
-                    imwrite_unicode(os.path.join(ocr_result_dir, f'{ix}.png'), img_data, self.logger, compression_params)
-                ix += 1
+                    imwrite_unicode(os.path.join(ocr_result_dir, f'{ix-N+i}.png'), img_data, self.logger, compression_params)
             image_tensor = (torch.from_numpy(region).float() - 127.5) / 127.5
             image_tensor = einops.rearrange(image_tensor, 'N H W C -> N C H W')
             if self.use_gpu:
                 image_tensor = image_tensor.to(self.device)
             with torch.no_grad():
-                ret = self.model.infer_beam_batch_tensor(image_tensor, widths, beams_k = 5, max_seq_length = 255)
+                ret = self.model.infer_beam_batch_tensor(image_tensor, valid_widths, beams_k = 5, max_seq_length = 255)
             for i, (pred_chars_index, prob, fg_pred, bg_pred, fg_ind_pred, bg_ind_pred) in enumerate(ret):
                 if prob < threshold:
                     # Decode text first to log it
@@ -157,7 +168,7 @@ class Model48pxOCR(OfflineOCR):
                     txt = ''.join(seq)
                     self.logger.info(f'[FILTERED] prob: {prob:.4f} < threshold: {threshold} - Text: "{txt}"')
                     # Keep the textline with empty text for hybrid OCR to retry
-                    cur_region = quadrilaterals[indices[i]][0]
+                    cur_region = quadrilaterals[valid_indices[i]][0]
                     if isinstance(cur_region, Quadrilateral):
                         cur_region.text = ''  # Empty text for hybrid OCR
                         cur_region.prob = prob
@@ -210,7 +221,7 @@ class Model48pxOCR(OfflineOCR):
                 bg = min(max(int(bg()), 0), 255)
                 bb = min(max(int(bb()), 0), 255)
                 self.logger.info(f'prob: {prob} {txt} fg: ({fr}, {fg}, {fb}) bg: ({br}, {bg}, {bb})')
-                cur_region = quadrilaterals[indices[i]][0]
+                cur_region = quadrilaterals[valid_indices[i]][0]
                 if isinstance(cur_region, Quadrilateral):
                     cur_region.text = txt
                     cur_region.prob = prob

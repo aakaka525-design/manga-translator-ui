@@ -330,35 +330,46 @@ class ModelMangaOCR(OfflineOCR):
         ix = 0
         out_regions = {}
         for indices in chunks(perm, max_chunk_size):
-            N = len(indices)
-            widths = [region_imgs[i].shape[1] for i in indices]
-            max_width = 4 * (max(widths) + 7) // 4
-            region = np.zeros((N, text_height, max_width, 3), dtype = np.uint8)
-            idx_keys = []
-            for i, idx in enumerate(indices):
-                # Determine whether to skip the text block, and return True to skip.
+            # 先过滤掉非气泡区域
+            valid_indices = []
+            valid_region_imgs = []
+            valid_widths = []
+            
+            for idx in indices:
                 if ignore_bubble >=1 and ignore_bubble <=50 and is_ignore(region_imgs[idx], ignore_bubble):
                     self.logger.info(f'[FILTERED] Region {ix} ignored - Non-bubble area detected (ignore_bubble={ignore_bubble})')
                     ix+=1
                     continue
+                valid_indices.append(idx)
+                valid_region_imgs.append(region_imgs[idx])
+                valid_widths.append(region_imgs[idx].shape[1])
+                ix += 1
+            
+            # 如果所有区域都被过滤了，跳过这个 chunk
+            if len(valid_indices) == 0:
+                continue
+            
+            N = len(valid_indices)
+            max_width = 4 * (max(valid_widths) + 7) // 4
+            region = np.zeros((N, text_height, max_width, 3), dtype = np.uint8)
+            idx_keys = []
+            for i, idx in enumerate(valid_indices):
                 idx_keys.append(idx)
-                W = region_imgs[idx].shape[1]
-                tmp = region_imgs[idx]
-                region[i, :, : W, :]=tmp
+                W = valid_region_imgs[i].shape[1]
+                region[i, :, : W, :] = valid_region_imgs[i]
                 if verbose:
                     ocr_result_dir = os.environ.get('MANGA_OCR_RESULT_DIR', 'result/ocrs/')
                     os.makedirs(ocr_result_dir, exist_ok=True)
                     if quadrilaterals[idx][1] == 'v':
-                        imwrite_unicode(os.path.join(ocr_result_dir, f'{ix}.png'), cv2.rotate(cv2.cvtColor(region[i, :, :, :], cv2.COLOR_RGB2BGR), cv2.ROTATE_90_CLOCKWISE), self.logger)
+                        imwrite_unicode(os.path.join(ocr_result_dir, f'{ix-N+i}.png'), cv2.rotate(cv2.cvtColor(region[i, :, :, :], cv2.COLOR_RGB2BGR), cv2.ROTATE_90_CLOCKWISE), self.logger)
                     else:
-                        imwrite_unicode(os.path.join(ocr_result_dir, f'{ix}.png'), cv2.cvtColor(region[i, :, :, :], cv2.COLOR_RGB2BGR), self.logger)
-                ix += 1
+                        imwrite_unicode(os.path.join(ocr_result_dir, f'{ix-N+i}.png'), cv2.cvtColor(region[i, :, :, :], cv2.COLOR_RGB2BGR), self.logger)
             image_tensor = (torch.from_numpy(region).float() - 127.5) / 127.5
             image_tensor = einops.rearrange(image_tensor, 'N H W C -> N C H W')
             if self.use_gpu:
                 image_tensor = image_tensor.to(self.device)
             with torch.no_grad():
-                ret = self.model.infer_beam_batch(image_tensor, widths, beams_k = 5, max_seq_length = 255)
+                ret = self.model.infer_beam_batch(image_tensor, valid_widths, beams_k = 5, max_seq_length = 255)
             
             for i, (pred_chars_index, prob, fg_pred, bg_pred, fg_ind_pred, bg_ind_pred) in enumerate(ret):
                 if prob < 0.2:
@@ -376,7 +387,7 @@ class ModelMangaOCR(OfflineOCR):
                     txt = ''.join(seq)
                     self.logger.info(f'[FILTERED] prob: {prob:.4f} < threshold: 0.2 - Text: "{txt}"')
                     # Keep the textline with empty text for hybrid OCR to retry
-                    cur_region = quadrilaterals[indices[i]][0]
+                    cur_region = quadrilaterals[valid_indices[i]][0]
                     if isinstance(cur_region, Quadrilateral):
                         cur_region.text = ''  # Empty text for hybrid OCR
                         cur_region.prob = prob
