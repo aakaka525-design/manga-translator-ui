@@ -237,6 +237,9 @@ class Model48pxOCR(OfflineOCR):
 
                 out_regions.append(cur_region)
 
+        # 清理 GPU 显存
+        self._cleanup_ocr_memory(force_gpu_cleanup=False)
+
         if is_quadrilaterals:
             return out_regions
         return out_regions
@@ -745,10 +748,6 @@ class OCR(nn.Module):
         if 'hypos_per_sample' in locals():
             del hypos_per_sample
         
-        # ✅ 清理 GPU 显存
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        
         return result
 
     def infer_beam_batch_tensor(self, img: torch.FloatTensor, img_widths: List[int], beams_k: int = 5, start_tok = 1, end_tok = 2, pad_tok = 0, max_finished_hypos: int = 2, max_seq_length = 384):
@@ -889,10 +888,6 @@ class OCR(nn.Module):
         if 'remaining_tensor' in locals():
             del remaining_tensor
         
-        # ✅ 清理 GPU 显存
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
         return result
 
 import numpy as np

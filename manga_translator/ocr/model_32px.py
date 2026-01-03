@@ -54,9 +54,6 @@ class Model32pxOCR(OfflineOCR):
             self.use_gpu = False
         if self.use_gpu:
             self.model = self.model.to(device)
-        
-        # 将 use_gpu 标志传递给 OCR 模型对象
-        self.model.use_gpu = self.use_gpu
 
     async def _unload(self):
         del self.model
@@ -170,6 +167,9 @@ class Model32pxOCR(OfflineOCR):
                     cur_region.update_font_colors(np.array([fr, fg, fb]), np.array([br, bg, bb]))
 
                 out_regions.append(cur_region)
+
+        # 清理 GPU 显存
+        self._cleanup_ocr_memory(force_gpu_cleanup=False)
 
         if is_quadrilaterals:
             return out_regions
@@ -506,7 +506,6 @@ class OCR(nn.Module):
         self.max_len = max_len
         self.dictionary = dictionary
         self.dict_size = len(dictionary)
-        self.use_gpu = False  # 初始化 use_gpu 标志
         self.backbone = ResNet_FeatureExtractor(3, 320)
         encoder = nn.TransformerEncoderLayer(320, 4, dropout = 0.0)
         decoder = nn.TransformerDecoderLayer(320, 4, dropout = 0.0)
@@ -640,11 +639,6 @@ class OCR(nn.Module):
             del hypos_per_sample
         if 'feats' in locals():
             del feats
-        
-        # ✅ 清理 GPU 显存
-        if self.use_gpu:
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
         
         return result
 
