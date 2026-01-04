@@ -71,13 +71,8 @@ def get_text_to_img_solid_ink(mask_final, cn_text_img, origin_img, mengban=8, pa
         mask_gray = mask_final
     _, mask_binary = cv2.threshold(mask_gray, 127, 255, cv2.THRESH_BINARY)
     
-    # 擦除区 (涂白用)
-    kernel_erase = np.ones((mengban, mengban), np.uint8)
-    mask_erase = cv2.dilate(mask_binary, kernel_erase, iterations=3)
-    
-    # 安全区 (限制文字范围)
-    kernel_safe = np.ones((10, 10), np.uint8)
-    mask_safe_zone = cv2.dilate(mask_binary, kernel_safe, iterations=15)
+    # 安全区 (限制文字范围) - 直接使用原始蒙版，不额外膨胀
+    mask_safe_zone = mask_binary
 
     # --- 4. 文字图色阶增强 ---
     # 像 PS 的色阶工具：设定黑场和白场，中间线性拉伸
@@ -116,11 +111,8 @@ def get_text_to_img_solid_ink(mask_final, cn_text_img, origin_img, mengban=8, pa
     # --- 5. 执行合成 ---
     result_img = origin_img.copy()
     
-    # 5.1 涂白底图
-    result_img[mask_erase == 255] = [255, 255, 255]
-    
-    # 5.2 正片叠底 (Bitwise And)
-    # 只有在安全区内才进行融合
+    # 5.1 直接在安全区内进行正片叠底 (Bitwise And)
+    # 因为 origin_img (img_inpainted) 已经被 inpainting 擦除过了，不需要再涂白
     roi_bg = result_img[mask_safe_zone == 255]
     roi_text = text_enhanced_bgr[mask_safe_zone == 255]
     
@@ -363,16 +355,35 @@ async def translate_batch_replace_translation(translator, images_with_configs: L
             raw_ctx.img_inpainted = await translator._run_inpainting(config, raw_ctx)
             raw_ctx.text_regions = original_regions  # 恢复区域列表
             
+            # 保存修复后的调试图（如果启用verbose）
+            if translator.verbose:
+                try:
+                    inpainted_path = translator._result_path('inpainted.png')
+                    imwrite_unicode(inpainted_path, cv2.cvtColor(raw_ctx.img_inpainted, cv2.COLOR_RGB2BGR), logger)
+                    logger.info(f"    [DEBUG] Saved inpainted debug image to: {inpainted_path}")
+                except Exception as e:
+                    logger.warning(f"    [DEBUG] Failed to save inpainted debug image: {e}")
+            
             # === 步骤6: 渲染或粘贴 ===
             # 检查是否启用直接粘贴模式
             if config.render.enable_template_alignment:
                 logger.info("  [5/5] 直接粘贴模式 - 使用高级图像合成算法")
                 
+                # 检查翻译图是否有原始蒙版
+                if not hasattr(translated_ctx, 'mask_raw') or translated_ctx.mask_raw is None:
+                    logger.warning("  [警告] 翻译图没有原始蒙版，使用生肉图的蒙版")
+                    translated_mask = raw_ctx.mask
+                else:
+                    # 使用翻译图的原始蒙版并扩大20像素
+                    logger.info("    Using translated image's mask...")
+                    kernel = np.ones((5, 5), np.uint8)
+                    translated_mask = cv2.dilate(translated_ctx.mask_raw, kernel, iterations=4)  # 5x5核，4次迭代 ≈ 20像素
+                
                 # 使用高级图像合成算法
                 result_img = get_text_to_img_solid_ink(
-                    raw_ctx.mask,           # 蒙版
-                    translated_ctx.img_rgb, # 翻译图
-                    raw_ctx.img_inpainted   # 修复后的生肉图
+                    translated_mask,            # 使用翻译图的扩大蒙版（定义粘贴范围）
+                    translated_ctx.img_rgb,     # 翻译图
+                    raw_ctx.img_inpainted       # 修复后的生肉图
                 )
                 
                 # 使用 dump_image 将结果转换为 PIL Image
