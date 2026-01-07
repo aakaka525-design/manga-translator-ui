@@ -356,11 +356,13 @@ async def translate_batch_replace_translation(translator, images_with_configs: L
                 
                 # 检查是否有需要修复的区域
                 if not inpaint_regions:
-                    logger.warning("  [跳过] 没有需要修复的区域")
-                    raw_ctx.success = False
-                    results.append(raw_ctx)
-                    continue
-                
+                    logger.warning("  [跳过] 没有需要修复的区域，将保存原图")
+                    # 设置result为原图，而不是标记为失败
+                    raw_ctx.result = image
+                    raw_ctx.text_regions = []
+                    skip_to_save = True
+
+            if not skip_to_save:
                 # 临时替换 text_regions 为修复区域
                 original_regions = raw_ctx.text_regions
                 raw_ctx.text_regions = inpaint_regions
@@ -463,8 +465,8 @@ async def translate_batch_replace_translation(translator, images_with_configs: L
                         logger.warning(f"    [DEBUG] Failed to save inpainted debug image: {e}")
             
                 # === 步骤6: 渲染或粘贴 ===
-                # 检查是否启用直接粘贴模式（只在修复模型为 none 时使用）
-                if config.render.enable_template_alignment and is_none_inpainter:
+                # 检查是否启用直接粘贴模式
+                if config.render.enable_template_alignment:
                     logger.info("  [5/5] 直接粘贴模式 - 使用 darken_blend2 合成算法")
 
                     # 获取图像尺寸
