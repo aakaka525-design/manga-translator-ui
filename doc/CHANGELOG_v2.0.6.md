@@ -9,6 +9,7 @@
 - 修复 ctd_replace 模块导入错误：将 `det_rearrange_forward` 从正确的位置导入
 - 修复 OpenAI 翻译器使用新模型（如 o1、gpt-4.1）时闪退的问题：当 `max_tokens` 为空时不再传递该参数
 - 修复某些情况下 UI 调用翻译程序闪退的问题
+- 修复渲染时透视变换矩阵计算失败导致崩溃的问题：当 `findHomography` 返回无效矩阵时跳过该文本区域
 
 ## ✨ 新功能
 
