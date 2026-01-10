@@ -1282,9 +1282,9 @@ except:
     if not check_req_file(requirements_file) or need_reinstall:
         if need_reinstall:
             print(f'强制重新安装所有依赖...')
-            # 如果已经单独安装了 PyTorch，跳过 requirements 中的 PyTorch
-            if need_reinstall or use_amd_pytorch:
-                print('跳过 requirements 中的 PyTorch（已单独安装）')
+            # 只有 AMD 用户才会在前面单独安装 PyTorch，其他用户需要从 requirements 安装
+            if use_amd_pytorch:
+                print('跳过 requirements 中的 PyTorch（AMD ROCm 已单独安装）')
                 # 创建临时 requirements 文件，排除 torch/torchvision/torchaudio
                 import tempfile
                 with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as tmp_req:
