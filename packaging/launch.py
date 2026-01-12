@@ -936,7 +936,6 @@ except:
                                     print(f'⚠️  警告: {detected_gfx} 不支持 AMD ROCm PyTorch')
                                     print('建议使用 CPU 版本')
                                     use_amd_pytorch = False
-                                    continue
                                 
                                 use_detected = input(f'使用检测到的 {detected_gfx}? (y/n, 默认y): ').strip().lower()
                                 if use_detected in ['', 'y', 'yes']:
