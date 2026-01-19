@@ -2215,24 +2215,8 @@ class EditorController(QObject):
     @pyqtSlot(list)
     def on_regions_update_finished(self, updated_regions: list):
         """Slot to safely update regions from the main thread."""
-        # 统一更新到 ResourceManager（唯一数据源）
-        if hasattr(self, 'resource_manager') and self.resource_manager:
-            # 获取所有现有的 region resources（按 region_id 排序）
-            existing_resources = self.resource_manager.get_all_regions()
-            
-            # 更新每个区域的数据
-            for i, region_data in enumerate(updated_regions):
-                if i < len(existing_resources):
-                    # 使用正确的 region_id 来更新
-                    region_id = existing_resources[i].region_id
-                    self.resource_manager.update_region(region_id, region_data)
-            
-            # 从 ResourceManager 获取最新数据，同步到 model（保持兼容性）
-            synced_regions = [r.data for r in self.resource_manager.get_all_regions()]
-            self.model.set_regions(synced_regions)
-        else:
-            # 如果没有 ResourceManager，直接更新 model（向后兼容）
-            self.model.set_regions(updated_regions)
+        # 直接使用 set_regions，它会自动同步到 resource_manager
+        self.model.set_regions(updated_regions)
         
         # 强制刷新属性栏（忽略焦点状态）
         if hasattr(self, 'view') and self.view and hasattr(self.view, 'property_panel'):

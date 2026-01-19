@@ -31,21 +31,8 @@ class UpdateRegionCommand(QUndoCommand):
 
         # 更新区域数据
         regions[self._index] = data_to_apply
+        # set_regions 会自动同步到 resource_manager
         self._model.set_regions(regions)
-        
-        # 【修复】同时更新resource_manager中的regions
-        # ResourceManager使用region_id，需要通过索引获取对应的region_id
-        try:
-            from services import get_resource_manager
-            resource_manager = get_resource_manager()
-            all_regions = resource_manager.get_all_regions()
-            if self._index < len(all_regions):
-                # 获取对应索引的region_id
-                region_resource = all_regions[self._index]
-                resource_manager.update_region(region_resource.region_id, data_to_apply)
-        except Exception:
-            # 静默失败，不影响主流程
-            pass
 
         # 如果 center 改变了,需要触发完全更新,重新创建 item
         # 否则只触发单个 item 更新
@@ -89,39 +76,16 @@ class AddRegionCommand(QUndoCommand):
         regions = self._model.get_regions()
         regions.append(copy.deepcopy(self._region_data))
         self._index = len(regions) - 1
+        # set_regions 会自动同步到 resource_manager，不需要手动调用
         self._model.set_regions(regions)
-        
-        # 【修复】同时更新resource_manager中的regions
-        try:
-            from services import get_resource_manager
-            resource_manager = get_resource_manager()
-            resource_manager.add_region(self._region_data)
-        except Exception:
-            pass  # 静默失败
-        
-        # 添加操作触发完全更新
-        self._model.regions_changed.emit(self._model.get_regions())
 
     def undo(self):
         """撤销添加操作:删除最后添加的区域"""
         regions = self._model.get_regions()
         if self._index is not None and 0 <= self._index < len(regions):
             regions.pop(self._index)
+            # set_regions 会自动同步到 resource_manager
             self._model.set_regions(regions)
-            
-            # 【修复】同时更新resource_manager中的regions
-            # 由于ResourceManager使用字典存储，需要重新同步整个列表
-            try:
-                from services import get_resource_manager
-                resource_manager = get_resource_manager()
-                resource_manager.clear_regions()
-                for region_data in regions:
-                    resource_manager.add_region(region_data)
-            except Exception:
-                pass  # 静默失败
-            
-            # 删除操作会改变后续区域的索引,必须触发完全更新
-            self._model.regions_changed.emit(self._model.get_regions())
             # 清除选择
             self._model.set_selection([])
 
@@ -139,22 +103,8 @@ class DeleteRegionCommand(QUndoCommand):
         regions = self._model.get_regions()
         if 0 <= self._index < len(regions):
             regions.pop(self._index)
+            # set_regions 会自动同步到 resource_manager
             self._model.set_regions(regions)
-            
-            # 【修复】同时更新resource_manager中的regions
-            # 由于ResourceManager使用字典存储，需要重新同步整个列表
-            try:
-                from services import get_resource_manager
-                resource_manager = get_resource_manager()
-                resource_manager.clear_regions()
-                for region_data in regions:
-                    resource_manager.add_region(region_data)
-            except Exception:
-                pass  # 静默失败
-            
-            # 删除操作会改变后续区域的索引,必须触发完全更新
-            # 通过直接调用 regions_changed 信号(而不是 region_style_updated)来确保完全更新
-            self._model.regions_changed.emit(self._model.get_regions())
             # 清除选择,因为被删除的区域可能被选中
             self._model.set_selection([])
 
@@ -163,21 +113,8 @@ class DeleteRegionCommand(QUndoCommand):
         regions = self._model.get_regions()
         if 0 <= self._index <= len(regions):
             regions.insert(self._index, copy.deepcopy(self._deleted_data))
+            # set_regions 会自动同步到 resource_manager
             self._model.set_regions(regions)
-            
-            # 【修复】同时更新resource_manager中的regions
-            # 由于ResourceManager使用字典存储，需要重新同步整个列表
-            try:
-                from services import get_resource_manager
-                resource_manager = get_resource_manager()
-                resource_manager.clear_regions()
-                for region_data in regions:
-                    resource_manager.add_region(region_data)
-            except Exception:
-                pass  # 静默失败
-            
-            # 插入操作会改变后续区域的索引,必须触发完全更新
-            self._model.regions_changed.emit(self._model.get_regions())
             # 恢复选择到被恢复的区域
             self._model.set_selection([self._index])
 
