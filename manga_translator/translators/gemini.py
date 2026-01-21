@@ -353,13 +353,17 @@ class GeminiTranslator(CommonTranslator):
             current_temperature = self._get_retry_temperature(self.temperature, retry_attempt, retry_reason)
             
             # 构建生成配置
-            generation_config = types.GenerateContentConfig(
-                temperature=current_temperature,
-                top_p=0.95,
-                top_k=64,
-                max_output_tokens=self.max_tokens,
-                safety_settings=None if should_retry_without_safety else self.safety_settings,
-            )
+            config_params = {
+                "temperature": current_temperature,
+                "top_p": 0.95,
+                "top_k": 64,
+                "safety_settings": None if should_retry_without_safety else self.safety_settings,
+            }
+            # 只在 max_tokens 不为 None 时才设置（兼容新模型）
+            if self.max_tokens is not None:
+                config_params["max_output_tokens"] = self.max_tokens
+            
+            generation_config = types.GenerateContentConfig(**config_params)
             
             # 合并自定义API参数
             if self._custom_api_params:
@@ -367,6 +371,7 @@ class GeminiTranslator(CommonTranslator):
                     if hasattr(generation_config, key):
                         setattr(generation_config, key, value)
                 self.logger.debug(f"使用自定义API参数: {self._custom_api_params}")
+
 
             try:
                 # RPM限制

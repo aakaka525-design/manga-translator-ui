@@ -504,11 +504,10 @@ class MainAppLogic(QObject):
                     # 如果指定了模型，测试该模型是否可用
                     if model and model.strip():
                         try:
-                            # 尝试用该模型发送一个简单的测试请求
+                            # 尝试用该模型发送一个简单的测试请求（不传递 max_tokens 以兼容所有模型）
                             await client.chat.completions.create(
                                 model=model,
-                                messages=[{"role": "user", "content": "test"}],
-                                max_tokens=5
+                                messages=[{"role": "user", "content": "test"}]
                             )
                             return True, f"连接成功，模型 {model} 可用"
                         except Exception as e:
@@ -600,10 +599,10 @@ class MainAppLogic(QObject):
                     # 如果指定了模型，测试该模型
                     if model and model.strip():
                         try:
+                            # 不传递 max_tokens 以兼容所有模型
                             await client.chat.completions.create(
                                 model=model,
-                                messages=[{"role": "user", "content": "test"}],
-                                max_tokens=5
+                                messages=[{"role": "user", "content": "test"}]
                             )
                             return True, f"连接成功，模型 {model} 可用"
                         except Exception as e:

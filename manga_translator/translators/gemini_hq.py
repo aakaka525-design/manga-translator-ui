@@ -448,13 +448,17 @@ class GeminiHighQualityTranslator(CommonTranslator):
             current_temperature = self._get_retry_temperature(self.temperature, retry_attempt, retry_reason)
             
             # 构建生成配置
-            generation_config = types.GenerateContentConfig(
-                temperature=current_temperature,
-                top_p=0.95,
-                top_k=64,
-                max_output_tokens=self.max_tokens,
-                safety_settings=None if should_retry_without_safety else self.safety_settings,
-            )
+            config_params = {
+                "temperature": current_temperature,
+                "top_p": 0.95,
+                "top_k": 64,
+                "safety_settings": None if should_retry_without_safety else self.safety_settings,
+            }
+            # 只在 max_tokens 不为 None 时才设置（兼容新模型）
+            if self.max_tokens is not None:
+                config_params["max_output_tokens"] = self.max_tokens
+            
+            generation_config = types.GenerateContentConfig(**config_params)
             
             # 合并自定义API参数
             if self._custom_api_params:
@@ -728,13 +732,17 @@ class GeminiHighQualityTranslator(CommonTranslator):
             simple_prompt = f"Translate the following {from_lang} text to {to_lang}. Provide only the translation:\n\n" + "\n".join(queries)
             
             # 构建生成配置
-            generation_config = types.GenerateContentConfig(
-                temperature=self.temperature,
-                top_p=0.95,
-                top_k=64,
-                max_output_tokens=self.max_tokens,
-                safety_settings=self.safety_settings,
-            )
+            config_params = {
+                "temperature": self.temperature,
+                "top_p": 0.95,
+                "top_k": 64,
+                "safety_settings": self.safety_settings,
+            }
+            # 只在 max_tokens 不为 None 时才设置（兼容新模型）
+            if self.max_tokens is not None:
+                config_params["max_output_tokens"] = self.max_tokens
+            
+            generation_config = types.GenerateContentConfig(**config_params)
             
             # 合并自定义API参数
             if self._custom_api_params:
@@ -789,13 +797,17 @@ class GeminiHighQualityTranslator(CommonTranslator):
                             safety_settings=None
                         )
                     else:
-                        generation_config_no_safety = types.GenerateContentConfig(
-                            temperature=self.temperature,
-                            top_p=0.95,
-                            top_k=64,
-                            max_output_tokens=self.max_tokens,
-                            safety_settings=None,
-                        )
+                        config_params_no_safety = {
+                            "temperature": self.temperature,
+                            "top_p": 0.95,
+                            "top_k": 64,
+                            "safety_settings": None,
+                        }
+                        # 只在 max_tokens 不为 None 时才设置（兼容新模型）
+                        if self.max_tokens is not None:
+                            config_params_no_safety["max_output_tokens"] = self.max_tokens
+                        
+                        generation_config_no_safety = types.GenerateContentConfig(**config_params_no_safety)
                         response = await asyncio.to_thread(
                             self.client.models.generate_content,
                             model=self.model_name,

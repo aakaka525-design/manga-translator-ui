@@ -649,47 +649,11 @@ class ConcurrentPipeline:
                 # 添加到结果列表
                 with self._results_lock:
                     self._results.append(ctx)
-                
-                # 清理内存
+
+                # 清理内存 - 调用统一清理函数
                 logger.debug(f"[渲染] 清理内存: {ctx.image_name}")
-                if hasattr(ctx, 'input') and ctx.input is not None:
-                    if hasattr(ctx.input, 'close'):
-                        try:
-                            ctx.input.close()
-                        except:
-                            pass
-                    ctx.input = None
-                if hasattr(ctx, 'img_rgb') and ctx.img_rgb is not None:
-                    del ctx.img_rgb
-                    ctx.img_rgb = None
-                if hasattr(ctx, 'img_colorized') and ctx.img_colorized is not None:
-                    if hasattr(ctx.img_colorized, 'close'):
-                        try:
-                            ctx.img_colorized.close()
-                        except:
-                            pass
-                    ctx.img_colorized = None
-                if hasattr(ctx, 'upscaled') and ctx.upscaled is not None:
-                    if hasattr(ctx.upscaled, 'close'):
-                        try:
-                            ctx.upscaled.close()
-                        except:
-                            pass
-                    ctx.upscaled = None
-                if hasattr(ctx, 'mask') and ctx.mask is not None:
-                    del ctx.mask
-                    ctx.mask = None
-                if hasattr(ctx, 'img_inpainted') and ctx.img_inpainted is not None:
-                    del ctx.img_inpainted
-                    ctx.img_inpainted = None
-                if hasattr(ctx, 'img_rendered') and ctx.img_rendered is not None:
-                    del ctx.img_rendered
-                    ctx.img_rendered = None
-                
-                # 垃圾回收
-                import gc
-                gc.collect()
-                
+                self.translator._cleanup_context_memory(ctx, keep_result=True)
+
                 # 清理base_contexts
                 with self._lock:
                     if ctx.image_name in self.base_contexts:

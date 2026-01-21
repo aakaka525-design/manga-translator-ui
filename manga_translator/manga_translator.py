@@ -1492,7 +1492,10 @@ class MangaTranslator:
         if hasattr(ctx, 'mask_raw') and ctx.mask_raw is not None:
             del ctx.mask_raw
             ctx.mask_raw = None
-        
+
+        if hasattr(ctx, 'textlines') and ctx.textlines is not None:
+            ctx.textlines = None
+
         # 如果不保留结果，也清理 result
         if not keep_result and hasattr(ctx, 'result') and ctx.result is not None:
             del ctx.result
@@ -1568,7 +1571,9 @@ class MangaTranslator:
                 if hasattr(ctx, 'mask_raw') and ctx.mask_raw is not None:
                     del ctx.mask_raw
                     ctx.mask_raw = None
-                
+                if hasattr(ctx, 'textlines') and ctx.textlines is not None:
+                    ctx.textlines = None
+
                 # 如果不保留结果，也清理 result
                 if not keep_results and hasattr(ctx, 'result') and ctx.result is not None:
                     del ctx.result
@@ -2855,7 +2860,10 @@ class MangaTranslator:
             
             # 使用并发流水线处理（分批加载图片）
             contexts = await pipeline.process_batch(file_paths, configs)
-            
+
+            # 清理翻译历史，防止内存泄漏
+            self._prune_context_history()
+
             return contexts
         
         # === 步骤4: 批量处理模式（顺序处理） ===
@@ -3247,28 +3255,13 @@ class MangaTranslator:
                         results.append(ctx)
 
                         # ✅ 渲染完一张立即清理这张图片的中间数据（不等整个批次完成）
-                        if hasattr(ctx, 'input') and ctx.input is not None:
-                            if hasattr(ctx.input, 'close'):
-                                try:
-                                    ctx.input.close()
-                                except:
-                                    pass
-                            ctx.input = None
-                        if hasattr(ctx, 'img_rgb') and ctx.img_rgb is not None:
-                            del ctx.img_rgb
-                            ctx.img_rgb = None
-                        if hasattr(ctx, 'img_inpainted') and ctx.img_inpainted is not None:
-                            del ctx.img_inpainted
-                            ctx.img_inpainted = None
-                        if hasattr(ctx, 'img_colorized') and ctx.img_colorized is not None:
-                            del ctx.img_colorized
-                            ctx.img_colorized = None
-                        
+                        self._cleanup_context_memory(ctx, keep_result=True)
+
                         # 每渲染3张图片就强制垃圾回收一次
                         if (idx + 1) % 3 == 0:
                             import gc
                             gc.collect()
-                            
+
                     except Exception as e:
                         logger.error(f"Error rendering image in batch: {e}")
                         results.append(ctx)
@@ -5069,31 +5062,10 @@ class MangaTranslator:
 
                     # ✅ 标记成功
                     ctx.success = True
-                    
+
                     # ✅ 清理中间处理图像（保留text_regions等元数据）
-                    if hasattr(ctx, 'input') and ctx.input is not None:
-                        if hasattr(ctx.input, 'close'):
-                            try:
-                                ctx.input.close()
-                            except:
-                                pass
-                        ctx.input = None
-                    if hasattr(ctx, 'img_rgb'):
-                        ctx.img_rgb = None
-                    if hasattr(ctx, 'img_inpainted'):
-                        ctx.img_inpainted = None
-                    if hasattr(ctx, 'img_rendered'):
-                        ctx.img_rendered = None
-                    if hasattr(ctx, 'img_colorized'):
-                        ctx.img_colorized = None
-                    if hasattr(ctx, 'img_alpha'):
-                        ctx.img_alpha = None
-                    if hasattr(ctx, 'mask'):
-                        ctx.mask = None
-                    if hasattr(ctx, 'mask_raw'):
-                        ctx.mask_raw = None
-                    # 注意：high_quality_batch_data 由翻译器的统一清理方法处理
-                    
+                    self._cleanup_context_memory(ctx, keep_result=True)
+
                     results.append(ctx)
                 except Exception as e:
                     logger.error(f"Error rendering image: {e}")

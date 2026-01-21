@@ -26,6 +26,8 @@
 - 修复 Gemini API 安全设置格式错误（去掉枚举类名前缀）
 - 修复 Gemini API 请求缺少 `role` 字段导致 400 错误
 - 修复多模态不支持错误检测（新增 `image_url`、`expected \`text\``、`unknown variant` 关键词）
+- 修复 API 连接测试使用 GPT-5.2 等新模型时 `max_tokens` 参数不支持的问题（移除该参数以兼容所有模型）
+- 修复 Gemini 翻译器在 `max_tokens` 为 None 时仍传递 `max_output_tokens` 参数的问题（现在只在非 None 时传递）
 
 ## 🔧 优化
 
