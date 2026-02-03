@@ -861,337 +861,6 @@ class MangaTranslator:
         logger.warning("TXT format is deprecated and no longer supported. Please use JSON format instead.")
         return None
 
-    async def _translate(self, config: Config, ctx: Context) -> Context:
-        # Start the background cleanup job once if not already started.
-        if self._detector_cleanup_task is None:
-            self._detector_cleanup_task = asyncio.create_task(self._detector_cleanup_job())
-        # -- Colorization
-        if config.colorizer.colorizer != Colorizer.none:
-            await self._report_progress('colorizing')
-            try:
-                ctx.img_colorized = await self._run_colorizer(config, ctx)
-            except Exception as _e:  
-                logger.error(f"Error during colorizing:\n{traceback.format_exc()}")  
-                if not self.ignore_errors:  
-                    raise  
-                ctx.img_colorized = ctx.input  # Fallback to input image if colorization fails
-
-        else:
-            ctx.img_colorized = ctx.input
-
-        # -- Upscaling
-        # The default text detector doesn't work very well on smaller images, might want to
-        # consider adding automatic upscaling on certain kinds of small images.
-        if config.upscale.upscale_ratio:
-            await self._report_progress('upscaling')
-            try:
-                ctx.upscaled = await self._run_upscaling(config, ctx)
-            except Exception as _e:  
-                logger.error(f"Error during upscaling:\n{traceback.format_exc()}")  
-                if not self.ignore_errors:  
-                    raise  
-                ctx.upscaled = ctx.img_colorized # Fallback to colorized (or input) image if upscaling fails
-        else:
-            ctx.upscaled = ctx.img_colorized
-
-        ctx.img_rgb, ctx.img_alpha = load_image(ctx.upscaled)
-        
-        # 验证加载的图片
-        if ctx.img_rgb is None or ctx.img_rgb.size == 0:
-            logger.error("加载图片失败: img_rgb为空或无效")
-            if not self.ignore_errors:
-                raise Exception("加载图片失败: img_rgb为空或无效")
-            # 尝试从原始输入重新加载
-            ctx.img_rgb, ctx.img_alpha = load_image(ctx.input)
-        
-        if len(ctx.img_rgb.shape) < 2 or ctx.img_rgb.shape[0] == 0 or ctx.img_rgb.shape[1] == 0:
-            logger.error(f"加载的图片尺寸无效: {ctx.img_rgb.shape}")
-            if not self.ignore_errors:
-                raise Exception(f"加载的图片尺寸无效: {ctx.img_rgb.shape}")
-
-        # -- Detection
-        await self._report_progress('detection')
-        try:
-            ctx.textlines, ctx.mask_raw, ctx.mask = await self._run_detection(config, ctx)
-        except Exception as _e:  
-            logger.error(f"Error during detection:\n{traceback.format_exc()}")  
-            if not self.ignore_errors:  
-                raise 
-            ctx.textlines = [] 
-            ctx.mask_raw = None
-            ctx.mask = None
-
-        if self.verbose and ctx.mask_raw is not None:
-            # 生成带置信度颜色映射和颜色条的热力图
-            logger.info(f"Generating confidence heatmap for mask_raw (shape: {ctx.mask_raw.shape}, dtype: {ctx.mask_raw.dtype})")
-            heatmap = self._create_confidence_heatmap(ctx.mask_raw, equalize=False)
-            logger.info(f"Heatmap generated (shape: {heatmap.shape}), saving to mask_raw.png")
-            imwrite_unicode(self._result_path('mask_raw.png'), heatmap, logger)
-            
-            # 如果有raw_mask_mask，生成对比图
-            if hasattr(ctx, 'raw_mask_mask') and ctx.raw_mask_mask is not None:
-                try:
-                    logger.info("Generating mask vs db comparison heatmap...")
-                    logger.info(f"[DEBUG] raw_mask_mask shape: {ctx.raw_mask_mask.shape}, ctx.mask_raw shape: {ctx.mask_raw.shape}")
-                    
-                    # 确保两个mask尺寸一致
-                    if ctx.raw_mask_mask.shape != ctx.mask_raw.shape:
-                        logger.info(f"[DEBUG] Resizing raw_mask_mask from {ctx.raw_mask_mask.shape} to {ctx.mask_raw.shape}")
-                        raw_mask_mask_resized = cv2.resize(ctx.raw_mask_mask, 
-                                                          (ctx.mask_raw.shape[1], ctx.mask_raw.shape[0]), 
-                                                          interpolation=cv2.INTER_LINEAR)
-                    else:
-                        raw_mask_mask_resized = ctx.raw_mask_mask
-                    
-                    heatmap_mask = self._create_confidence_heatmap(raw_mask_mask_resized, equalize=False)
-                    heatmap_db = heatmap  # 复用刚生成的db热力图
-                    comparison = np.hstack([heatmap_mask, heatmap_db])
-                    comparison_path = self._result_path('mask_comparison.png')
-                    imwrite_unicode(comparison_path, comparison, logger)
-                    logger.info(f'Saved mask vs db comparison to {comparison_path}')
-                except Exception as e:
-                    logger.error(f'Failed to generate mask vs db comparison: {e}')
-
-        # --- BEGIN: Save raw detection boxes image in verbose mode ---
-        if self.verbose and ctx.textlines:
-            try:
-                logger.info("Verbose mode: Saving raw detection boxes image...")
-                raw_detection_image = np.copy(ctx.img_rgb)
-                for textline in ctx.textlines:
-                    # Draw each polygon with a unique color to distinguish them
-                    # Using a simple hash of the textline object to get a color
-                    color_val = hash(str(textline.pts)) % (256 * 256 * 256)
-                    color = (color_val & 0xFF, (color_val >> 8) & 0xFF, (color_val >> 16) & 0xFF)
-                    cv2.polylines(raw_detection_image, [textline.pts.astype(np.int32)], isClosed=True, color=color, thickness=2)
-                
-                # Convert to BGR for saving with OpenCV
-                raw_detection_image_bgr = cv2.cvtColor(raw_detection_image, cv2.COLOR_RGB2BGR)
-                imwrite_unicode(self._result_path('detection_raw_boxes.png'), raw_detection_image_bgr, logger)
-                logger.info("Saved raw detection boxes to detection_raw_boxes.png")
-            except Exception as e:
-                logger.error(f"Failed to save raw detection boxes image: {e}")
-        # --- END: Save raw detection boxes image ---
-
-        if not ctx.textlines:
-            await self._report_progress('skip-no-regions', True)
-            # If no text was found result is intermediate image product
-            ctx.result = ctx.upscaled
-            ctx.text_regions = []  # 设置为空列表，以便保存空的JSON
-            return await self._revert_upscale(config, ctx)
-
-        if self.verbose:
-            img_bbox_raw = np.copy(ctx.img_rgb)
-            for txtln in ctx.textlines:
-                cv2.polylines(img_bbox_raw, [txtln.pts], True, color=(255, 0, 0), thickness=2)
-            imwrite_unicode(self._result_path('bboxes_unfiltered.png'), cv2.cvtColor(img_bbox_raw, cv2.COLOR_RGB2BGR), logger)
-
-        # -- OCR
-        await self._report_progress('ocr')
-        try:
-            ctx.textlines = await self._run_ocr(config, ctx)
-        except Exception as _e:  
-            logger.error(f"Error during ocr:\n{traceback.format_exc()}")  
-            if not self.ignore_errors:  
-                raise 
-            ctx.textlines = [] # Fallback to empty textlines if OCR fails
-
-        if not ctx.textlines:
-            await self._report_progress('skip-no-text', True)
-            # If no text was found result is intermediate image product
-            ctx.result = ctx.upscaled
-            ctx.text_regions = []  # 设置为空列表，以便保存空的JSON
-            return await self._revert_upscale(config, ctx)
-
-        # -- Textline merge
-        await self._report_progress('textline_merge')
-        try:
-            ctx.text_regions = await self._run_textline_merge(config, ctx)
-        except Exception as _e:  
-            logger.error(f"Error during textline_merge:\n{traceback.format_exc()}")  
-            if not self.ignore_errors:  
-                raise 
-            ctx.text_regions = [] # Fallback to empty text_regions if textline merge fails
-
-        # -- 过滤列表：根据 OCR 识别的原文过滤
-        if ctx.text_regions and self.filter_text_enabled:
-            filtered_regions = []
-            for region in ctx.text_regions:
-                match_result = match_filter(region.text)
-                if match_result:
-                    matched_word, match_type = match_result
-                    logger.info(f'过滤文本区域 ({match_type}匹配): "{region.text}" -> 匹配: "{matched_word}"')
-                else:
-                    filtered_regions.append(region)
-            if len(filtered_regions) < len(ctx.text_regions):
-                logger.info(f'过滤列表: 过滤了 {len(ctx.text_regions) - len(filtered_regions)} 个文本区域')
-            ctx.text_regions = filtered_regions
-
-        if self.verbose and ctx.text_regions:
-            show_panels = not config.force_simple_sort  # 当不使用简单排序时显示panel
-            bboxes = visualize_textblocks(cv2.cvtColor(ctx.img_rgb, cv2.COLOR_BGR2RGB), ctx.text_regions, 
-                                        show_panels=show_panels, img_rgb=ctx.img_rgb, right_to_left=config.render.rtl)
-            imwrite_unicode(self._result_path('bboxes.png'), bboxes, logger)
-
-        # Apply pre-dictionary after textline merge
-        pre_dict = load_dictionary(self.pre_dict)
-        pre_replacements = []
-        for region in ctx.text_regions:
-            original = region.text  
-            region.text = apply_dictionary(region.text, pre_dict)
-            if original != region.text:
-                pre_replacements.append(f"{original} => {region.text}")
-
-        if pre_replacements:
-            logger.info("Pre-translation replacements:")
-            for replacement in pre_replacements:
-                logger.info(replacement)
-        else:
-            logger.info("No pre-translation replacements made.")
-            
-        # -- Translation
-        # 判断是否需要跳过翻译步骤
-        should_skip_translation = False
-        
-        # 1. 保存文本+模板配置：只执行检测器和OCR步骤，不进行翻译，然后为当前文件快速退出
-        if self.save_text and self.template:
-            logger.info("Save text + Template mode: Running up to OCR, then saving and stopping for this file.")
-            should_skip_translation = True
-            # 设置原文作为翻译结果, 并设置目标语言以防万一
-            for region in ctx.text_regions:
-                region.translation = region.text
-                # Set target_lang to avoid downstream errors if the pipeline were to continue (belt and braces)
-                if not hasattr(region, 'target_lang') or not region.target_lang:
-                    region.target_lang = config.translator.target_lang
-
-            # 保存JSON文件
-            if hasattr(ctx, 'image_name') and ctx.image_name:
-                self._save_text_to_file(ctx.image_name, ctx, config)
-                logger.info(f"JSON template saved for {os.path.basename(ctx.image_name)}.")
-                
-                # 直接导出TXT文件（原文）
-                try:
-                    json_path = find_json_path(ctx.image_name)
-                    if json_path and os.path.exists(json_path):
-                        from desktop_qt_ui.services.workflow_service import generate_original_text, get_template_path_from_config
-                        template_path = get_template_path_from_config()
-                        if template_path and os.path.exists(template_path):
-                            # 导出原文
-                            original_result = generate_original_text(json_path, template_path)
-                            logger.info(f"Original text export result: {original_result}")
-                        else:
-                            logger.warning(f"Template file not found: {template_path}")
-                    else:
-                        logger.warning(f"JSON file not found for TXT export: {ctx.image_name}")
-                except Exception as e:
-                    logger.error(f"Failed to export TXT: {e}")
-            else:
-                logger.warning("Could not save translation file, image_name not in context.")
-
-            # ✅ 标记成功（模板模式成功生成原文）
-            ctx.success = True
-            
-            # 设置占位符结果并为当前文件提前返回，以便主循环可以处理下一个文件
-            ctx.result = None
-            return ctx
-        # 2. 模板配置+加载文本：TXT文件内容就是翻译，不进行翻译处理
-        elif self.template and self.load_text:
-            logger.info("Template + Load text mode: TXT content is translation, skipping translation.")
-            should_skip_translation = True
-            # TXT文件的内容本身就是翻译结果，无需额外处理
-        # 3. 单独模板配置：没有任何作用，正常进行翻译
-        elif self.template and not self.save_text and not self.load_text:
-            logger.info("Template only mode: No effect, proceeding with normal translation.")
-            should_skip_translation = False
-        
-        if not should_skip_translation:
-            await self._report_progress('translating')
-            try:
-                ctx.text_regions = await self._run_text_translation(config, ctx)
-            except Exception as _e:  
-                logger.error(f"Error during translating:\n{traceback.format_exc()}")  
-                if not self.ignore_errors:  
-                    raise 
-                ctx.text_regions = [] # Fallback to empty text_regions if translation fails
-
-        if hasattr(ctx, 'pipeline_should_stop') and ctx.pipeline_should_stop:
-            ctx.result = ctx.input
-            return ctx
-
-        await self._report_progress('after-translating')
-
-        if not ctx.text_regions:
-            await self._report_progress('error-translating', True)
-            ctx.result = ctx.upscaled
-            return await self._revert_upscale(config, ctx)
-        elif ctx.text_regions == 'cancel':
-            await self._report_progress('cancelled', True)
-            ctx.result = ctx.upscaled
-            return await self._revert_upscale(config, ctx)
-
-        # -- Mask refinement
-        # (Delayed to take advantage of the region filtering done after ocr and translation)
-        if ctx.mask is None:
-            await self._report_progress('mask-generation')
-            try:
-                ctx.mask = await self._run_mask_refinement(config, ctx)
-            except Exception as _e:  
-                logger.error(f"Error during mask-generation:\n{traceback.format_exc()}")  
-                if not self.ignore_errors:  
-                    raise 
-                ctx.mask = ctx.mask_raw if ctx.mask_raw is not None else np.zeros_like(ctx.img_rgb, dtype=np.uint8)[:,:,0] # Fallback to raw mask or empty mask
-
-        if self.verbose and ctx.mask is not None:
-            inpaint_input_img = await dispatch_inpainting(Inpainter.none, ctx.img_rgb, ctx.mask, config.inpainter,config.inpainter.inpainting_size,
-                                                          self.device, self.verbose)
-            imwrite_unicode(self._result_path('inpaint_input.png'), cv2.cvtColor(inpaint_input_img, cv2.COLOR_RGB2BGR), logger)
-            imwrite_unicode(self._result_path('mask_final.png'), ctx.mask, logger)
-
-        # -- Inpainting
-        await self._report_progress('inpainting')
-        try:
-            ctx.img_inpainted = await self._run_inpainting(config, ctx)
-
-        except Exception as _e:
-            logger.error(f"Error during inpainting:\n{traceback.format_exc()}")
-            if not self.ignore_errors:
-                raise
-            else:
-                ctx.img_inpainted = ctx.img_rgb
-
-        if self.verbose:
-            try:
-                inpainted_path = self._result_path('inpainted.png')
-                imwrite_unicode(inpainted_path, cv2.cvtColor(ctx.img_inpainted, cv2.COLOR_RGB2BGR), logger)
-            except Exception as e:
-                logger.error(f"Error saving inpainted.png debug image: {e}")
-                logger.debug(f"Exception details: {traceback.format_exc()}")
-
-        # 保存inpainted图片到新目录结构（用于可编辑图片功能）
-        # 与JSON保存逻辑保持一致：save_text或text_output_file任一满足即保存
-        if (self.save_text or self.text_output_file) and hasattr(ctx, 'image_name') and ctx.image_name and ctx.img_inpainted is not None:
-            self._save_inpainted_image(ctx.image_name, ctx.img_inpainted)
-        # -- Rendering
-        await self._report_progress('rendering')
-
-        # 在rendering状态后立即发送文件夹信息，用于前端精确检查final.png
-        if hasattr(self, '_progress_hooks') and self._current_image_context:
-            folder_name = self._current_image_context['subfolder']
-            # 发送特殊格式的消息，前端可以解析
-            await self._report_progress(f'rendering_folder:{folder_name}')
-
-        try:
-            ctx.img_rendered = await self._run_text_rendering(config, ctx)
-        except Exception as _e:
-            logger.error(f"Error during rendering:\n{traceback.format_exc()}")
-            if not self.ignore_errors:
-                raise
-            ctx.img_rendered = ctx.img_inpainted # Fallback to inpainted (or original RGB) image if rendering fails
-
-        await self._report_progress('finished', True)
-        ctx.result = dump_image(ctx.input, ctx.img_rendered, ctx.img_alpha)
-
-        return await self._revert_upscale(config, ctx)
-    
     # If `revert_upscaling` is True, revert to input size
     # Else leave `ctx` as-is
     async def _revert_upscale(self, config: Config, ctx: Context):
@@ -2180,6 +1849,16 @@ class MangaTranslator:
         # --- NEW: Generate and Export Workflow ---
         if self.generate_and_export:
             logger.info("'Generate and Export' mode: Halting pipeline after translation and exporting clean text.")
+
+            # 导出翻译模式：强制执行蒙版优化（跳过修复）
+            if ctx.mask is None and ctx.mask_raw is not None:
+                await self._report_progress('mask-generation')
+                try:
+                    ctx.mask = await self._run_mask_refinement(config, ctx)
+                except Exception as _e:
+                    logger.error(f"Error during mask-generation in generate_and_export mode:\n{traceback.format_exc()}")
+                    ctx.mask = ctx.mask_raw  # 回退到原始蒙版
+
             # 即使没有文本也要导出（创建空文件）
             if hasattr(ctx, 'image_name') and ctx.image_name:
                 try:
@@ -3151,6 +2830,15 @@ class MangaTranslator:
                     logger.info("Template+SaveText mode: Skipping rendering, exporting original text only.")
                     for ctx, config in translated_contexts:
                         if hasattr(ctx, 'text_regions') and ctx.text_regions is not None and hasattr(ctx, 'image_name') and ctx.image_name:
+                            # 导出原文模式：强制执行蒙版优化（跳过修复）
+                            if ctx.mask is None and ctx.mask_raw is not None:
+                                await self._report_progress('mask-generation')
+                                try:
+                                    ctx.mask = await self._run_mask_refinement(config, ctx)
+                                except Exception as _e:
+                                    logger.error(f"Error during mask-generation in template mode:\n{traceback.format_exc()}")
+                                    ctx.mask = ctx.mask_raw  # 回退到原始蒙版
+
                             # 保存JSON文件
                             self._save_text_to_file(ctx.image_name, ctx, config)
                             try:
@@ -3191,6 +2879,15 @@ class MangaTranslator:
                     logger.info("'Generate and Export' mode enabled for standard batch. Skipping rendering.")
                     for ctx, config in translated_contexts:
                         if ctx.text_regions and hasattr(ctx, 'image_name') and ctx.image_name:
+                            # 导出翻译模式：强制执行蒙版优化（跳过修复）
+                            if ctx.mask is None and ctx.mask_raw is not None:
+                                await self._report_progress('mask-generation')
+                                try:
+                                    ctx.mask = await self._run_mask_refinement(config, ctx)
+                                except Exception as _e:
+                                    logger.error(f"Error during mask-generation in generate_and_export mode:\n{traceback.format_exc()}")
+                                    ctx.mask = ctx.mask_raw  # 回退到原始蒙版
+
                             self._save_text_to_file(ctx.image_name, ctx, config)
                             try:
                                 json_path = find_json_path(ctx.image_name)
