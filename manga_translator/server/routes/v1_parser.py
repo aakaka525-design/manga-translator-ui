@@ -57,7 +57,10 @@ def _fetch_html(url: str, mode: str = "http") -> str:
     try:
         from playwright.sync_api import sync_playwright
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "SCRAPER_BROWSER_UNAVAILABLE", "message": str(exc)},
+        ) from exc
 
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
@@ -87,7 +90,9 @@ def _recognize_site(url: str) -> tuple[str | None, str | None]:
     }
     site = mapping.get(host)
     if not site:
-        return None, None
+        scheme = parsed.scheme or "https"
+        base = f"{scheme}://{host}" if host else None
+        return "generic", base
 
     scheme = parsed.scheme or "https"
     return site, f"{scheme}://{host}"
@@ -98,7 +103,15 @@ def _extract_list_items(html: str, base_url: str) -> list[dict[str, object]]:
     items: list[dict[str, object]] = []
     seen: set[str] = set()
 
-    selectors = [".c-tabs-item__content", ".page-item-detail", "a[href*='/manga/']"]
+    selectors = [
+        ".c-tabs-item__content",
+        ".page-item-detail",
+        "a[href*='/manga/']",
+        "a[href*='/webtoon/']",
+        "a[href*='/comic/']",
+        "a[href*='/series/']",
+    ]
+    markers = ("/manga/", "/webtoon/", "/comic/", "/series/")
     for selector in selectors:
         for node in soup.select(selector):
             link = node.get("href")
@@ -115,7 +128,7 @@ def _extract_list_items(html: str, base_url: str) -> list[dict[str, object]]:
             else:
                 full_url = f"{base_url.rstrip('/')}/{link.lstrip('/')}"
 
-            if "/manga/" not in full_url:
+            if not any(marker in full_url for marker in markers):
                 continue
             parsed = urlparse(full_url)
             manga_id = [p for p in parsed.path.split("/") if p][-1]
@@ -213,14 +226,14 @@ async def parse(payload: ParseRequest, _session: Session = Depends(require_auth)
 @router.post("/list", response_model=ParserListResponse)
 async def list_parser(payload: ParseRequest, _session: Session = Depends(require_auth)):
     site, base_url = _recognize_site(payload.url)
-    recognized = site is not None and base_url is not None
+    recognized = site in {"mangaforfree", "toongod"} and base_url is not None
 
     html = _fetch_html(payload.url, payload.mode)
     items = _extract_list_items(html, base_url or f"{urlparse(payload.url).scheme}://{urlparse(payload.url).netloc}")
 
     warnings: list[str] = []
     if not recognized:
-        warnings.append("Unsupported site; using fallback parser")
+        warnings.append("Unsupported site; using generic parser")
     elif not items:
         warnings.append("Catalog fetch failed; using fallback parser")
 
@@ -228,7 +241,7 @@ async def list_parser(payload: ParseRequest, _session: Session = Depends(require
         page_type="list",
         recognized=recognized,
         site=site,
-        downloadable=recognized and len(items) > 0,
+        downloadable=len(items) > 0,
         items=items,
         warnings=warnings,
     )

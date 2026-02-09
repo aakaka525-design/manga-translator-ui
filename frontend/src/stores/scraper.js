@@ -15,6 +15,9 @@ function authFetch(url, options = {}) {
 const SCRAPER_ERROR_MESSAGE_MAP = {
     SCRAPER_AUTH_CHALLENGE: '站点触发验证，请先到认证页完成验证后重试',
     SCRAPER_CATALOG_UNSUPPORTED: '当前站点不支持目录浏览',
+    SCRAPER_PROVIDER_UNAVAILABLE: '当前站点不可用，请检查站点设置',
+    SCRAPER_BROWSER_UNAVAILABLE: '浏览器抓取环境不可用，请切换 HTTP 模式或安装 Playwright',
+    SCRAPER_TASK_STORE_ERROR: '任务存储异常，请稍后重试',
     SCRAPER_STATE_FILE_TYPE_INVALID: '仅支持上传 JSON 状态文件',
     SCRAPER_STATE_FILE_TOO_LARGE: '状态文件过大（最大 2MB）',
     SCRAPER_STATE_JSON_INVALID: '状态文件不是有效 JSON',
@@ -123,6 +126,20 @@ const api = {
         if (!res.ok) throw await _buildApiError(res, '认证地址获取失败')
         return res.json()
     },
+    async authUrlWithParams(payload) {
+        const params = new URLSearchParams()
+        if (payload?.base_url) params.set('base_url', payload.base_url)
+        if (payload?.site_hint) params.set('site_hint', payload.site_hint)
+        const suffix = params.toString() ? `?${params.toString()}` : ''
+        const res = await authFetch(`/api/v1/scraper/auth-url${suffix}`)
+        if (!res.ok) throw await _buildApiError(res, '认证地址获取失败')
+        return res.json()
+    },
+    async providers() {
+        const res = await authFetch('/api/v1/scraper/providers')
+        if (!res.ok) throw await _buildApiError(res, 'Provider 列表获取失败')
+        return res.json()
+    },
     async download(payload) {
         const res = await authFetch('/api/v1/scraper/download', {
             method: 'POST',
@@ -146,7 +163,25 @@ const parserApi = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ url, mode })
         })
-        if (!res.ok) throw new Error((await res.json()).detail || 'Parse failed')
+        if (!res.ok) {
+            let payload = {}
+            try {
+                payload = await res.json()
+            } catch (e) {
+                payload = {}
+            }
+            const detail = payload?.detail
+            const code = detail && typeof detail === 'object' ? detail.code : ''
+            const detailMessage = detail && typeof detail === 'object'
+                ? (detail.message || '')
+                : (typeof detail === 'string' ? detail : '')
+            throw new Error(_friendlyErrorMessage({
+                code,
+                detailMessage,
+                fallbackMessage: 'Parse failed',
+                requestId: payload?.error?.request_id || ''
+            }))
+        }
         return res.json()
     },
     async list(url, mode) {
@@ -155,7 +190,25 @@ const parserApi = {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ url, mode })
         })
-        if (!res.ok) throw new Error((await res.json()).detail || 'Parse list failed')
+        if (!res.ok) {
+            let payload = {}
+            try {
+                payload = await res.json()
+            } catch (e) {
+                payload = {}
+            }
+            const detail = payload?.detail
+            const code = detail && typeof detail === 'object' ? detail.code : ''
+            const detailMessage = detail && typeof detail === 'object'
+                ? (detail.message || '')
+                : (typeof detail === 'string' ? detail : '')
+            throw new Error(_friendlyErrorMessage({
+                code,
+                detailMessage,
+                fallbackMessage: 'Parse list failed',
+                requestId: payload?.error?.request_id || ''
+            }))
+        }
         return res.json()
     }
 }
@@ -335,6 +388,11 @@ export const useScraperStore = defineStore('scraper', () => {
         status: 'idle',
         message: ''
     })
+    const providerMeta = reactive({
+        items: [],
+        loading: false,
+        error: ''
+    })
     const uploadInfo = reactive({
         status: 'idle',
         message: ''
@@ -407,6 +465,8 @@ export const useScraperStore = defineStore('scraper', () => {
         applyCatalogMode()
         checkStateInfo()
         ensureUserAgent()
+        loadProviders()
+        resolveAuthUrl()
         loadCatalog(true)
     }
 
@@ -489,7 +549,20 @@ export const useScraperStore = defineStore('scraper', () => {
         loadCatalog(true)
     }
 
+    function resolveSiteHint() {
+        if (state.site === 'mangaforfree') return 'mangaforfree'
+        if (state.site === 'toongod') return 'toongod'
+        return 'generic'
+    }
+
+    function resolveForceEngine(siteHint) {
+        if (siteHint !== 'generic') return null
+        return state.httpMode ? 'http' : 'playwright'
+    }
+
     function getPayload() {
+        const siteHint = resolveSiteHint()
+        const forceEngine = resolveForceEngine(siteHint)
         const rateLimitRps = normalizeRateLimitRps(state.rateLimitRps)
         return {
             base_url: state.baseUrl,
@@ -501,11 +574,15 @@ export const useScraperStore = defineStore('scraper', () => {
             user_agent: state.lockUserAgent ? (state.userAgent || null) : null,
             browser_channel: (!state.httpMode && state.useChromeChannel) ? 'chrome' : null,
             concurrency: state.concurrency,
-            rate_limit_rps: rateLimitRps
+            rate_limit_rps: rateLimitRps,
+            site_hint: siteHint,
+            force_engine: forceEngine
         }
     }
 
     function getParserPayload(context = parser.context) {
+        const siteHint = (context?.site || '').trim() || 'generic'
+        const forceEngine = parser.mode === 'http' ? 'http' : 'playwright'
         const httpMode = parser.mode === 'http'
         const rateLimitRps = normalizeRateLimitRps(state.rateLimitRps)
         return {
@@ -518,7 +595,9 @@ export const useScraperStore = defineStore('scraper', () => {
             user_agent: null,
             browser_channel: null,
             concurrency: state.concurrency,
-            rate_limit_rps: rateLimitRps
+            rate_limit_rps: rateLimitRps,
+            site_hint: siteHint,
+            force_engine: forceEngine
         }
     }
 
@@ -909,12 +988,29 @@ export const useScraperStore = defineStore('scraper', () => {
         return new URL('/auth', window.location.origin).toString()
     }
 
+    async function loadProviders() {
+        if (providerMeta.loading) return
+        providerMeta.loading = true
+        providerMeta.error = ''
+        try {
+            const data = await api.providers()
+            providerMeta.items = Array.isArray(data?.items) ? data.items : []
+        } catch (e) {
+            providerMeta.error = e.message || 'Provider 列表获取失败'
+        } finally {
+            providerMeta.loading = false
+        }
+    }
+
     async function resolveAuthUrl() {
         if (authInfo.status === 'loading') return
         authInfo.status = 'loading'
         authInfo.message = ''
         try {
-            const data = await api.authUrl()
+            const data = await api.authUrlWithParams({
+                base_url: state.baseUrl,
+                site_hint: resolveSiteHint()
+            })
             authInfo.url = data.url || defaultAuthUrl()
             authInfo.status = 'ready'
         } catch (e) {
@@ -1178,6 +1274,7 @@ export const useScraperStore = defineStore('scraper', () => {
         accessInfo,
         uploadInfo,
         authInfo,
+        providerMeta,
         parser,
         downloadSummary,
         task,
@@ -1198,6 +1295,7 @@ export const useScraperStore = defineStore('scraper', () => {
         checkAccess,
         uploadStateFile,
         parseUrl,
+        loadProviders,
         resolveAuthUrl,
         stateInfoLabel,
         stateInfoClass,

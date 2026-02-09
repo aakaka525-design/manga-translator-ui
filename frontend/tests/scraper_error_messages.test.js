@@ -53,4 +53,25 @@ describe("scraper error messages", () => {
 
     expect(store.error).toContain("自定义错误提示");
   });
+
+  it("maps browser unavailable code to a friendly message", async () => {
+    fetch.mockResolvedValue({
+      ok: false,
+      status: 400,
+      json: async () => ({
+        detail: {
+          code: "SCRAPER_BROWSER_UNAVAILABLE",
+          message: "playwright missing"
+        }
+      })
+    });
+
+    const store = useScraperStore();
+    store.state.keyword = "abc";
+    store.state.site = "custom";
+    store.state.baseUrl = "https://example.org";
+    await store.search();
+
+    expect(store.error).toContain("浏览器抓取环境不可用");
+  });
 });

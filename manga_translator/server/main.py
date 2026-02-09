@@ -6,6 +6,7 @@ import signal
 import subprocess
 import sys
 from argparse import Namespace
+from pathlib import Path
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
@@ -129,6 +130,10 @@ async def startup_event():
     
     # Initialize auth services
     init_auth_services(_account_service, _session_service, _audit_service)
+
+    # Initialize scraper task sqlite store
+    import manga_translator.server.routes.v1_scraper as v1_scraper_routes
+    v1_scraper_routes.init_task_store(Path(DATA_DIR) / "scraper_tasks.db")
     
     # Initialize translation authentication
     init_translation_auth(_audit_service)

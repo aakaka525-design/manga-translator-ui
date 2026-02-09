@@ -66,6 +66,8 @@ def patch_services(monkeypatch: pytest.MonkeyPatch, sample_data):
     v1_scraper.DATA_DIR = sample_data["data_root"]
     v1_scraper.RAW_DIR = raw_dir
     v1_scraper.STATE_DIR = sample_data["data_root"] / "state"
+    v1_scraper.TASK_DB_PATH = sample_data["data_root"] / "scraper_tasks.db"
+    v1_scraper.init_task_store(v1_scraper.TASK_DB_PATH)
     v1_scraper._scraper_tasks.clear()
 
     # Patch SPA dist path.
@@ -115,6 +117,7 @@ def real_auth_app(patch_services, tmp_path: Path):
 
     app = FastAPI()
     app.include_router(v1_manga.router)
+    app.include_router(v1_scraper.router)
 
     return {
         "app": app,
@@ -218,19 +221,45 @@ def test_translate_routes_with_auth_override(monkeypatch: pytest.MonkeyPatch, au
 
 
 def test_scraper_routes(monkeypatch: pytest.MonkeyPatch, authed_app):
-    async def _fake_search(base_url, keyword, *, cookies, user_agent):
-        _ = (base_url, keyword, cookies, user_agent)
-        return [v1_scraper.MangaPayload(id="demo", title="Demo", url="https://mangaforfree.com/manga/demo/")]
+    async def _fake_search(base_url, keyword, cookies, user_agent, http_mode, force_engine):
+        _ = (base_url, keyword, cookies, user_agent, http_mode, force_engine)
+        return [v1_scraper.MangaPayload(id="demo", title="Demo", url="https://example.com/manga/demo/")]
 
-    async def _fake_catalog(base_url, *, page, orderby, path, cookies, user_agent):
-        _ = (base_url, page, orderby, path, cookies, user_agent)
-        return ([v1_scraper.MangaPayload(id="demo", title="Demo", url="https://mangaforfree.com/manga/demo/")], False)
+    async def _fake_catalog(base_url, page, orderby, path, cookies, user_agent, http_mode, force_engine):
+        _ = (base_url, page, orderby, path, cookies, user_agent, http_mode, force_engine)
+        return ([v1_scraper.MangaPayload(id="demo", title="Demo", url="https://example.com/manga/demo/")], False)
 
-    async def _fake_chapters(base_url, manga_url, *, cookies, user_agent):
-        _ = (base_url, manga_url, cookies, user_agent)
+    async def _fake_chapters(base_url, manga_url, cookies, user_agent, http_mode, force_engine):
+        _ = (base_url, manga_url, cookies, user_agent, http_mode, force_engine)
         return [v1_scraper.ChapterPayload(id="chapter-1", title="Chapter 1", url=f"{manga_url}chapter-1", index=1)]
 
-    async def _fake_run_download(task_id, req):
+    async def _fake_reader_images(base_url, chapter_url, cookies, user_agent, http_mode, force_engine):
+        _ = (base_url, chapter_url, cookies, user_agent, http_mode, force_engine)
+        return ["https://example.com/img-1.jpg"]
+
+    provider = v1_scraper.ProviderAdapter(
+        key="generic",
+        label="Generic",
+        hosts=(),
+        supports_http=True,
+        supports_playwright=True,
+        supports_custom_host=True,
+        default_catalog_path="/manga/",
+        search=_fake_search,
+        catalog=_fake_catalog,
+        chapters=_fake_chapters,
+        reader_images=_fake_reader_images,
+        auth_url="https://example.com",
+    )
+
+    def _fake_resolve_provider(base_url, site_hint):
+        _ = site_hint
+        if not base_url:
+            raise v1_scraper.ProviderUnavailableError("invalid base_url")
+        return provider
+
+    async def _fake_run_download(task_id, req, provider_obj, base_url, cookies, user_agent, force_engine):
+        _ = (req, provider_obj, base_url, cookies, user_agent, force_engine)
         v1_scraper._scraper_tasks[task_id].update(
             {
                 "status": "success",
@@ -238,23 +267,28 @@ def test_scraper_routes(monkeypatch: pytest.MonkeyPatch, authed_app):
                 "report": {"success_count": 1, "failed_count": 0, "total_count": 1},
             }
         )
+        v1_scraper._get_task_store().update_task(
+            task_id,
+            status="success",
+            message="下载完成",
+            report={"success_count": 1, "failed_count": 0, "total_count": 1},
+            finished=True,
+        )
 
-    monkeypatch.setattr(v1_scraper, "search_manga", _fake_search)
-    monkeypatch.setattr(v1_scraper, "list_catalog", _fake_catalog)
-    monkeypatch.setattr(v1_scraper, "list_chapters", _fake_chapters)
+    monkeypatch.setattr(v1_scraper, "resolve_provider", _fake_resolve_provider)
     monkeypatch.setattr(v1_scraper, "_run_download_task", _fake_run_download)
 
     with TestClient(authed_app) as client:
         search_resp = client.post(
             "/api/v1/scraper/search",
-            json={"base_url": "https://mangaforfree.com", "keyword": "demo"},
+            json={"base_url": "https://example.com", "keyword": "demo"},
         )
         assert search_resp.status_code == 200
         assert search_resp.json()[0]["id"] == "demo"
 
         catalog_resp = client.post(
             "/api/v1/scraper/catalog",
-            json={"base_url": "https://mangaforfree.com", "page": 1},
+            json={"base_url": "https://example.com", "page": 1},
         )
         assert catalog_resp.status_code == 200
         assert catalog_resp.json()["items"][0]["id"] == "demo"
@@ -262,8 +296,8 @@ def test_scraper_routes(monkeypatch: pytest.MonkeyPatch, authed_app):
         chapters_resp = client.post(
             "/api/v1/scraper/chapters",
             json={
-                "base_url": "https://mangaforfree.com",
-                "manga": {"id": "demo", "title": "Demo", "url": "https://mangaforfree.com/manga/demo/"},
+                "base_url": "https://example.com",
+                "manga": {"id": "demo", "title": "Demo", "url": "https://example.com/manga/demo/"},
             },
         )
         assert chapters_resp.status_code == 200
@@ -272,9 +306,9 @@ def test_scraper_routes(monkeypatch: pytest.MonkeyPatch, authed_app):
         download_resp = client.post(
             "/api/v1/scraper/download",
             json={
-                "base_url": "https://mangaforfree.com",
-                "manga": {"id": "demo", "title": "Demo", "url": "https://mangaforfree.com/manga/demo/"},
-                "chapter": {"id": "chapter-1", "title": "Chapter 1", "url": "https://mangaforfree.com/manga/demo/chapter-1"},
+                "base_url": "https://example.com",
+                "manga": {"id": "demo", "title": "Demo", "url": "https://example.com/manga/demo/"},
+                "chapter": {"id": "chapter-1", "title": "Chapter 1", "url": "https://example.com/manga/demo/chapter-1"},
             },
         )
         assert download_resp.status_code == 200
@@ -283,13 +317,14 @@ def test_scraper_routes(monkeypatch: pytest.MonkeyPatch, authed_app):
         task_resp = client.get(f"/api/v1/scraper/task/{task_id}")
         assert task_resp.status_code == 200
         assert task_resp.json()["task_id"] == task_id
+        assert task_resp.json()["persisted"] is True
 
         unsupported_resp = client.post(
             "/api/v1/scraper/search",
-            json={"base_url": "https://example.com", "keyword": "demo"},
+            json={"base_url": "", "keyword": "demo"},
         )
         assert unsupported_resp.status_code == 400
-        assert unsupported_resp.json()["detail"]["code"] == "SCRAPER_SITE_UNSUPPORTED"
+        assert unsupported_resp.json()["detail"]["code"] == "SCRAPER_PROVIDER_UNAVAILABLE"
 
 
 def test_parser_routes(monkeypatch: pytest.MonkeyPatch, authed_app):
@@ -331,7 +366,11 @@ def test_auth_regression_protected_v1(real_auth_app):
     with TestClient(app) as client:
         unauth = client.get("/api/v1/manga")
         assert unauth.status_code == 401
+        unauth_scraper = client.get("/api/v1/scraper/providers")
+        assert unauth_scraper.status_code == 401
 
         session = sessions.create_session("admin", "admin", "127.0.0.1", "pytest")
         authed = client.get("/api/v1/manga", headers={"X-Session-Token": session.token})
         assert authed.status_code == 200
+        authed_scraper = client.get("/api/v1/scraper/providers", headers={"X-Session-Token": session.token})
+        assert authed_scraper.status_code == 200

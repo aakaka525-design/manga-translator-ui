@@ -133,7 +133,10 @@ const { list: virtualChapters, containerProps, wrapperProps } = useVirtualList(
   }
 )
 
-onMounted(() => scraper.ensureUserAgent())
+onMounted(() => {
+  scraper.ensureUserAgent()
+  scraper.loadProviders()
+})
 onUnmounted(() => {
     scraper.stopPolling()
     if (observer.value) observer.value.disconnect()

@@ -19,6 +19,16 @@ from .state import (
     normalize_base_url,
     save_state_payload,
 )
+from .providers import (
+    BrowserUnavailableError,
+    ProviderAdapter,
+    ProviderUnavailableError,
+    provider_allows_image_host,
+    provider_auth_url,
+    providers_payload,
+    resolve_provider,
+)
+from .task_store import ScraperTaskStore
 
 __all__ = [
     "CloudflareChallengeError",
@@ -36,4 +46,12 @@ __all__ = [
     "load_state_payload",
     "normalize_base_url",
     "save_state_payload",
+    "BrowserUnavailableError",
+    "ProviderAdapter",
+    "ProviderUnavailableError",
+    "provider_allows_image_host",
+    "provider_auth_url",
+    "providers_payload",
+    "resolve_provider",
+    "ScraperTaskStore",
 ]

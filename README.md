@@ -201,6 +201,12 @@ docker run -d --name manga-translator -p 8000:8000 hgmzhn/manga-translator:lates
    - 构建输出：`manga_translator/server/static/dist`
    - Git 策略：只提交前端源码，不提交 `manga_translator/server/static/dist` 产物
 
+6. **Scraper 二期能力（`/api/v1` 兼容）**：
+   - 站点 provider：`mangaforfree`、`toongod`、`generic`
+   - 可选请求字段：`site_hint`、`force_engine`
+   - provider 能力端点：`GET /api/v1/scraper/providers`
+   - 下载任务状态持久化：SQLite `manga_translator/server/data/scraper_tasks.db`
+
 > 📖 **详细安装教程**：[安装指南](doc/INSTALLATION.md)  
 > 📖 **使用教程**：[命令行使用指南](doc/CLI_USAGE.md)
 

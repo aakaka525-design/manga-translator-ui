@@ -1,10 +1,11 @@
-"""Compatibility v1 scraper routes (MangaForFree first)."""
+"""Compatibility v1 scraper routes with provider registry and persistent tasks."""
 
 from __future__ import annotations
 
 import asyncio
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse, urljoin
@@ -18,16 +19,20 @@ from pydantic import BaseModel
 from manga_translator.server.core.middleware import require_auth
 from manga_translator.server.core.models import Session
 from manga_translator.server.scraper_v1 import (
+    BrowserUnavailableError,
     CloudflareChallengeError,
+    ProviderAdapter,
+    ProviderUnavailableError,
+    ScraperTaskStore,
     collect_cookies,
-    fetch_reader_images,
     get_state_info,
-    list_catalog,
-    list_chapters,
     load_state_payload,
     normalize_base_url,
+    provider_allows_image_host,
+    provider_auth_url,
+    providers_payload,
+    resolve_provider,
     save_state_payload,
-    search_manga,
 )
 
 
@@ -37,10 +42,13 @@ SERVER_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = SERVER_DIR / "data"
 RAW_DIR = DATA_DIR / "raw"
 STATE_DIR = DATA_DIR / "state"
+TASK_DB_PATH = DATA_DIR / "scraper_tasks.db"
 TASKS_TTL_SEC = 3600
+TASK_RETENTION_DAYS = 7
 
 _scraper_tasks: dict[str, dict[str, object]] = {}
 _scraper_tasks_lock = asyncio.Lock()
+_task_store: ScraperTaskStore | None = None
 
 
 class MangaPayload(BaseModel):
@@ -72,6 +80,8 @@ class ScraperBaseRequest(BaseModel):
     concurrency: int = 6
     rate_limit_rps: float = 2.0
     user_agent: Optional[str] = None
+    site_hint: Optional[str] = None
+    force_engine: Optional[str] = None
 
 
 class ScraperSearchRequest(ScraperBaseRequest):
@@ -102,6 +112,7 @@ class ScraperAccessCheckRequest(BaseModel):
     base_url: str
     storage_state_path: Optional[str] = None
     path: Optional[str] = None
+    site_hint: Optional[str] = None
 
 
 class ScraperTaskStatus(BaseModel):
@@ -109,6 +120,9 @@ class ScraperTaskStatus(BaseModel):
     status: str
     message: Optional[str] = None
     report: Optional[dict[str, object]] = None
+    persisted: Optional[bool] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
 
 class ScraperCatalogResponse(BaseModel):
@@ -144,6 +158,22 @@ class ScraperAuthUrlResponse(BaseModel):
     url: str
 
 
+def init_task_store(db_path: Path | str | None = None) -> ScraperTaskStore:
+    global _task_store, TASK_DB_PATH
+    if db_path is not None:
+        TASK_DB_PATH = Path(db_path)
+    TASK_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _task_store = ScraperTaskStore(TASK_DB_PATH)
+    return _task_store
+
+
+def _get_task_store() -> ScraperTaskStore:
+    global _task_store
+    if _task_store is None:
+        return init_task_store()
+    return _task_store
+
+
 def _scraper_http_error(status_code: int, code: str, message: str) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"code": code, "message": message})
 
@@ -167,16 +197,17 @@ def _normalize_catalog_path(value: Optional[str]) -> Optional[str]:
     return trimmed
 
 
-def _supported_site(base_url: str) -> bool:
-    host = (urlparse(normalize_base_url(base_url)).hostname or "").lower()
-    return host == "mangaforfree.com" or host.endswith(".mangaforfree.com")
-
-
 def _default_user_agent() -> str:
     return os.environ.get(
         "SCRAPER_DEFAULT_USER_AGENT",
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     )
+
+
+def _request_payload(model: BaseModel) -> dict[str, object]:
+    if hasattr(model, "model_dump"):
+        return model.model_dump()  # type: ignore[attr-defined]
+    return model.dict()  # type: ignore[no-any-return]
 
 
 def _merge_cookies(base_url: str, storage_state_path: str | None, extra: dict[str, str] | None) -> dict[str, str]:
@@ -197,21 +228,94 @@ def _merge_cookies(base_url: str, storage_state_path: str | None, extra: dict[st
 
 
 def _task_payload(task_id: str) -> dict[str, object]:
-    return _scraper_tasks.get(task_id) or {"task_id": task_id, "status": "missing", "message": "任务不存在", "report": None}
+    return _scraper_tasks.get(task_id) or {
+        "task_id": task_id,
+        "status": "missing",
+        "message": "任务不存在",
+        "report": None,
+    }
+
+
+def _resolve_provider_or_error(base_url: str, site_hint: str | None) -> tuple[ProviderAdapter, str]:
+    normalized_base = normalize_base_url(base_url)
+    try:
+        provider = resolve_provider(normalized_base, site_hint)
+    except ProviderUnavailableError as exc:
+        raise _scraper_http_error(400, "SCRAPER_PROVIDER_UNAVAILABLE", str(exc)) from exc
+    return provider, normalized_base
+
+
+def _validate_engine(force_engine: str | None) -> str | None:
+    if not force_engine:
+        return None
+    value = force_engine.strip().lower()
+    if value in {"http", "playwright"}:
+        return value
+    raise _scraper_http_error(400, "SCRAPER_PROVIDER_UNAVAILABLE", f"未知引擎: {force_engine}")
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+async def _set_task_state(
+    task_id: str,
+    *,
+    status: str,
+    message: str,
+    report: dict[str, object] | None = None,
+    error_code: str | None = None,
+    finished: bool = False,
+) -> None:
+    now_iso = _now_iso()
+    async with _scraper_tasks_lock:
+        payload = _scraper_tasks.get(task_id) or {"task_id": task_id}
+        payload["status"] = status
+        payload["message"] = message
+        payload["updated_at"] = now_iso
+        if report is not None:
+            payload["report"] = report
+        if finished:
+            payload["finished_at"] = now_iso
+        _scraper_tasks[task_id] = payload
+
+    try:
+        store = _get_task_store()
+        store.update_task(
+            task_id,
+            status=status,
+            message=message,
+            report=report,
+            error_code=error_code,
+            finished=finished,
+        )
+    except Exception:
+        # Do not interrupt request/task flow for storage errors.
+        pass
 
 
 async def _prune_tasks() -> None:
-    if not _scraper_tasks:
-        return
-    now = asyncio.get_event_loop().time()
-    stale: list[str] = []
-    for task_id, payload in _scraper_tasks.items():
-        created = float(payload.get("created_at", 0) or 0)
-        status = str(payload.get("status", ""))
-        if status in {"success", "partial", "error"} and now - created > TASKS_TTL_SEC:
-            stale.append(task_id)
-    for task_id in stale:
-        _scraper_tasks.pop(task_id, None)
+    if _scraper_tasks:
+        now = asyncio.get_event_loop().time()
+        stale: list[str] = []
+        for task_id, payload in _scraper_tasks.items():
+            created = float(payload.get("created_tick", 0) or 0)
+            status = str(payload.get("status", ""))
+            if status in {"success", "partial", "error"} and now - created > TASKS_TTL_SEC:
+                stale.append(task_id)
+        for task_id in stale:
+            _scraper_tasks.pop(task_id, None)
+
+    try:
+        _get_task_store().prune_completed(days=TASK_RETENTION_DAYS)
+    except Exception:
+        pass
+
+
+def _default_chapter_url(provider: ProviderAdapter, base_url: str, manga_id: str, chapter_id: str) -> str:
+    if provider.key == "toongod":
+        return urljoin(base_url, f"/webtoon/{manga_id}/{chapter_id}/")
+    return urljoin(base_url, f"/manga/{manga_id}/{chapter_id}/")
 
 
 async def _download_image(
@@ -237,43 +341,73 @@ async def _download_image(
         return False
 
 
-async def _run_download_task(task_id: str, req: ScraperDownloadRequest) -> None:
-    payload = _task_payload(task_id)
-    payload.update({"status": "running", "message": "下载中..."})
+async def _run_download_task(
+    task_id: str,
+    req: ScraperDownloadRequest,
+    provider: ProviderAdapter,
+    base_url: str,
+    cookies: dict[str, str],
+    user_agent: str,
+    force_engine: str | None,
+) -> None:
+    await _set_task_state(task_id, status="running", message="下载中...")
 
-    base_url = normalize_base_url(req.base_url)
     manga_id = _safe_name(req.manga.id or req.manga.title or "manga")
     chapter_id = _safe_name(req.chapter.id or req.chapter.title or "chapter")
-    chapter_url = req.chapter.url or urljoin(base_url, f"/manga/{req.manga.id}/{req.chapter.id}/")
-
-    cookies = _merge_cookies(base_url, req.storage_state_path, req.cookies)
-    user_agent = req.user_agent or _default_user_agent()
+    chapter_url = req.chapter.url or _default_chapter_url(provider, base_url, req.manga.id, req.chapter.id)
 
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     output_dir = RAW_DIR / manga_id / chapter_id
     output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        image_urls = await fetch_reader_images(
+        image_urls = await provider.reader_images(
             base_url,
             chapter_url,
-            cookies=cookies,
-            user_agent=user_agent,
+            cookies,
+            user_agent,
+            bool(req.http_mode),
+            force_engine,
         )
+    except BrowserUnavailableError as exc:
+        await _set_task_state(
+            task_id,
+            status="error",
+            message=f"浏览器环境不可用: {exc}",
+            report={"success_count": 0, "failed_count": 0, "total_count": 0},
+            error_code="SCRAPER_BROWSER_UNAVAILABLE",
+            finished=True,
+        )
+        return
     except CloudflareChallengeError as exc:
-        payload.update({"status": "error", "message": str(exc), "report": {"success_count": 0, "failed_count": 0, "total_count": 0}})
+        await _set_task_state(
+            task_id,
+            status="error",
+            message=str(exc),
+            report={"success_count": 0, "failed_count": 0, "total_count": 0},
+            error_code="SCRAPER_AUTH_CHALLENGE",
+            finished=True,
+        )
         return
     except Exception as exc:  # noqa: BLE001
-        payload.update({"status": "error", "message": f"抓取失败: {exc}", "report": {"success_count": 0, "failed_count": 0, "total_count": 0}})
+        await _set_task_state(
+            task_id,
+            status="error",
+            message=f"抓取失败: {exc}",
+            report={"success_count": 0, "failed_count": 0, "total_count": 0},
+            error_code="SCRAPER_DOWNLOAD_FAILED",
+            finished=True,
+        )
         return
 
     if not image_urls:
-        payload.update(
-            {
-                "status": "error",
-                "message": "章节未返回可下载图片",
-                "report": {"success_count": 0, "failed_count": 0, "total_count": 0},
-            }
+        await _set_task_state(
+            task_id,
+            status="error",
+            message="章节未返回可下载图片",
+            report={"success_count": 0, "failed_count": 0, "total_count": 0},
+            error_code="SCRAPER_IMAGE_EMPTY",
+            finished=True,
         )
         return
 
@@ -312,33 +446,38 @@ async def _run_download_task(task_id: str, req: ScraperDownloadRequest) -> None:
     else:
         status = "success"
 
-    payload.update(
-        {
-            "status": status,
-            "message": "下载完成" if status == "success" else "下载部分完成" if status == "partial" else "下载失败",
-            "report": {
-                "success_count": success_count,
-                "failed_count": failed_count,
-                "total_count": len(image_urls),
-                "output_dir": str(output_dir),
-                "manga_id": manga_id,
-                "chapter_id": chapter_id,
-            },
-        }
-    )
+    report = {
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "total_count": len(image_urls),
+        "output_dir": str(output_dir),
+        "manga_id": manga_id,
+        "chapter_id": chapter_id,
+        "provider": provider.key,
+    }
+    message = "下载完成" if status == "success" else "下载部分完成" if status == "partial" else "下载失败"
+    await _set_task_state(task_id, status=status, message=message, report=report, finished=True)
+
+
+@router.get("/providers")
+async def providers(_session: Session = Depends(require_auth)):
+    return providers_payload()
 
 
 @router.post("/search")
 async def search(req: ScraperSearchRequest, _session: Session = Depends(require_auth)):
-    base_url = normalize_base_url(req.base_url)
-    if not _supported_site(base_url):
-        raise _scraper_http_error(400, "SCRAPER_SITE_UNSUPPORTED", "当前仅支持 MangaForFree")
+    provider, base_url = _resolve_provider_or_error(req.base_url, req.site_hint)
+    force_engine = _validate_engine(req.force_engine)
+    if force_engine == "playwright" and not provider.supports_playwright:
+        raise _scraper_http_error(400, "SCRAPER_BROWSER_UNAVAILABLE", "当前 provider 不支持 playwright")
 
     cookies = _merge_cookies(base_url, req.storage_state_path, req.cookies)
     user_agent = req.user_agent or _default_user_agent()
 
     try:
-        items = await search_manga(base_url, req.keyword, cookies=cookies, user_agent=user_agent)
+        items = await provider.search(base_url, req.keyword, cookies, user_agent, bool(req.http_mode), force_engine)
+    except BrowserUnavailableError as exc:
+        raise _scraper_http_error(400, "SCRAPER_BROWSER_UNAVAILABLE", str(exc)) from exc
     except CloudflareChallengeError as exc:
         raise _scraper_http_error(403, "SCRAPER_AUTH_CHALLENGE", str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
@@ -349,22 +488,27 @@ async def search(req: ScraperSearchRequest, _session: Session = Depends(require_
 
 @router.post("/catalog", response_model=ScraperCatalogResponse)
 async def catalog(req: ScraperCatalogRequest, _session: Session = Depends(require_auth)):
-    base_url = normalize_base_url(req.base_url)
-    if not _supported_site(base_url):
-        raise _scraper_http_error(400, "SCRAPER_SITE_UNSUPPORTED", "当前仅支持 MangaForFree")
+    provider, base_url = _resolve_provider_or_error(req.base_url, req.site_hint)
+    force_engine = _validate_engine(req.force_engine)
+    if force_engine == "playwright" and not provider.supports_playwright:
+        raise _scraper_http_error(400, "SCRAPER_BROWSER_UNAVAILABLE", "当前 provider 不支持 playwright")
 
     cookies = _merge_cookies(base_url, req.storage_state_path, req.cookies)
     user_agent = req.user_agent or _default_user_agent()
 
     try:
-        items, has_more = await list_catalog(
+        items, has_more = await provider.catalog(
             base_url,
-            page=req.page,
-            orderby=req.orderby,
-            path=_normalize_catalog_path(req.path),
-            cookies=cookies,
-            user_agent=user_agent,
+            max(1, req.page),
+            req.orderby,
+            _normalize_catalog_path(req.path) or provider.default_catalog_path,
+            cookies,
+            user_agent,
+            bool(req.http_mode),
+            force_engine,
         )
+    except BrowserUnavailableError as exc:
+        raise _scraper_http_error(400, "SCRAPER_BROWSER_UNAVAILABLE", str(exc)) from exc
     except CloudflareChallengeError as exc:
         raise _scraper_http_error(403, "SCRAPER_AUTH_CHALLENGE", str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
@@ -375,16 +519,28 @@ async def catalog(req: ScraperCatalogRequest, _session: Session = Depends(requir
 
 @router.post("/chapters")
 async def chapters(req: ScraperChaptersRequest, _session: Session = Depends(require_auth)):
-    base_url = normalize_base_url(req.base_url)
-    if not _supported_site(base_url):
-        raise _scraper_http_error(400, "SCRAPER_SITE_UNSUPPORTED", "当前仅支持 MangaForFree")
+    provider, base_url = _resolve_provider_or_error(req.base_url, req.site_hint)
+    force_engine = _validate_engine(req.force_engine)
+    if force_engine == "playwright" and not provider.supports_playwright:
+        raise _scraper_http_error(400, "SCRAPER_BROWSER_UNAVAILABLE", "当前 provider 不支持 playwright")
 
     cookies = _merge_cookies(base_url, req.storage_state_path, req.cookies)
     user_agent = req.user_agent or _default_user_agent()
 
-    manga_url = req.manga.url or urljoin(base_url, f"/manga/{req.manga.id}/")
+    fallback_path = provider.default_catalog_path.rstrip("/") or "/manga"
+    manga_url = req.manga.url or urljoin(base_url, f"{fallback_path}/{req.manga.id}/")
+
     try:
-        items = await list_chapters(base_url, manga_url, cookies=cookies, user_agent=user_agent)
+        items = await provider.chapters(
+            base_url,
+            manga_url,
+            cookies,
+            user_agent,
+            bool(req.http_mode),
+            force_engine,
+        )
+    except BrowserUnavailableError as exc:
+        raise _scraper_http_error(400, "SCRAPER_BROWSER_UNAVAILABLE", str(exc)) from exc
     except CloudflareChallengeError as exc:
         raise _scraper_http_error(403, "SCRAPER_AUTH_CHALLENGE", str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
@@ -418,21 +574,39 @@ async def chapters(req: ScraperChaptersRequest, _session: Session = Depends(requ
 
 @router.post("/download")
 async def download(req: ScraperDownloadRequest, _session: Session = Depends(require_auth)):
-    base_url = normalize_base_url(req.base_url)
-    if not _supported_site(base_url):
-        raise _scraper_http_error(400, "SCRAPER_SITE_UNSUPPORTED", "当前仅支持 MangaForFree")
+    provider, base_url = _resolve_provider_or_error(req.base_url, req.site_hint)
+    force_engine = _validate_engine(req.force_engine)
+    if force_engine == "playwright" and not provider.supports_playwright:
+        raise _scraper_http_error(400, "SCRAPER_BROWSER_UNAVAILABLE", "当前 provider 不支持 playwright")
 
     task_id = str(uuid4())
+    created_iso = _now_iso()
     async with _scraper_tasks_lock:
         _scraper_tasks[task_id] = {
             "task_id": task_id,
             "status": "pending",
             "message": "已提交下载任务",
             "report": None,
-            "created_at": asyncio.get_event_loop().time(),
+            "provider": provider.key,
+            "created_at": created_iso,
+            "updated_at": created_iso,
+            "created_tick": asyncio.get_event_loop().time(),
         }
 
-    asyncio.create_task(_run_download_task(task_id, req))
+    try:
+        _get_task_store().create_task(
+            task_id,
+            status="pending",
+            message="已提交下载任务",
+            request_payload={**_request_payload(req), "normalized_base_url": base_url},
+            provider=provider.key,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise _scraper_http_error(500, "SCRAPER_TASK_STORE_ERROR", str(exc)) from exc
+
+    cookies = _merge_cookies(base_url, req.storage_state_path, req.cookies)
+    user_agent = req.user_agent or _default_user_agent()
+    asyncio.create_task(_run_download_task(task_id, req, provider, base_url, cookies, user_agent, force_engine))
     return {"task_id": task_id, "status": "pending", "message": "已提交下载任务"}
 
 
@@ -442,14 +616,33 @@ async def get_scraper_task(task_id: str, _session: Session = Depends(require_aut
         await _prune_tasks()
         task = _scraper_tasks.get(task_id)
 
-    if not task:
+    if task:
+        return ScraperTaskStatus(
+            task_id=task_id,
+            status=str(task.get("status", "unknown")),
+            message=str(task.get("message", "")),
+            report=task.get("report") if isinstance(task.get("report"), dict) else None,
+            persisted=True,
+            created_at=str(task.get("created_at", "")) or None,
+            updated_at=str(task.get("updated_at", "")) or None,
+        )
+
+    try:
+        record = _get_task_store().get_task(task_id)
+    except Exception as exc:  # noqa: BLE001
+        raise _scraper_http_error(500, "SCRAPER_TASK_STORE_ERROR", str(exc)) from exc
+
+    if not record:
         raise _scraper_http_error(404, "SCRAPER_TASK_NOT_FOUND", "任务不存在")
 
     return ScraperTaskStatus(
-        task_id=task_id,
-        status=str(task.get("status", "unknown")),
-        message=str(task.get("message", "")),
-        report=task.get("report") if isinstance(task.get("report"), dict) else None,
+        task_id=record.task_id,
+        status=record.status,
+        message=record.message,
+        report=record.report,
+        persisted=True,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
     )
 
 
@@ -461,11 +654,8 @@ async def state_info(req: ScraperStateInfoRequest, _session: Session = Depends(r
 
 @router.post("/access-check", response_model=ScraperAccessCheckResponse)
 async def access_check(req: ScraperAccessCheckRequest, _session: Session = Depends(require_auth)):
-    base_url = normalize_base_url(req.base_url)
-    if not _supported_site(base_url):
-        raise _scraper_http_error(400, "SCRAPER_SITE_UNSUPPORTED", "当前仅支持 MangaForFree")
-
-    target_path = _normalize_catalog_path(req.path) or "/manga/"
+    provider, base_url = _resolve_provider_or_error(req.base_url, req.site_hint)
+    target_path = _normalize_catalog_path(req.path) or provider.default_catalog_path
     target_url = urljoin(base_url, target_path)
     cookies = _merge_cookies(base_url, req.storage_state_path, None)
 
@@ -526,23 +716,25 @@ async def upload_state(
 
 
 @router.get("/auth-url", response_model=ScraperAuthUrlResponse)
-async def auth_url(_session: Session = Depends(require_auth)):
-    url = os.environ.get("SCRAPER_AUTH_URL") or "https://mangaforfree.com"
-    return ScraperAuthUrlResponse(url=url)
+async def auth_url(
+    base_url: Optional[str] = Query(None),
+    site_hint: Optional[str] = Query(None),
+    _session: Session = Depends(require_auth),
+):
+    env_url = os.environ.get("SCRAPER_AUTH_URL")
+    if env_url:
+        return ScraperAuthUrlResponse(url=env_url)
 
+    if base_url:
+        provider, normalized_base = _resolve_provider_or_error(base_url, site_hint)
+        return ScraperAuthUrlResponse(url=provider_auth_url(provider, normalized_base))
 
-def _is_allowed_image_host(target_url: str, base_url: str) -> bool:
-    parsed = urlparse(target_url)
-    host = (parsed.hostname or "").lower()
-    if not host:
-        return False
-
-    allowlist = {"mangaforfree.com", "i0.wp.com", "i1.wp.com", "i2.wp.com"}
-    base_host = (urlparse(base_url).hostname or "").lower()
-    if base_host:
-        allowlist.add(base_host)
-
-    return any(host == domain or host.endswith(f".{domain}") for domain in allowlist)
+    hint = (site_hint or "").strip().lower()
+    if hint == "toongod":
+        return ScraperAuthUrlResponse(url="https://toongod.org")
+    if hint == "mangaforfree":
+        return ScraperAuthUrlResponse(url="https://mangaforfree.com")
+    return ScraperAuthUrlResponse(url="https://mangaforfree.com")
 
 
 @router.get("/image")
@@ -551,13 +743,12 @@ async def scraper_image(
     base_url: str = Query(...),
     storage_state_path: Optional[str] = Query(None),
     user_agent: Optional[str] = Query(None),
+    site_hint: Optional[str] = Query(None),
     _session: Session = Depends(require_auth),
 ):
-    normalized_base = normalize_base_url(base_url)
-    if not _supported_site(normalized_base):
-        raise _scraper_http_error(400, "SCRAPER_SITE_UNSUPPORTED", "当前仅支持 MangaForFree")
+    provider, normalized_base = _resolve_provider_or_error(base_url, site_hint)
 
-    if not _is_allowed_image_host(url, normalized_base):
+    if not provider_allows_image_host(provider, url, normalized_base):
         raise _scraper_http_error(400, "SCRAPER_IMAGE_SOURCE_UNSUPPORTED", "封面来源不受支持")
 
     cookies = _merge_cookies(normalized_base, storage_state_path, None)

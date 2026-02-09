@@ -537,6 +537,11 @@ npm run build
 - 输出目录：`manga_translator/server/static/dist`
 - Git 规则：`dist` 仅用于部署产物，不提交到仓库
 
+**Scraper 二期（`/api/v1` 兼容扩展）**：
+- 支持 provider：`mangaforfree`、`toongod`、`generic`
+- 可选字段：`site_hint`、`force_engine`
+- 任务持久化：`manga_translator/server/data/scraper_tasks.db`
+
 **适用场景**：
 - ✅ **个人使用** - 通过浏览器随时随地访问
 - ✅ **团队协作** - 多人共享服务器，各自使用自己的API密钥
@@ -577,6 +582,17 @@ npm run build
 | `/` | GET | 服务器信息 |
 | `/docs` | GET | API 文档（Swagger UI） |
 | `/translate/queue-size` | POST | 获取任务队列大小 |
+
+### Scraper v1 二期端点
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/api/v1/scraper/providers` | GET | 获取可用 provider 与能力 |
+| `/api/v1/scraper/search` | POST | 搜索漫画（支持 `site_hint`、`force_engine`） |
+| `/api/v1/scraper/catalog` | POST | 站点目录（支持 `site_hint`、`force_engine`） |
+| `/api/v1/scraper/chapters` | POST | 获取章节（支持 `site_hint`、`force_engine`） |
+| `/api/v1/scraper/download` | POST | 提交下载任务（支持 `site_hint`、`force_engine`） |
+| `/api/v1/scraper/task/{task_id}` | GET | 查询任务状态（含 `persisted/created_at/updated_at`） |
 
 ### 认证端点 (`/auth`)
 

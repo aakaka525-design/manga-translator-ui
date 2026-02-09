@@ -46,6 +46,12 @@ const emit = defineEmits(['toggle-mobile'])
               <option value="mangaforfree">MangaForFree</option>
               <option value="custom">自定义</option>
             </select>
+            <p v-if="scraper.providerMeta.items.length > 0" class="text-[10px] text-text-secondary mt-1 opacity-70">
+              可用 Provider: {{ scraper.providerMeta.items.map(item => item.key).join(', ') }}
+            </p>
+            <p v-if="scraper.providerMeta.error" class="text-[10px] text-red-300 mt-1">
+              {{ scraper.providerMeta.error }}
+            </p>
           </div>
           <div>
             <label class="text-xs text-text-secondary">基础地址</label>
