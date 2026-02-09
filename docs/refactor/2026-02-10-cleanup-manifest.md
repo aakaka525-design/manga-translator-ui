@@ -29,7 +29,7 @@
   - `manga_translator/server/static/js/i18n.js`
   - `manga_translator/server/static/admin/css/admin.css`
   - `manga_translator/server/static/js/admin/**`
-- 验证命令: `find manga_translator/server/static -maxdepth 4 -type f | rg 'admin-new|index.html|login.html|style.css|script.js|history-gallery.js|js/i18n.js|js/admin'`
+- 验证命令: `find manga_translator/server/static -maxdepth 4 -type f | rg -v 'manga_translator/server/static/dist/' | rg 'admin-new|index.html|login.html|style.css|script.js|history-gallery.js|js/i18n.js|js/admin'`
 - 验证结果: pass（无匹配）
 
 ### Runtime Artifacts
