@@ -1,0 +1,46 @@
+{
+    "name": "manhua-frontend",
+    "private": true,
+    "version": "0.0.0",
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build",
+        "preview": "vite preview",
+        "test": "vitest run",
+        "lint": "eslint . --fix",
+        "format": "prettier --write src/"
+    },
+    "dependencies": {
+        "@fontsource/bangers": "^5.2.6",
+        "@fontsource/bebas-neue": "^5.2.5",
+        "@fontsource/inter": "^5.2.6",
+        "@fontsource/space-grotesk": "^5.2.6",
+        "@fortawesome/fontawesome-free": "^6.5.1",
+        "@vueuse/core": "^10.7.0",
+        "axios": "^1.6.2",
+        "gsap": "^3.12.2",
+        "pinia": "^2.1.7",
+        "vue": "^3.3.11",
+        "vue-router": "^4.2.5"
+    },
+    "devDependencies": {
+        "@rushstack/eslint-patch": "^1.15.0",
+        "@vitejs/plugin-vue": "^6.0.3",
+        "@vue/test-utils": "^2.4.6",
+        "@vue/eslint-config-prettier": "^10.2.0",
+        "autoprefixer": "^10.4.16",
+        "eslint": "^9.39.2",
+        "eslint-plugin-vue": "^10.7.0",
+        "globals": "^17.2.0",
+        "jsdom": "^26.1.0",
+        "postcss": "^8.4.32",
+        "prettier": "^3.8.1",
+        "rollup-plugin-visualizer": "^6.0.5",
+        "tailwindcss": "^3.3.6",
+        "vite": "^7.3.1",
+        "vitest": "^3.2.4",
+        "vite-plugin-compression": "^0.5.1",
+        "vite-plugin-pwa": "^1.2.0"
+    }
+}

@@ -1,60 +1,58 @@
-"""
-Routes module for manga_translator server.
+"""Route module lazy exports."""
 
-This module contains all API route definitions organized by functionality.
-"""
+from __future__ import annotations
 
-from manga_translator.server.routes.translation import router as translation_router
-from manga_translator.server.routes.admin import router as admin_router
-from manga_translator.server.routes.config import router as config_router
-from manga_translator.server.routes.files import router as files_router
-from manga_translator.server.routes.web import router as web_router
-from manga_translator.server.routes.users import router as users_router
-from manga_translator.server.routes.audit import router as audit_router
-from manga_translator.server.routes.auth import router as auth_router, init_auth_services
-from manga_translator.server.routes.groups import router as groups_router
-from manga_translator.server.routes.resources import router as resources_router, init_resource_routes
-from manga_translator.server.routes.history import router as history_router, init_history_routes
-from manga_translator.server.routes.quota import router as quota_router, init_quota_routes
-# Cleanup routes - 延迟导入避免循环依赖
-try:
-    from manga_translator.server.routes.cleanup import router as cleanup_router, init_cleanup_routes, init_auto_cleanup_scheduler
-except ImportError as e:
-    import logging
-    logging.getLogger(__name__).warning(f"Cleanup routes not available: {e}")
-    cleanup_router = None
-    init_cleanup_routes = None
-    init_auto_cleanup_scheduler = None
-from manga_translator.server.routes.config_management import router as config_management_router
-from manga_translator.server.routes.logs import logs_router
-from manga_translator.server.routes.locales import router as locales_router, init_locales_routes
+from importlib import import_module
 
-# Import sessions router
-from manga_translator.server.routes.sessions import router as sessions_router
 
-__all__ = [
-    'translation_router',
-    'admin_router',
-    'config_router',
-    'files_router',
-    'web_router',
-    'users_router',
-    'audit_router',
-    'auth_router',
-    'init_auth_services',
-    'groups_router',
-    'resources_router',
-    'init_resource_routes',
-    'history_router',
-    'init_history_routes',
-    'quota_router',
-    'init_quota_routes',
-    'cleanup_router',
-    'init_cleanup_routes',
-    'init_auto_cleanup_scheduler',
-    'config_management_router',
-    'logs_router',
-    'locales_router',
-    'init_locales_routes',
-    'sessions_router',
-]
+_EXPORTS = {
+    "translation_router": ("translation", "router"),
+    "admin_router": ("admin", "router"),
+    "config_router": ("config", "router"),
+    "files_router": ("files", "router"),
+    "web_router": ("web", "router"),
+    "users_router": ("users", "router"),
+    "audit_router": ("audit", "router"),
+    "auth_router": ("auth", "router"),
+    "init_auth_services": ("auth", "init_auth_services"),
+    "groups_router": ("groups", "router"),
+    "resources_router": ("resources", "router"),
+    "init_resource_routes": ("resources", "init_resource_routes"),
+    "history_router": ("history", "router"),
+    "init_history_routes": ("history", "init_history_routes"),
+    "quota_router": ("quota", "router"),
+    "init_quota_routes": ("quota", "init_quota_routes"),
+    "cleanup_router": ("cleanup", "router"),
+    "init_cleanup_routes": ("cleanup", "init_cleanup_routes"),
+    "init_auto_cleanup_scheduler": ("cleanup", "init_auto_cleanup_scheduler"),
+    "config_management_router": ("config_management", "router"),
+    "logs_router": ("logs", "logs_router"),
+    "locales_router": ("locales", "router"),
+    "init_locales_routes": ("locales", "init_locales_routes"),
+    "sessions_router": ("sessions", "router"),
+    "v1_manga_router": ("v1_manga", "router"),
+    "v1_translate_router": ("v1_translate", "router"),
+    "v1_scraper_router": ("v1_scraper", "router"),
+    "v1_parser_router": ("v1_parser", "router"),
+}
+
+__all__ = sorted(_EXPORTS)
+
+
+def __getattr__(name: str):
+    if name not in _EXPORTS:
+        raise AttributeError(f"module 'manga_translator.server.routes' has no attribute {name!r}")
+
+    module_name, attr_name = _EXPORTS[name]
+    module = import_module(f"manga_translator.server.routes.{module_name}")
+
+    try:
+        value = getattr(module, attr_name)
+    except AttributeError:
+        if name in {"cleanup_router", "init_cleanup_routes", "init_auto_cleanup_scheduler"}:
+            value = None
+        else:
+            raise
+
+    globals()[name] = value
+    return value

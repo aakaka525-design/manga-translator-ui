@@ -256,7 +256,21 @@ python -m desktop_qt_ui.main
 
 # 或运行旧版 CustomTkinter 界面
 python -m desktop-ui.main
+
+# 启动 Web API 服务
+python -m manga_translator web
 ```
+
+### 4. 构建 Vue 前端（Web 界面）
+
+```bash
+cd frontend
+npm ci
+npm run build
+```
+
+- 构建产物目录：`manga_translator/server/static/dist`
+- Git 策略：只提交源码，不提交 `manga_translator/server/static/dist` 目录
 
 ---
 
@@ -278,7 +292,8 @@ docker run -d --name manga-translator -p 8000:8000 hgmzhn/manga-translator:lates
 
 启动后访问：
 - 🌐 用户界面：http://localhost:8000
-- 🔧 管理界面：http://localhost:8000/admin.html
+- 🔐 登录页：http://localhost:8000/signin
+- 🔧 管理界面：http://localhost:8000/admin
 
 ### 镜像仓库
 
@@ -376,7 +391,8 @@ docker run -d --name manga-translator -p 8000:8000 hgmzhn/manga-translator:lates
 
 部署成功后访问：
 - **用户界面**：`http://服务器IP:8000`
-- **管理界面**：`http://服务器IP:8000/admin.html`（需要管理员密码）
+- **登录页**：`http://服务器IP:8000/signin`
+- **管理界面**：`http://服务器IP:8000/admin`（需要管理员权限）
 
 ### 宝塔面板部署步骤
 
@@ -421,7 +437,8 @@ docker run -d --name manga-translator -p 8000:8000 hgmzhn/manga-translator:lates
 
 **部署完成后**：
 - 🌐 **用户界面**：`http://服务器IP:8000` - 上传图片进行翻译
-- 🔧 **管理界面**：`http://服务器IP:8000/admin.html` - 配置翻译器和参数（需要管理员密码）
+- 🔐 **登录页**：`http://服务器IP:8000/signin`
+- 🔧 **管理界面**：`http://服务器IP:8000/admin` - 查看系统状态和任务（需要管理员权限）
 - 📖 **使用教程**：[命令行使用指南](CLI_USAGE.md) - 了解更多功能和命令行模式
 
 ---
@@ -643,4 +660,3 @@ A: 运行 `./macOS_4_更新维护.sh`，选择"完整更新"即可。
 ---
 
 返回 [主页](../README.md)
-

@@ -1,0 +1,190 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    /* Default Theme (Dark Glass) */
+    /* NOTE: Colors are space-separated RGB so Tailwind opacity modifiers work:
+       `rgb(var(--token) / <alpha-value>)` */
+    --bg-primary: 15 15 17;   /* #0F0F11 */
+    --bg-secondary: 30 30 36; /* #1E1E24 */
+    --bg-surface: 26 26 30;   /* #1A1A1E */
+    --text-main: 240 240 240; /* #F0F0F0 */
+    --text-secondary: 148 163 184; /* #94A3B8 (Slate-400) */
+    --accent-1: 255 0 85;     /* #FF0055 */
+    --accent-2: 0 240 255;    /* #00F0FF */
+    --border-color: rgba(255, 255, 255, 0.1);
+    --border-subtle: rgba(255, 255, 255, 0.05);
+
+    /* State Colors */
+    --state-success: 16 185 129; /* #10B981 */
+    --state-warning: 245 158 11; /* #F59E0B */
+    --state-error: 239 68 68;    /* #EF4444 */
+
+    /* Component Specifics */
+    --card-border-width: 3px;
+    --card-border-color: #000000;
+    --card-shadow-color: #FF0055;
+    --card-shadow-hover: #00F0FF;
+
+    --nav-bg: rgba(15, 15, 17, 0.7);
+    --nav-backdrop-blur: 12px;
+    --nav-border: rgba(255, 255, 255, 0.1);
+    --loading-shell-border: rgb(255 255 255 / 0.08);
+    --loading-shell-base: rgb(var(--bg-secondary) / 0.72);
+    --loading-shell-base-2: rgb(var(--bg-secondary) / 0.42);
+    --loading-line: rgb(var(--text-main) / 0.14);
+    --loading-shimmer: rgb(255 255 255 / 0.2);
+
+    /* Base Body */
+    background-color: rgb(var(--bg-primary));
+    color-scheme: dark;
+}
+
+[data-theme="pop"] {
+    /* High-Voltage Pop Theme */
+    --bg-primary: 253 251 247; /* #FDFBF7 */
+    --bg-secondary: 245 245 240; /* #F5F5F0 */
+    --bg-surface: 255 255 255; /* #FFFFFF */
+    --text-main: 18 18 18; /* #121212 */
+    --text-secondary: 96 96 96; /* #606060 */
+    --accent-1: 255 46 0; /* #FF2E00 */
+    /* Action Red */
+    --accent-2: 0 153 255; /* #0099FF */
+    /* Cyan */
+    --border-color: #121212;
+    --border-subtle: #E0E0E0;
+
+    /* State Colors */
+    --state-success: 0 200 83; /* #00C853 */
+    --state-warning: 255 214 0; /* #FFD600 */
+    --state-error: 255 0 0; /* #FF0000 */
+
+    /* Component Specifics */
+    --card-border-width: 3px;
+    --card-border-color: #121212;
+    --card-shadow-color: #121212;
+    --card-shadow-hover: #FFEB3B;
+    /* Highlighter Yellow */
+
+    --nav-bg: #FFFFFF;
+    --nav-backdrop-blur: 0px;
+    --nav-border: #121212;
+    --loading-shell-border: rgb(18 18 18 / 0.12);
+    --loading-shell-base: rgb(18 18 18 / 0.08);
+    --loading-shell-base-2: rgb(18 18 18 / 0.04);
+    --loading-line: rgb(18 18 18 / 0.18);
+    --loading-shimmer: rgb(18 18 18 / 0.12);
+
+    color-scheme: light;
+}
+
+body {
+    @apply bg-bg-primary text-text-main antialiased;
+    min-height: 100vh;
+    background-color: rgb(var(--bg-primary));
+    color: rgb(var(--text-main));
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Comic Grid Pattern for Pop Theme */
+[data-theme="pop"] body {
+    background-image:
+        linear-gradient(#E0E0E0 1px, transparent 1px),
+        linear-gradient(90deg, #E0E0E0 1px, transparent 1px);
+    background-size: 40px 40px;
+}
+
+@keyframes loading-sheen {
+    0% {
+        transform: translateX(-140%);
+    }
+    100% {
+        transform: translateX(140%);
+    }
+}
+
+@keyframes loading-ring {
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes loading-bob {
+    0%,
+    100% {
+        transform: translateY(0px);
+    }
+    50% {
+        transform: translateY(-3px);
+    }
+}
+
+.loading-shell {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid var(--loading-shell-border);
+    border-radius: 0.75rem;
+    background: linear-gradient(180deg, var(--loading-shell-base), var(--loading-shell-base-2));
+}
+
+.loading-shell::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    width: 55%;
+    background: linear-gradient(110deg, transparent 0%, var(--loading-shimmer) 50%, transparent 100%);
+    transform: translateX(-140%);
+    animation: loading-sheen 1.35s ease-in-out infinite;
+}
+
+.loading-line {
+    display: block;
+    height: 0.625rem;
+    border-radius: 9999px;
+    background: var(--loading-line);
+}
+
+.loading-line--title {
+    height: 0.875rem;
+}
+
+.comic-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.85rem;
+    color: rgb(var(--text-secondary));
+}
+
+.comic-loading__rings {
+    width: 3.5rem;
+    height: 3.5rem;
+    position: relative;
+    animation: loading-bob 1.8s ease-in-out infinite;
+}
+
+.comic-loading__ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    border: 2px solid rgb(var(--text-main) / 0.2);
+}
+
+.comic-loading__ring--accent {
+    border-color: rgb(var(--accent-1) / 0.85);
+    border-top-color: transparent;
+    border-right-color: rgb(var(--accent-2) / 0.95);
+    animation: loading-ring 1s linear infinite;
+}
+
+.comic-loading__core {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgb(var(--accent-2) / 0.95);
+    font-size: 0.95rem;
+}

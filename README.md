@@ -156,7 +156,8 @@ docker run -d --name manga-translator -p 8000:8000 hgmzhn/manga-translator:lates
 
 **访问地址**（默认端口 8000）：
 - 🌐 用户界面：`http://localhost:8000`
-- 🔧 管理界面：`http://localhost:8000/admin.html`
+- 🔐 登录页：`http://localhost:8000/signin`
+- 🔧 管理界面：`http://localhost:8000/admin`
 
 > 📖 **详细安装教程**：[Docker 部署文档](doc/INSTALLATION.md#安装方式四docker部署)  
 > 📖 **使用教程**：[命令行使用指南](doc/CLI_USAGE.md)
@@ -187,9 +188,18 @@ docker run -d --name manga-translator -p 8000:8000 hgmzhn/manga-translator:lates
    # 桌面 UI
    python -m desktop_qt_ui.main
    
-   # Web UI（可选）
+   # Web API + Vue Web UI（可选）
    python -m manga_translator web
    ```
+
+5. **构建 Vue 前端（首次或前端改动后）**：
+   ```bash
+   cd frontend
+   npm ci
+   npm run build
+   ```
+   - 构建输出：`manga_translator/server/static/dist`
+   - Git 策略：只提交前端源码，不提交 `manga_translator/server/static/dist` 产物
 
 > 📖 **详细安装教程**：[安装指南](doc/INSTALLATION.md)  
 > 📖 **使用教程**：[命令行使用指南](doc/CLI_USAGE.md)

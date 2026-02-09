@@ -43,7 +43,11 @@ from manga_translator.server.routes import (
     quota_router,
     init_quota_routes,
     config_management_router,
-    logs_router
+    logs_router,
+    v1_manga_router,
+    v1_translate_router,
+    v1_scraper_router,
+    v1_parser_router,
 )
 
 # Import sessions_router
@@ -237,6 +241,15 @@ if not os.path.exists(static_dir):
     os.makedirs(static_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+# Mount data/output directories used by Vue web frontend.
+data_dir = os.path.join(os.path.dirname(__file__), "data")
+raw_data_dir = os.path.join(data_dir, "raw")
+result_data_dir = os.path.join(data_dir, "results")
+os.makedirs(raw_data_dir, exist_ok=True)
+os.makedirs(result_data_dir, exist_ok=True)
+app.mount("/data", StaticFiles(directory=data_dir), name="data")
+app.mount("/output", StaticFiles(directory=result_data_dir), name="output")
+
 # Favicon route
 @app.get("/favicon.ico", include_in_schema=False)
 async def favicon():
@@ -271,6 +284,10 @@ app.include_router(history_router)
 app.include_router(quota_router)
 app.include_router(config_management_router)
 app.include_router(logs_router)
+app.include_router(v1_manga_router)
+app.include_router(v1_translate_router)
+app.include_router(v1_scraper_router)
+app.include_router(v1_parser_router)
 
 # Internal API endpoint for instance registration
 @app.post("/register", response_description="no response", tags=["internal-api"])

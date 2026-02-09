@@ -7,14 +7,24 @@ This module contains Web UI related endpoints for the manga translator server.
 import os
 import shutil
 from fastapi import APIRouter, Form, HTTPException
-from fastapi.responses import HTMLResponse, StreamingResponse
-
-from manga_translator.server.core.config_manager import admin_settings
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 
 router = APIRouter(tags=["web"])
 
 # Static directory path
 static_dir = os.path.join(os.path.dirname(__file__), "..", "static")
+dist_dir = os.path.join(static_dir, "dist")
+
+
+def _serve_spa() -> HTMLResponse:
+    index_path = os.path.join(dist_dir, "index.html")
+    if os.path.exists(index_path):
+        with open(index_path, "r", encoding="utf-8") as handle:
+            return HTMLResponse(handle.read())
+    return HTMLResponse(
+        "<h1>Vue frontend not built</h1><p>Please build frontend and place files under manga_translator/server/static/dist/</p>",
+        status_code=503,
+    )
 
 
 # ============================================================================
@@ -23,23 +33,40 @@ static_dir = os.path.join(os.path.dirname(__file__), "..", "static")
 
 @router.get("/", response_class=HTMLResponse)
 async def read_root():
-    """Serve the Web UI index page (User mode)"""
-    index_path = os.path.join(static_dir, "index.html")
-    if os.path.exists(index_path):
-        with open(index_path, 'r', encoding='utf-8') as f:
-            return f.read()
-    return HTMLResponse("<h1>Web UI not installed</h1><p>Please ensure index.html exists in manga_translator/server/static/</p>")
+    """Serve SPA root page."""
+    return _serve_spa()
 
 
 @router.get("/admin", response_class=HTMLResponse)
 async def read_admin():
-    """Serve the Admin UI (new modular version)"""
-    # 使用新的模块化管理界面
-    admin_path = os.path.join(static_dir, "admin-new.html")
-    if os.path.exists(admin_path):
-        with open(admin_path, 'r', encoding='utf-8') as f:
-            return f.read()
-    return HTMLResponse("<h1>Admin UI not installed</h1>")
+    return _serve_spa()
+
+
+@router.get("/signin", response_class=HTMLResponse)
+async def read_signin():
+    return _serve_spa()
+
+
+@router.get("/scraper", response_class=HTMLResponse)
+async def read_scraper():
+    return _serve_spa()
+
+
+@router.get("/manga/{manga_id}", response_class=HTMLResponse)
+async def read_manga(manga_id: str):
+    _ = manga_id
+    return _serve_spa()
+
+
+@router.get("/read/{manga_id}/{chapter_id}", response_class=HTMLResponse)
+async def read_reader(manga_id: str, chapter_id: str):
+    _ = (manga_id, chapter_id)
+    return _serve_spa()
+
+
+@router.get("/static/login.html", include_in_schema=False)
+async def legacy_login_redirect():
+    return RedirectResponse("/signin", status_code=307)
 
 
 
@@ -213,6 +240,8 @@ async def cleanup_temp_files(max_age_hours: int = 24):
 @router.post("/user/login")
 async def user_login(password: str = Form(...)):
     """User login"""
+    from manga_translator.server.core.config_manager import admin_settings
+
     user_access = admin_settings.get('user_access', {})
     
     # If no password required, allow access directly
