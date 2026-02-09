@@ -15,7 +15,7 @@
 | TASK-009 | completed | `manga_translator/server/routes/v1_parser.py` | 新增 `/api/v1/parser/*` | `pytest -q tests/test_v1_routes.py -k parser` | pass | 597f831 |
 | TASK-010 | completed | `frontend/src/views/AdminView.vue`, `frontend/src/router/index.js`, `frontend/src/components/layout/GlassNav.vue` | `/admin` 首版页面（状态/任务/登出） | `cd frontend && npm run build` | pass | 597f831 |
 | TASK-011 | completed | `README.md`, `doc/INSTALLATION.md`, `doc/CLI_USAGE.md`, `.gitignore` | 文档改为新入口 + dist 忽略策略 | `rg -n 'admin\.html' README.md doc/INSTALLATION.md doc/CLI_USAGE.md` | pass（无旧入口） | 597f831 |
-| TASK-012 | pending | Git remote/push | 无 | `git remote add personal https://github.com/aakaka525-design/manga-translator-ui.git && git push -u personal codex/vue-web-refactor` | fail（Repository not found，待确认仓库名/权限） | - |
+| TASK-012 | pending | Git remote/push | 无 | `git remote add personal https://github.com/aakaka525-design/manga-translator-ui.git && git push -u personal codex/vue-web-refactor` | fail（Repository not found，待确认仓库名/权限） | bc95d0d |
 
 ## Locked Decisions
 
