@@ -7,7 +7,7 @@
 - 接口影响: 无
 - 验证命令: `ls docs/plans docs/refactor docs/api`
 - 验证结果: pass
-- 提交哈希: pending
+- 提交哈希: ce4fbbe
 
 ## TASK-014
 - TASK-ID: TASK-014
@@ -16,7 +16,7 @@
 - 接口影响: 新增 provider registry 与可选请求字段 `site_hint`、`force_engine`
 - 验证命令: `pytest -q tests/test_v1_scraper_phase2.py -k provider`
 - 验证结果: pass
-- 提交哈希: pending
+- 提交哈希: ce4fbbe
 
 ## TASK-015
 - TASK-ID: TASK-015
@@ -25,7 +25,7 @@
 - 接口影响: 新增 ToonGod/Generic 适配；parser list 支持 generic 识别与可下载列表
 - 验证命令: `pytest -q tests/test_v1_scraper_phase2.py -k 'generic or parser'`
 - 验证结果: pass
-- 提交哈希: pending
+- 提交哈希: ce4fbbe
 
 ## TASK-016
 - TASK-ID: TASK-016
@@ -34,7 +34,7 @@
 - 接口影响: 新增 `GET /api/v1/scraper/providers`；search/catalog/chapters/download/access-check/image 路由走 provider registry
 - 验证命令: `pytest -q tests/test_v1_scraper_phase2.py -k 'search or catalog or chapters or providers'`
 - 验证结果: pass
-- 提交哈希: pending
+- 提交哈希: ce4fbbe
 
 ## TASK-017
 - TASK-ID: TASK-017
@@ -43,7 +43,7 @@
 - 接口影响: `GET /api/v1/scraper/task/{task_id}` 新增 `persisted`、`created_at`、`updated_at`
 - 验证命令: `pytest -q tests/test_v1_scraper_phase2.py -k 'task_store or task_status'`
 - 验证结果: pass
-- 提交哈希: pending
+- 提交哈希: ce4fbbe
 
 ## TASK-018
 - TASK-ID: TASK-018
@@ -52,7 +52,7 @@
 - 接口影响: 前端请求体携带 `site_hint` 与 `force_engine`；可查看 provider 列表
 - 验证命令: `cd frontend && npm test -- --run`
 - 验证结果: pass
-- 提交哈希: pending
+- 提交哈希: ce4fbbe
 
 ## TASK-019
 - TASK-ID: TASK-019
@@ -61,7 +61,7 @@
 - 接口影响: 无（测试覆盖增强）
 - 验证命令: `pytest -q tests/test_v1_routes.py tests/test_v1_scraper_phase2.py && cd frontend && npm test -- --run && npm run build`
 - 验证结果: pass
-- 提交哈希: pending
+- 提交哈希: ce4fbbe
 
 ## TASK-020
 - TASK-ID: TASK-020
@@ -70,4 +70,4 @@
 - 接口影响: 文档更新为二期能力与交付规则
 - 验证命令: `rg -n 'scraper/providers|site_hint|force_engine|SQLite|dist' README.md doc/CLI_USAGE.md docs/api/2026-02-10-v1-scraper-phase2-contract.md`
 - 验证结果: pass
-- 提交哈希: pending
+- 提交哈希: ce4fbbe
