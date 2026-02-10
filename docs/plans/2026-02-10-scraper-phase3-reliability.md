@@ -11,7 +11,7 @@
 | TASK-025 | completed | `manga_translator/server/routes/admin.py` | 新增 `/admin/scraper/tasks` 与 `/admin/scraper/metrics` | `pytest -q tests/test_v1_scraper_phase3.py -k 'admin and auth'` | pass | 89c0fae |
 | TASK-026 | completed | `frontend/src/views/AdminView.vue`, `frontend/src/stores/adminScraper.js`, `frontend/tests/admin_scraper_panel.test.js` | `/admin` 接入 Scraper 监控展示 | `cd frontend && npm test -- --run -t 'admin scraper'` | pass | 89c0fae |
 | TASK-027 | completed | `tests/test_v1_scraper_phase3.py`, `tests/test_v1_scraper_phase2.py`, `tests/test_v1_routes.py`, `frontend/tests/admin_scraper_panel.test.js` | phase3 回归与兼容性用例补齐 | `pytest -q tests/test_v1_routes.py tests/test_v1_scraper_phase2.py tests/test_v1_scraper_phase3.py && cd frontend && npm test -- --run && npm run build` | pass | 89c0fae |
-| TASK-028 | completed | `docs/refactor/2026-02-10-phase3-worklog.md`, `docs/api/2026-02-10-v1-scraper-phase3-contract.md`, `docs/plans/2026-02-10-scraper-phase3-reliability.md`, `docs/refactor/INDEX.md`, `README.md`, `doc/CLI_USAGE.md` | 文档闭环与交付规则更新 | `rg -n 'SCRAPER_TASK_DUPLICATE|SCRAPER_TASK_STALE|SCRAPER_RETRY_EXHAUSTED|/admin/scraper/tasks|/admin/scraper/metrics' README.md doc/CLI_USAGE.md docs/api/2026-02-10-v1-scraper-phase3-contract.md` | pass | N/A |
+| TASK-028 | completed | `docs/refactor/2026-02-10-phase3-worklog.md`, `docs/api/2026-02-10-v1-scraper-phase3-contract.md`, `docs/plans/2026-02-10-scraper-phase3-reliability.md`, `docs/refactor/INDEX.md`, `README.md`, `doc/CLI_USAGE.md` | 文档闭环与交付规则更新 | `rg -n 'SCRAPER_TASK_DUPLICATE|SCRAPER_TASK_STALE|SCRAPER_RETRY_EXHAUSTED|/admin/scraper/tasks|/admin/scraper/metrics' README.md doc/CLI_USAGE.md docs/api/2026-02-10-v1-scraper-phase3-contract.md` | pass | 234040e |
 
 ## Locked Decisions
 

@@ -79,4 +79,4 @@
 - 接口影响: 文档更新与交付说明
 - 验证命令: `rg -n 'SCRAPER_TASK_DUPLICATE|SCRAPER_TASK_STALE|SCRAPER_RETRY_EXHAUSTED|/admin/scraper/tasks|/admin/scraper/metrics' README.md doc/CLI_USAGE.md docs/api/2026-02-10-v1-scraper-phase3-contract.md`
 - 验证结果: pass
-- 提交哈希: N/A
+- 提交哈希: 234040e
