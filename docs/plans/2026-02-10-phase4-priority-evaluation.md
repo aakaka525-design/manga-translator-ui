@@ -11,12 +11,12 @@
 
 | TASK-ID | 状态 | 改动文件 | 接口影响 | 验证命令 | 验证结果 | 提交哈希 |
 |---|---|---|---|---|---|---|
-| TASK-029 | completed | `docs/plans/2026-02-10-phase4-priority-evaluation.md`, `docs/refactor/2026-02-10-phase4-eval-worklog.md`, `docs/decisions/2026-02-10-phase4-go-no-go.md`, `docs/refactor/INDEX.md` | 无 | `ls docs/plans docs/refactor docs/decisions` | pass | N/A |
-| TASK-030 | completed | `docs/plans/2026-02-10-phase4-priority-evaluation.md` | 无（证据采样） | `rg -n "IDEMPOTENT_WINDOW_MINUTES|/admin/scraper/metrics|task_logs|redis|workflow" manga_translator/server .github/workflows requirements_*.txt` | pass | N/A |
-| TASK-031 | completed | `docs/plans/2026-02-10-phase4-priority-evaluation.md` | 候选接口草案（不实施） | `rg -n "候选接口草案 A|方案 S0|方案 S1|方案 S2" docs/plans/2026-02-10-phase4-priority-evaluation.md` | pass | N/A |
-| TASK-032 | completed | `docs/plans/2026-02-10-phase4-priority-evaluation.md` | 无（成本/风险评估） | `rg -n "成本估算|风险登记表|Redis 故障|告警风暴" docs/plans/2026-02-10-phase4-priority-evaluation.md` | pass | N/A |
-| TASK-033 | completed | `docs/plans/2026-02-10-phase4-priority-evaluation.md` | 无（验证场景设计） | `rg -n "评估验证场景|队列堆积|Redis 重启|Webhook 连续失败|鉴权回归" docs/plans/2026-02-10-phase4-priority-evaluation.md` | pass | N/A |
-| TASK-034 | completed | `docs/decisions/2026-02-10-phase4-go-no-go.md`, `docs/refactor/2026-02-10-phase4-eval-worklog.md` | 决策输出（不实施） | `rg -n "总分矩阵|GO/NO-GO|结论|替代优化清单" docs/decisions/2026-02-10-phase4-go-no-go.md` | pass | N/A |
+| TASK-029 | completed | `docs/plans/2026-02-10-phase4-priority-evaluation.md`, `docs/refactor/2026-02-10-phase4-eval-worklog.md`, `docs/decisions/2026-02-10-phase4-go-no-go.md`, `docs/refactor/INDEX.md` | 无 | `ls docs/plans docs/refactor docs/decisions` | pass | 3d90229 |
+| TASK-030 | completed | `docs/plans/2026-02-10-phase4-priority-evaluation.md` | 无（证据采样） | `rg -n "IDEMPOTENT_WINDOW_MINUTES|/admin/scraper/metrics|task_logs|redis|workflow" manga_translator/server .github/workflows requirements_*.txt` | pass | 3d90229 |
+| TASK-031 | completed | `docs/plans/2026-02-10-phase4-priority-evaluation.md` | 候选接口草案（不实施） | `rg -n "候选接口草案 A|方案 S0|方案 S1|方案 S2" docs/plans/2026-02-10-phase4-priority-evaluation.md` | pass | 3d90229 |
+| TASK-032 | completed | `docs/plans/2026-02-10-phase4-priority-evaluation.md` | 无（成本/风险评估） | `rg -n "成本估算|风险登记表|Redis 故障|告警风暴" docs/plans/2026-02-10-phase4-priority-evaluation.md` | pass | 3d90229 |
+| TASK-033 | completed | `docs/plans/2026-02-10-phase4-priority-evaluation.md` | 无（验证场景设计） | `rg -n "评估验证场景|队列堆积|Redis 重启|Webhook 连续失败|鉴权回归" docs/plans/2026-02-10-phase4-priority-evaluation.md` | pass | 3d90229 |
+| TASK-034 | completed | `docs/decisions/2026-02-10-phase4-go-no-go.md`, `docs/refactor/2026-02-10-phase4-eval-worklog.md` | 决策输出（不实施） | `rg -n "总分矩阵|GO/NO-GO|结论|替代优化清单" docs/decisions/2026-02-10-phase4-go-no-go.md` | pass | 3d90229 |
 
 ## TASK-030 三期现状证据表
 
