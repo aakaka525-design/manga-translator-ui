@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse, urljoin
@@ -45,10 +46,18 @@ STATE_DIR = DATA_DIR / "state"
 TASK_DB_PATH = DATA_DIR / "scraper_tasks.db"
 TASKS_TTL_SEC = 3600
 TASK_RETENTION_DAYS = 7
+IDEMPOTENT_WINDOW_MINUTES = 30
+TASK_MAX_RETRIES = 2
+TASK_RETRY_DELAY_SEC = 15.0
+STALE_TASK_MINUTES = 10
+IMAGE_RETRY_DELAYS = (0.5, 1.0, 2.0)
+RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
+ACTIVE_TASK_STATUSES = {"pending", "running", "retrying"}
 
 _scraper_tasks: dict[str, dict[str, object]] = {}
 _scraper_tasks_lock = asyncio.Lock()
 _task_store: ScraperTaskStore | None = None
+_UNSET = object()
 
 
 class MangaPayload(BaseModel):
@@ -123,6 +132,11 @@ class ScraperTaskStatus(BaseModel):
     persisted: Optional[bool] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    retry_count: Optional[int] = None
+    max_retries: Optional[int] = None
+    next_retry_at: Optional[str] = None
+    error_code: Optional[str] = None
+    last_error: Optional[str] = None
 
 
 class ScraperCatalogResponse(BaseModel):
@@ -233,6 +247,11 @@ def _task_payload(task_id: str) -> dict[str, object]:
         "status": "missing",
         "message": "任务不存在",
         "report": None,
+        "retry_count": 0,
+        "max_retries": TASK_MAX_RETRIES,
+        "next_retry_at": None,
+        "error_code": None,
+        "last_error": None,
     }
 
 
@@ -258,6 +277,28 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _retry_eta_iso(delay_sec: float) -> str:
+    return (datetime.now(timezone.utc) + timedelta(seconds=max(0.0, delay_sec))).isoformat()
+
+
+def _request_fingerprint(
+    *,
+    base_url: str,
+    provider_key: str,
+    manga_id: str,
+    chapter_id: str,
+) -> str:
+    payload = "|".join(
+        [
+            normalize_base_url(base_url).strip().lower(),
+            provider_key.strip().lower(),
+            (manga_id or "").strip().lower(),
+            (chapter_id or "").strip().lower(),
+        ]
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 async def _set_task_state(
     task_id: str,
     *,
@@ -266,6 +307,11 @@ async def _set_task_state(
     report: dict[str, object] | None = None,
     error_code: str | None = None,
     finished: bool = False,
+    retry_count: int | None = None,
+    max_retries: int | None = None,
+    next_retry_at: str | None | object = _UNSET,
+    last_error: str | None | object = _UNSET,
+    started_at: str | None | object = _UNSET,
 ) -> None:
     now_iso = _now_iso()
     async with _scraper_tasks_lock:
@@ -275,11 +321,32 @@ async def _set_task_state(
         payload["updated_at"] = now_iso
         if report is not None:
             payload["report"] = report
+        if retry_count is not None:
+            payload["retry_count"] = int(retry_count)
+        if max_retries is not None:
+            payload["max_retries"] = int(max_retries)
+        if next_retry_at is not _UNSET:
+            payload["next_retry_at"] = next_retry_at
+        if last_error is not _UNSET:
+            payload["last_error"] = last_error
+        if started_at is not _UNSET:
+            payload["started_at"] = started_at
+        if error_code is not None:
+            payload["error_code"] = error_code
         if finished:
             payload["finished_at"] = now_iso
+            payload["next_retry_at"] = None
         _scraper_tasks[task_id] = payload
 
     try:
+        update_kwargs: dict[str, object] = {}
+        if next_retry_at is not _UNSET:
+            update_kwargs["next_retry_at"] = next_retry_at
+        if last_error is not _UNSET:
+            update_kwargs["last_error"] = last_error
+        if started_at is not _UNSET:
+            update_kwargs["started_at"] = started_at
+
         store = _get_task_store()
         store.update_task(
             task_id,
@@ -288,10 +355,26 @@ async def _set_task_state(
             report=report,
             error_code=error_code,
             finished=finished,
+            retry_count=retry_count,
+            max_retries=max_retries,
+            **update_kwargs,
         )
     except Exception:
         # Do not interrupt request/task flow for storage errors.
         pass
+
+
+def recover_stale_tasks(stale_minutes: int = STALE_TASK_MINUTES) -> int:
+    try:
+        threshold = (datetime.now(timezone.utc) - timedelta(minutes=max(1, stale_minutes))).isoformat()
+        return _get_task_store().mark_stale_tasks(
+            stale_before=threshold,
+            message="服务重启后检测到陈旧任务",
+            error_code="SCRAPER_TASK_STALE",
+            statuses=ACTIVE_TASK_STATUSES,
+        )
+    except Exception:
+        return 0
 
 
 async def _prune_tasks() -> None:
@@ -325,20 +408,44 @@ async def _download_image(
     *,
     referer: str,
     headers: dict[str, str],
-) -> bool:
+) -> tuple[bool, str | None, bool]:
     req_headers = dict(headers)
     req_headers.setdefault("Referer", referer)
-    try:
-        async with session.get(url, headers=req_headers) as response:
-            if response.status >= 400:
-                return False
-            payload = await response.read()
-            if not payload:
-                return False
-            output_path.write_bytes(payload)
-            return True
-    except Exception:
-        return False
+    delays = (0.0, *IMAGE_RETRY_DELAYS)
+    last_error: str | None = None
+    for attempt, delay in enumerate(delays):
+        if delay > 0:
+            await asyncio.sleep(delay)
+        try:
+            async with session.get(url, headers=req_headers) as response:
+                if response.status >= 400:
+                    last_error = f"HTTP {response.status}"
+                    retryable = response.status in RETRYABLE_HTTP_STATUS
+                    if retryable and attempt < len(delays) - 1:
+                        continue
+                    return False, last_error, retryable
+                payload = await response.read()
+                if not payload:
+                    last_error = "empty payload"
+                    if attempt < len(delays) - 1:
+                        continue
+                    return False, last_error, True
+                output_path.write_bytes(payload)
+                return True, None, False
+        except (
+            aiohttp.ClientConnectionError,
+            aiohttp.ClientPayloadError,
+            asyncio.TimeoutError,
+            aiohttp.ServerTimeoutError,
+        ) as exc:
+            last_error = str(exc) or exc.__class__.__name__
+            if attempt < len(delays) - 1:
+                continue
+            return False, last_error, True
+        except Exception as exc:  # noqa: BLE001
+            last_error = str(exc)
+            return False, last_error, False
+    return False, last_error or "下载失败", True
 
 
 async def _run_download_task(
@@ -349,8 +456,20 @@ async def _run_download_task(
     cookies: dict[str, str],
     user_agent: str,
     force_engine: str | None,
+    *,
+    retry_count: int = 0,
+    max_retries: int = TASK_MAX_RETRIES,
+    request_fingerprint: str | None = None,
 ) -> None:
-    await _set_task_state(task_id, status="running", message="下载中...")
+    await _set_task_state(
+        task_id,
+        status="running",
+        message="下载中...",
+        retry_count=retry_count,
+        max_retries=max_retries,
+        next_retry_at=None,
+        started_at=_now_iso() if retry_count == 0 else _UNSET,
+    )
 
     manga_id = _safe_name(req.manga.id or req.manga.title or "manga")
     chapter_id = _safe_name(req.chapter.id or req.chapter.title or "chapter")
@@ -377,6 +496,9 @@ async def _run_download_task(
             report={"success_count": 0, "failed_count": 0, "total_count": 0},
             error_code="SCRAPER_BROWSER_UNAVAILABLE",
             finished=True,
+            retry_count=retry_count,
+            max_retries=max_retries,
+            last_error=str(exc),
         )
         return
     except CloudflareChallengeError as exc:
@@ -387,6 +509,9 @@ async def _run_download_task(
             report={"success_count": 0, "failed_count": 0, "total_count": 0},
             error_code="SCRAPER_AUTH_CHALLENGE",
             finished=True,
+            retry_count=retry_count,
+            max_retries=max_retries,
+            last_error=str(exc),
         )
         return
     except Exception as exc:  # noqa: BLE001
@@ -397,6 +522,9 @@ async def _run_download_task(
             report={"success_count": 0, "failed_count": 0, "total_count": 0},
             error_code="SCRAPER_DOWNLOAD_FAILED",
             finished=True,
+            retry_count=retry_count,
+            max_retries=max_retries,
+            last_error=str(exc),
         )
         return
 
@@ -408,6 +536,9 @@ async def _run_download_task(
             report={"success_count": 0, "failed_count": 0, "total_count": 0},
             error_code="SCRAPER_IMAGE_EMPTY",
             finished=True,
+            retry_count=retry_count,
+            max_retries=max_retries,
+            last_error="章节未返回可下载图片",
         )
         return
 
@@ -417,7 +548,7 @@ async def _run_download_task(
 
     async with aiohttp.ClientSession(timeout=timeout, cookies=cookies, connector=connector) as session:
         semaphore = asyncio.Semaphore(max(1, min(32, int(req.concurrency or 6))))
-        results: list[bool] = []
+        results: list[tuple[bool, str | None, bool]] = []
 
         async def worker(index: int, image_url: str) -> None:
             ext = Path(urlparse(image_url).path).suffix.lower()
@@ -426,25 +557,86 @@ async def _run_download_task(
             filename = f"{index:03d}{ext}"
             output_path = output_dir / filename
             async with semaphore:
-                ok = await _download_image(
+                outcome = await _download_image(
                     session,
                     image_url,
                     output_path,
                     referer=chapter_url,
                     headers=headers,
                 )
-                results.append(ok)
+                if isinstance(outcome, tuple):
+                    if len(outcome) == 3:
+                        ok, error_text, retryable = outcome
+                    elif len(outcome) == 2:
+                        ok, error_text = outcome
+                        retryable = not bool(ok)
+                    else:
+                        ok = bool(outcome[0]) if outcome else False
+                        error_text = None
+                        retryable = not ok
+                else:
+                    ok = bool(outcome)
+                    error_text = None
+                    retryable = not ok
+                results.append((bool(ok), error_text, bool(retryable)))
 
         await asyncio.gather(*[worker(idx, image_url) for idx, image_url in enumerate(image_urls, start=1)])
 
-    success_count = sum(1 for flag in results if flag)
+    success_count = sum(1 for flag, _, _ in results if flag)
     failed_count = max(len(image_urls) - success_count, 0)
+
+    retryable_failures = [entry for entry in results if (not entry[0] and entry[2])]
+    failure_errors = [entry[1] for entry in results if (not entry[0] and entry[1])]
+    last_error = failure_errors[-1] if failure_errors else None
+
+    if success_count <= 0 and retry_count < max_retries and retryable_failures:
+        next_retry_at = _retry_eta_iso(TASK_RETRY_DELAY_SEC)
+        await _set_task_state(
+            task_id,
+            status="retrying",
+            message=f"下载失败，准备重试 ({retry_count + 1}/{max_retries})",
+            report={
+                "success_count": success_count,
+                "failed_count": failed_count,
+                "total_count": len(image_urls),
+                "output_dir": str(output_dir),
+                "manga_id": manga_id,
+                "chapter_id": chapter_id,
+                "provider": provider.key,
+            },
+            retry_count=retry_count,
+            max_retries=max_retries,
+            next_retry_at=next_retry_at,
+            last_error=last_error,
+        )
+
+        async def _retry_later() -> None:
+            await asyncio.sleep(TASK_RETRY_DELAY_SEC)
+            await _run_download_task(
+                task_id,
+                req,
+                provider,
+                base_url,
+                cookies,
+                user_agent,
+                force_engine,
+                retry_count=retry_count + 1,
+                max_retries=max_retries,
+                request_fingerprint=request_fingerprint,
+            )
+
+        asyncio.create_task(_retry_later())
+        return
+
     if success_count <= 0:
         status = "error"
+        error_code = "SCRAPER_RETRY_EXHAUSTED"
     elif failed_count > 0:
         status = "partial"
+        error_code = None
     else:
         status = "success"
+        error_code = None
 
     report = {
         "success_count": success_count,
@@ -456,7 +648,18 @@ async def _run_download_task(
         "provider": provider.key,
     }
     message = "下载完成" if status == "success" else "下载部分完成" if status == "partial" else "下载失败"
-    await _set_task_state(task_id, status=status, message=message, report=report, finished=True)
+    await _set_task_state(
+        task_id,
+        status=status,
+        message=message,
+        report=report,
+        finished=True,
+        retry_count=max_retries if status == "error" else retry_count,
+        max_retries=max_retries,
+        error_code=error_code,
+        last_error=last_error,
+        next_retry_at=None,
+    )
 
 
 @router.get("/providers")
@@ -579,6 +782,30 @@ async def download(req: ScraperDownloadRequest, _session: Session = Depends(requ
     if force_engine == "playwright" and not provider.supports_playwright:
         raise _scraper_http_error(400, "SCRAPER_BROWSER_UNAVAILABLE", "当前 provider 不支持 playwright")
 
+    request_fingerprint = _request_fingerprint(
+        base_url=base_url,
+        provider_key=provider.key,
+        manga_id=req.manga.id,
+        chapter_id=req.chapter.id,
+    )
+
+    try:
+        existed = _get_task_store().find_active_by_fingerprint(
+            request_fingerprint,
+            within_minutes=IDEMPOTENT_WINDOW_MINUTES,
+            statuses=ACTIVE_TASK_STATUSES,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise _scraper_http_error(500, "SCRAPER_TASK_STORE_ERROR", str(exc)) from exc
+
+    if existed is not None:
+        return {
+            "task_id": existed.task_id,
+            "status": "existing",
+            "message": "已存在下载任务",
+            "error_code": "SCRAPER_TASK_DUPLICATE",
+        }
+
     task_id = str(uuid4())
     created_iso = _now_iso()
     async with _scraper_tasks_lock:
@@ -591,6 +818,11 @@ async def download(req: ScraperDownloadRequest, _session: Session = Depends(requ
             "created_at": created_iso,
             "updated_at": created_iso,
             "created_tick": asyncio.get_event_loop().time(),
+            "retry_count": 0,
+            "max_retries": TASK_MAX_RETRIES,
+            "next_retry_at": None,
+            "error_code": None,
+            "last_error": None,
         }
 
     try:
@@ -600,13 +832,29 @@ async def download(req: ScraperDownloadRequest, _session: Session = Depends(requ
             message="已提交下载任务",
             request_payload={**_request_payload(req), "normalized_base_url": base_url},
             provider=provider.key,
+            retry_count=0,
+            max_retries=TASK_MAX_RETRIES,
+            request_fingerprint=request_fingerprint,
         )
     except Exception as exc:  # noqa: BLE001
         raise _scraper_http_error(500, "SCRAPER_TASK_STORE_ERROR", str(exc)) from exc
 
     cookies = _merge_cookies(base_url, req.storage_state_path, req.cookies)
     user_agent = req.user_agent or _default_user_agent()
-    asyncio.create_task(_run_download_task(task_id, req, provider, base_url, cookies, user_agent, force_engine))
+    asyncio.create_task(
+        _run_download_task(
+            task_id,
+            req,
+            provider,
+            base_url,
+            cookies,
+            user_agent,
+            force_engine,
+            retry_count=0,
+            max_retries=TASK_MAX_RETRIES,
+            request_fingerprint=request_fingerprint,
+        )
+    )
     return {"task_id": task_id, "status": "pending", "message": "已提交下载任务"}
 
 
@@ -625,6 +873,11 @@ async def get_scraper_task(task_id: str, _session: Session = Depends(require_aut
             persisted=True,
             created_at=str(task.get("created_at", "")) or None,
             updated_at=str(task.get("updated_at", "")) or None,
+            retry_count=int(task.get("retry_count", 0) or 0),
+            max_retries=int(task.get("max_retries", TASK_MAX_RETRIES) or TASK_MAX_RETRIES),
+            next_retry_at=str(task.get("next_retry_at", "")) or None,
+            error_code=str(task.get("error_code", "")) or None,
+            last_error=str(task.get("last_error", "")) or None,
         )
 
     try:
@@ -643,6 +896,11 @@ async def get_scraper_task(task_id: str, _session: Session = Depends(require_aut
         persisted=True,
         created_at=record.created_at,
         updated_at=record.updated_at,
+        retry_count=record.retry_count,
+        max_retries=record.max_retries,
+        next_retry_at=record.next_retry_at,
+        error_code=record.error_code,
+        last_error=record.last_error,
     )
 
 

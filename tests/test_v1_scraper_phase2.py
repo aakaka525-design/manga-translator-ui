@@ -110,7 +110,7 @@ def test_download_task_persists_and_can_be_reloaded(monkeypatch: pytest.MonkeyPa
         _ = (base_url, chapter_url, cookies, user_agent, http_mode, force_engine)
         return ["https://example.org/a.jpg"]
 
-    async def _fake_run_download(task_id, req, provider_obj, base_url, cookies, user_agent, force_engine):
+    async def _fake_run_download(task_id, req, provider_obj, base_url, cookies, user_agent, force_engine, **kwargs):
         _ = (req, provider_obj, base_url, cookies, user_agent, force_engine)
         await v1_scraper._set_task_state(
             task_id,
@@ -204,3 +204,36 @@ def test_parser_list_generic_downloadable(monkeypatch: pytest.MonkeyPatch, phase
         assert data["recognized"] is False
         assert data["downloadable"] is True
         assert len(data["items"]) >= 1
+
+
+def test_task_status_backward_compatible_fields(phase2_app):
+    store = v1_scraper._get_task_store()
+    store.create_task(
+        "phase2-compat",
+        status="success",
+        message="done",
+        request_payload={"base_url": "https://example.org"},
+        provider="generic",
+    )
+    store.update_task(
+        "phase2-compat",
+        status="success",
+        message="done",
+        report={"success_count": 1, "failed_count": 0, "total_count": 1},
+        finished=True,
+    )
+
+    with TestClient(phase2_app) as client:
+        resp = client.get("/api/v1/scraper/task/phase2-compat")
+        assert resp.status_code == 200
+        payload = resp.json()
+
+        # Phase2 core fields remain unchanged.
+        assert payload["task_id"] == "phase2-compat"
+        assert payload["status"] == "success"
+        assert payload["persisted"] is True
+        assert payload["report"]["success_count"] == 1
+
+        # Phase3 optional fields may appear, but should keep safe defaults.
+        assert payload.get("retry_count", 0) == 0
+        assert payload.get("max_retries", 2) >= 2

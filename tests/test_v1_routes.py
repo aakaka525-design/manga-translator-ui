@@ -258,7 +258,7 @@ def test_scraper_routes(monkeypatch: pytest.MonkeyPatch, authed_app):
             raise v1_scraper.ProviderUnavailableError("invalid base_url")
         return provider
 
-    async def _fake_run_download(task_id, req, provider_obj, base_url, cookies, user_agent, force_engine):
+    async def _fake_run_download(task_id, req, provider_obj, base_url, cookies, user_agent, force_engine, **kwargs):
         _ = (req, provider_obj, base_url, cookies, user_agent, force_engine)
         v1_scraper._scraper_tasks[task_id].update(
             {

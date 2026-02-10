@@ -134,6 +134,9 @@ async def startup_event():
     # Initialize scraper task sqlite store
     import manga_translator.server.routes.v1_scraper as v1_scraper_routes
     v1_scraper_routes.init_task_store(Path(DATA_DIR) / "scraper_tasks.db")
+    stale_tasks = v1_scraper_routes.recover_stale_tasks()
+    if stale_tasks:
+        logger.warning("Recovered %s stale scraper task(s) after startup", stale_tasks)
     
     # Initialize translation authentication
     init_translation_auth(_audit_service)

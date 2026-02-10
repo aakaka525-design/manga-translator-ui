@@ -323,6 +323,73 @@ async def get_active_tasks_endpoint(
     return get_active_tasks()
 
 
+@router.get("/scraper/tasks")
+async def get_scraper_tasks(
+    status: Optional[str] = None,
+    provider: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+    session: Session = Depends(require_admin),
+    token: str = Header(alias="X-Admin-Token", default=None)
+):
+    """
+    Get scraper tasks from SQLite store with filters and pagination.
+
+    Supports both new session-based auth (X-Session-Token) and legacy token auth (X-Admin-Token)
+    """
+    # Legacy token support for backward compatibility
+    if token and token in valid_admin_tokens:
+        logger.debug("Using legacy admin token authentication")
+
+    try:
+        import manga_translator.server.routes.v1_scraper as v1_scraper_routes
+
+        store = v1_scraper_routes.init_task_store(v1_scraper_routes.TASK_DB_PATH)
+        items, total = store.list_tasks(
+            status=(status or "").strip() or None,
+            provider=(provider or "").strip() or None,
+            limit=limit,
+            offset=offset,
+        )
+        safe_limit = max(1, min(int(limit), 200))
+        safe_offset = max(0, int(offset))
+        return {
+            "items": [item.to_payload() for item in items],
+            "total": total,
+            "limit": safe_limit,
+            "offset": safe_offset,
+            "has_more": safe_offset + safe_limit < total,
+        }
+    except Exception as e:
+        logger.error(f"Failed to list scraper tasks: {e}", exc_info=True)
+        raise HTTPException(500, detail=f"Failed to list scraper tasks: {e}")
+
+
+@router.get("/scraper/metrics")
+async def get_scraper_metrics(
+    hours: int = 24,
+    session: Session = Depends(require_admin),
+    token: str = Header(alias="X-Admin-Token", default=None)
+):
+    """
+    Get scraper task metrics for recent N hours.
+
+    Supports both new session-based auth (X-Session-Token) and legacy token auth (X-Admin-Token)
+    """
+    # Legacy token support for backward compatibility
+    if token and token in valid_admin_tokens:
+        logger.debug("Using legacy admin token authentication")
+
+    try:
+        import manga_translator.server.routes.v1_scraper as v1_scraper_routes
+
+        store = v1_scraper_routes.init_task_store(v1_scraper_routes.TASK_DB_PATH)
+        return store.metrics(hours=hours)
+    except Exception as e:
+        logger.error(f"Failed to get scraper metrics: {e}", exc_info=True)
+        raise HTTPException(500, detail=f"Failed to get scraper metrics: {e}")
+
+
 @router.post("/tasks/{task_id}/cancel")
 async def cancel_task(
     task_id: str,
