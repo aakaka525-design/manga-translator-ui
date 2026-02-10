@@ -137,6 +137,7 @@ async def startup_event():
     stale_tasks = v1_scraper_routes.recover_stale_tasks()
     if stale_tasks:
         logger.warning("Recovered %s stale scraper task(s) after startup", stale_tasks)
+    await v1_scraper_routes.start_alert_scheduler()
     
     # Initialize translation authentication
     init_translation_auth(_audit_service)
@@ -200,6 +201,9 @@ async def startup_event():
 async def shutdown_event():
     """Cleanup on server shutdown"""
     global _system_initializer
+
+    import manga_translator.server.routes.v1_scraper as v1_scraper_routes
+    await v1_scraper_routes.stop_alert_scheduler()
     
     # Stop cleanup service
     from manga_translator.server.core.cleanup_service import get_cleanup_service

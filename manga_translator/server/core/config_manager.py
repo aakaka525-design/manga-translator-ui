@@ -109,6 +109,20 @@ DEFAULT_ADMIN_SETTINGS = {
         'message': '',
         'type': 'info',
     },
+    'scraper_alerts': {
+        'enabled': True,
+        'poll_interval_sec': 30,
+        'cooldown_sec': 300,
+        'threshold_backlog': 30,
+        'threshold_error_rate': 0.25,
+        'threshold_min_sample': 20,
+        'webhook': {
+            'enabled': False,
+            'url': '',
+            'timeout_sec': 5,
+            'max_retries': 3,
+        },
+    },
     'registration': {
         'enabled': False,  # 是否开启用户注册
         'default_group': 'default',  # 新注册用户的默认用户组

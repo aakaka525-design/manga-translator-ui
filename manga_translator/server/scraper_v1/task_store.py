@@ -15,6 +15,18 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _parse_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
 _UNSET = object()
 
 
@@ -55,6 +67,34 @@ class TaskStoreRecord:
             "last_error": self.last_error,
             "request_fingerprint": self.request_fingerprint,
             "started_at": self.started_at,
+        }
+
+
+@dataclass
+class AlertStoreRecord:
+    id: int
+    rule: str
+    severity: str
+    message: str
+    payload: dict[str, Any] | None
+    webhook_status: str
+    webhook_attempts: int
+    webhook_last_error: str | None
+    created_at: str
+    updated_at: str
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "rule": self.rule,
+            "severity": self.severity,
+            "message": self.message,
+            "payload": self.payload,
+            "webhook_status": self.webhook_status,
+            "webhook_attempts": self.webhook_attempts,
+            "webhook_last_error": self.webhook_last_error,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
         }
 
 
@@ -115,6 +155,22 @@ class ScraperTaskStore:
             )
             self._ensure_migrations(conn)
             conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS scraper_alerts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    rule TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    payload_json TEXT,
+                    webhook_status TEXT NOT NULL DEFAULT 'pending',
+                    webhook_attempts INTEGER NOT NULL DEFAULT 0,
+                    webhook_last_error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_scraper_tasks_updated_at ON scraper_tasks(updated_at)"
             )
             conn.execute(
@@ -125,6 +181,12 @@ class ScraperTaskStore:
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_scraper_tasks_provider_updated_at ON scraper_tasks(provider, updated_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_scraper_alerts_rule_created_at ON scraper_alerts(rule, created_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_scraper_alerts_webhook_status_created_at ON scraper_alerts(webhook_status, created_at)"
             )
             conn.commit()
 
@@ -148,6 +210,21 @@ class ScraperTaskStore:
             last_error=row["last_error"] if "last_error" in row.keys() else None,
             request_fingerprint=row["request_fingerprint"] if "request_fingerprint" in row.keys() else None,
             started_at=row["started_at"] if "started_at" in row.keys() else None,
+        )
+
+    def _from_alert_row(self, row: sqlite3.Row) -> AlertStoreRecord:
+        payload_json = row["payload_json"] if "payload_json" in row.keys() else None
+        return AlertStoreRecord(
+            id=int(row["id"]),
+            rule=str(row["rule"] or ""),
+            severity=str(row["severity"] or "info"),
+            message=str(row["message"] or ""),
+            payload=json.loads(payload_json) if payload_json else None,
+            webhook_status=str(row["webhook_status"] or "pending"),
+            webhook_attempts=int(row["webhook_attempts"] or 0),
+            webhook_last_error=row["webhook_last_error"] if "webhook_last_error" in row.keys() else None,
+            created_at=str(row["created_at"] or ""),
+            updated_at=str(row["updated_at"] or ""),
         )
 
     def _fetch_task(self, conn: sqlite3.Connection, task_id: str) -> TaskStoreRecord | None:
@@ -331,6 +408,219 @@ class ScraperTaskStore:
             if row is None:
                 return None
             return self._from_row(row)
+
+    def append_alert(
+        self,
+        *,
+        rule: str,
+        severity: str,
+        message: str,
+        payload: dict[str, Any] | None = None,
+        webhook_status: str = "pending",
+        webhook_attempts: int = 0,
+        webhook_last_error: str | None = None,
+    ) -> AlertStoreRecord:
+        now = _utc_now()
+        payload_json = json.dumps(payload, ensure_ascii=False) if payload is not None else None
+        with self._lock, self._connect() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO scraper_alerts(
+                    rule,severity,message,payload_json,webhook_status,webhook_attempts,webhook_last_error,created_at,updated_at
+                ) VALUES(?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    str(rule or "").strip() or "unknown",
+                    str(severity or "").strip() or "info",
+                    str(message or "").strip(),
+                    payload_json,
+                    str(webhook_status or "").strip() or "pending",
+                    max(0, int(webhook_attempts)),
+                    webhook_last_error,
+                    now,
+                    now,
+                ),
+            )
+            alert_id = int(cursor.lastrowid or 0)
+            conn.commit()
+
+        record = self.get_alert(alert_id)
+        if record is None:
+            raise RuntimeError("failed to load inserted alert")
+        return record
+
+    def get_alert(self, alert_id: int) -> AlertStoreRecord | None:
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                    id,rule,severity,message,payload_json,webhook_status,webhook_attempts,webhook_last_error,created_at,updated_at
+                  FROM scraper_alerts
+                 WHERE id = ?
+                """,
+                (int(alert_id),),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._from_alert_row(row)
+
+    def update_alert_webhook(
+        self,
+        alert_id: int,
+        *,
+        status: str,
+        attempts: int,
+        last_error: str | None = None,
+    ) -> AlertStoreRecord | None:
+        now = _utc_now()
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE scraper_alerts
+                   SET webhook_status = ?,
+                       webhook_attempts = ?,
+                       webhook_last_error = ?,
+                       updated_at = ?
+                 WHERE id = ?
+                """,
+                (
+                    str(status or "").strip() or "pending",
+                    max(0, int(attempts)),
+                    last_error,
+                    now,
+                    int(alert_id),
+                ),
+            )
+            conn.commit()
+        return self.get_alert(alert_id)
+
+    def list_alerts(
+        self,
+        *,
+        severity: str | None = None,
+        rule: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> tuple[list[AlertStoreRecord], int]:
+        safe_limit = max(1, min(int(limit), 200))
+        safe_offset = max(0, int(offset))
+        conditions: list[str] = []
+        values: list[Any] = []
+
+        if severity:
+            conditions.append("severity = ?")
+            values.append(severity.strip())
+
+        if rule:
+            conditions.append("rule = ?")
+            values.append(rule.strip())
+
+        where = ""
+        if conditions:
+            where = " WHERE " + " AND ".join(conditions)
+
+        count_query = f"SELECT COUNT(*) AS total FROM scraper_alerts{where}"
+        list_query = f"""
+            SELECT
+                id,rule,severity,message,payload_json,webhook_status,webhook_attempts,webhook_last_error,created_at,updated_at
+              FROM scraper_alerts
+              {where}
+             ORDER BY created_at DESC, id DESC
+             LIMIT ? OFFSET ?
+        """
+
+        with self._lock, self._connect() as conn:
+            total_row = conn.execute(count_query, tuple(values)).fetchone()
+            total = int(total_row["total"] if total_row else 0)
+            rows = conn.execute(list_query, (*values, safe_limit, safe_offset)).fetchall()
+
+        return [self._from_alert_row(row) for row in rows], total
+
+    def latest_alert_in_cooldown(
+        self,
+        *,
+        rule: str,
+        cooldown_sec: int = 300,
+        severity: str | None = None,
+    ) -> AlertStoreRecord | None:
+        safe_rule = str(rule or "").strip()
+        if not safe_rule:
+            return None
+        safe_cooldown = max(0, int(cooldown_sec))
+
+        conditions = ["rule = ?"]
+        values: list[Any] = [safe_rule]
+        if severity:
+            conditions.append("severity = ?")
+            values.append(severity.strip())
+
+        where = " AND ".join(conditions)
+        query = f"""
+            SELECT
+                id,rule,severity,message,payload_json,webhook_status,webhook_attempts,webhook_last_error,created_at,updated_at
+              FROM scraper_alerts
+             WHERE {where}
+             ORDER BY created_at DESC, id DESC
+             LIMIT 1
+        """
+
+        with self._lock, self._connect() as conn:
+            row = conn.execute(query, tuple(values)).fetchone()
+        if row is None:
+            return None
+
+        record = self._from_alert_row(row)
+        created_at = _parse_iso(record.created_at)
+        if created_at is None:
+            return None
+        delta = (datetime.now(timezone.utc) - created_at).total_seconds()
+        if delta <= float(safe_cooldown):
+            return record
+        return None
+
+    def queue_stats(self) -> dict[str, Any]:
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT status, COUNT(*) AS cnt
+                  FROM scraper_tasks
+                 GROUP BY status
+                """
+            ).fetchall()
+            oldest_pending_row = conn.execute(
+                """
+                SELECT created_at
+                  FROM scraper_tasks
+                 WHERE status IN ('pending','running','retrying')
+                 ORDER BY created_at ASC
+                 LIMIT 1
+                """
+            ).fetchone()
+
+        status_counts = {str(row["status"]): int(row["cnt"] or 0) for row in rows}
+        pending = int(status_counts.get("pending", 0))
+        running = int(status_counts.get("running", 0))
+        retrying = int(status_counts.get("retrying", 0))
+        done = int(status_counts.get("success", 0) + status_counts.get("partial", 0))
+        failed = int(status_counts.get("error", 0))
+        backlog = pending + running + retrying
+
+        oldest_pending_age_sec: int | None = None
+        if oldest_pending_row is not None:
+            created_at = _parse_iso(str(oldest_pending_row["created_at"] or ""))
+            if created_at is not None:
+                age = (datetime.now(timezone.utc) - created_at).total_seconds()
+                oldest_pending_age_sec = max(0, int(age))
+
+        return {
+            "pending": pending,
+            "running": running,
+            "retrying": retrying,
+            "done": done,
+            "failed": failed,
+            "backlog": backlog,
+            "oldest_pending_age_sec": oldest_pending_age_sec,
+        }
 
     def list_tasks(
         self,

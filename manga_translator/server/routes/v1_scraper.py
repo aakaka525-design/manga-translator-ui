@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import os
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urlparse, urljoin
 from uuid import uuid4
 
@@ -22,18 +23,22 @@ from manga_translator.server.core.models import Session
 from manga_translator.server.scraper_v1 import (
     BrowserUnavailableError,
     CloudflareChallengeError,
+    DEFAULT_ALERT_SETTINGS,
     ProviderAdapter,
     ProviderUnavailableError,
+    ScraperAlertEngine,
     ScraperTaskStore,
     collect_cookies,
     get_state_info,
     load_state_payload,
+    normalize_alert_settings,
     normalize_base_url,
     provider_allows_image_host,
     provider_auth_url,
     providers_payload,
     resolve_provider,
     save_state_payload,
+    send_test_webhook,
 )
 
 
@@ -57,6 +62,18 @@ ACTIVE_TASK_STATUSES = {"pending", "running", "retrying"}
 _scraper_tasks: dict[str, dict[str, object]] = {}
 _scraper_tasks_lock = asyncio.Lock()
 _task_store: ScraperTaskStore | None = None
+_alert_scheduler_task: asyncio.Task | None = None
+_alert_scheduler_lock = asyncio.Lock()
+_alert_runtime: dict[str, Any] = {
+    "running": False,
+    "enabled": True,
+    "poll_interval_sec": 30,
+    "last_run_at": None,
+    "last_error": None,
+    "last_emitted": 0,
+    "started_at": None,
+    "stopped_at": None,
+}
 _UNSET = object()
 
 
@@ -137,6 +154,10 @@ class ScraperTaskStatus(BaseModel):
     next_retry_at: Optional[str] = None
     error_code: Optional[str] = None
     last_error: Optional[str] = None
+    queue_status: Optional[str] = None
+    enqueued_at: Optional[str] = None
+    dequeued_at: Optional[str] = None
+    worker_id: Optional[str] = None
 
 
 class ScraperCatalogResponse(BaseModel):
@@ -186,6 +207,163 @@ def _get_task_store() -> ScraperTaskStore:
     if _task_store is None:
         return init_task_store()
     return _task_store
+
+
+def _task_status_to_queue_status(status: str) -> str:
+    normalized = (status or "").strip().lower()
+    if normalized == "pending":
+        return "queued"
+    if normalized == "running":
+        return "running"
+    if normalized == "retrying":
+        return "retrying"
+    if normalized in {"success", "partial"}:
+        return "done"
+    if normalized == "error":
+        return "failed"
+    return normalized or "queued"
+
+
+def _load_alert_settings() -> dict[str, Any]:
+    settings = None
+    try:
+        from manga_translator.server.core.config_manager import admin_settings
+
+        settings = admin_settings.get("scraper_alerts")
+    except Exception:
+        settings = None
+    return normalize_alert_settings(settings or DEFAULT_ALERT_SETTINGS)
+
+
+def get_alert_runtime_snapshot() -> dict[str, Any]:
+    settings = _load_alert_settings()
+    return {
+        "running": bool(_alert_runtime.get("running", False)),
+        "enabled": bool(settings.get("enabled", True)),
+        "poll_interval_sec": int(settings.get("poll_interval_sec", 30)),
+        "last_run_at": _alert_runtime.get("last_run_at"),
+        "last_error": _alert_runtime.get("last_error"),
+        "last_emitted": int(_alert_runtime.get("last_emitted", 0) or 0),
+        "started_at": _alert_runtime.get("started_at"),
+        "stopped_at": _alert_runtime.get("stopped_at"),
+    }
+
+
+def get_scraper_health_snapshot() -> dict[str, Any]:
+    settings = _load_alert_settings()
+    runtime = get_alert_runtime_snapshot()
+    db_ok = True
+    db_error: str | None = None
+    try:
+        _get_task_store().metrics(hours=1)
+    except Exception as exc:  # noqa: BLE001
+        db_ok = False
+        db_error = str(exc)
+
+    scheduler_expected = bool(settings.get("enabled", True))
+    scheduler_running = bool(runtime.get("running", False))
+    runtime_error = str(runtime.get("last_error") or "").strip() or None
+    degraded = (not db_ok) or bool(runtime_error) or (scheduler_expected and not scheduler_running)
+    status = "degraded" if degraded else "ok"
+
+    return {
+        "status": status,
+        "db": {
+            "path": str(TASK_DB_PATH),
+            "available": db_ok,
+            "error": db_error,
+        },
+        "scheduler": runtime,
+        "alerts": {
+            "enabled": bool(settings.get("enabled", True)),
+            "cooldown_sec": int(settings.get("cooldown_sec", 300)),
+            "webhook_enabled": bool((settings.get("webhook", {}) or {}).get("enabled", False)),
+        },
+        "time": _now_iso(),
+    }
+
+
+async def run_alert_cycle_once() -> list[dict[str, Any]]:
+    store = _get_task_store()
+    settings = _load_alert_settings()
+    engine = ScraperAlertEngine(store, settings)
+    _alert_runtime["enabled"] = bool(settings.get("enabled", True))
+    _alert_runtime["poll_interval_sec"] = int(settings.get("poll_interval_sec", 30))
+
+    if not engine.enabled():
+        _alert_runtime["last_run_at"] = _now_iso()
+        _alert_runtime["last_error"] = None
+        _alert_runtime["last_emitted"] = 0
+        return []
+
+    try:
+        records = await engine.run_once()
+        _alert_runtime["last_run_at"] = _now_iso()
+        _alert_runtime["last_error"] = None
+        _alert_runtime["last_emitted"] = len(records)
+        return [item.to_payload() for item in records]
+    except Exception as exc:  # noqa: BLE001
+        _alert_runtime["last_run_at"] = _now_iso()
+        _alert_runtime["last_error"] = str(exc)
+        _alert_runtime["last_emitted"] = 0
+        return []
+
+
+async def _alert_scheduler_loop() -> None:
+    while True:
+        await run_alert_cycle_once()
+        interval = int(_alert_runtime.get("poll_interval_sec", 30) or 30)
+        await asyncio.sleep(max(5, interval))
+
+
+async def start_alert_scheduler() -> None:
+    global _alert_scheduler_task
+    async with _alert_scheduler_lock:
+        settings = _load_alert_settings()
+        _alert_runtime["enabled"] = bool(settings.get("enabled", True))
+        _alert_runtime["poll_interval_sec"] = int(settings.get("poll_interval_sec", 30))
+        _alert_runtime["last_error"] = None
+
+        if not settings.get("enabled", True):
+            _alert_runtime["running"] = False
+            _alert_runtime["stopped_at"] = _now_iso()
+            return
+
+        if _alert_scheduler_task is not None and not _alert_scheduler_task.done():
+            _alert_runtime["running"] = True
+            return
+
+        _alert_scheduler_task = asyncio.create_task(_alert_scheduler_loop())
+        _alert_runtime["running"] = True
+        _alert_runtime["started_at"] = _now_iso()
+        _alert_runtime["stopped_at"] = None
+
+
+async def stop_alert_scheduler() -> None:
+    global _alert_scheduler_task
+    async with _alert_scheduler_lock:
+        task = _alert_scheduler_task
+        _alert_scheduler_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        _alert_runtime["running"] = False
+        _alert_runtime["stopped_at"] = _now_iso()
+
+
+async def trigger_test_webhook(webhook_url: str | None = None) -> dict[str, Any]:
+    settings = _load_alert_settings()
+    webhook_cfg = settings.get("webhook", {}) or {}
+    target = (webhook_url or webhook_cfg.get("url") or "").strip()
+    if not target:
+        raise ValueError("webhook url is not configured")
+    result = await send_test_webhook(
+        webhook_url=target,
+        timeout_sec=int(webhook_cfg.get("timeout_sec", 5)),
+        max_retries=int(webhook_cfg.get("max_retries", 3)),
+    )
+    return result
 
 
 def _scraper_http_error(status_code: int, code: str, message: str) -> HTTPException:
@@ -865,19 +1043,26 @@ async def get_scraper_task(task_id: str, _session: Session = Depends(require_aut
         task = _scraper_tasks.get(task_id)
 
     if task:
+        status = str(task.get("status", "unknown"))
+        created_at = str(task.get("created_at", "")) or None
+        started_at = str(task.get("started_at", "")) or None
         return ScraperTaskStatus(
             task_id=task_id,
-            status=str(task.get("status", "unknown")),
+            status=status,
             message=str(task.get("message", "")),
             report=task.get("report") if isinstance(task.get("report"), dict) else None,
             persisted=True,
-            created_at=str(task.get("created_at", "")) or None,
+            created_at=created_at,
             updated_at=str(task.get("updated_at", "")) or None,
             retry_count=int(task.get("retry_count", 0) or 0),
             max_retries=int(task.get("max_retries", TASK_MAX_RETRIES) or TASK_MAX_RETRIES),
             next_retry_at=str(task.get("next_retry_at", "")) or None,
             error_code=str(task.get("error_code", "")) or None,
             last_error=str(task.get("last_error", "")) or None,
+            queue_status=_task_status_to_queue_status(status),
+            enqueued_at=created_at,
+            dequeued_at=started_at,
+            worker_id="local-worker",
         )
 
     try:
@@ -901,6 +1086,10 @@ async def get_scraper_task(task_id: str, _session: Session = Depends(require_aut
         next_retry_at=record.next_retry_at,
         error_code=record.error_code,
         last_error=record.last_error,
+        queue_status=_task_status_to_queue_status(record.status),
+        enqueued_at=record.created_at,
+        dequeued_at=record.started_at,
+        worker_id="local-worker",
     )
 
 

@@ -9,7 +9,7 @@ import io
 import secrets
 from datetime import datetime
 from typing import Optional
-from fastapi import APIRouter, Header, Form, HTTPException, Depends
+from fastapi import APIRouter, Header, Form, HTTPException, Depends, Body
 from fastapi.responses import StreamingResponse
 
 from manga_translator.server.core.config_manager import (
@@ -31,6 +31,10 @@ import logging
 logger = logging.getLogger('manga_translator.server')
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+def _admin_scraper_http_error(status_code: int, code: str, message: str) -> HTTPException:
+    return HTTPException(status_code=status_code, detail={"code": code, "message": message})
 
 
 # ============================================================================
@@ -388,6 +392,120 @@ async def get_scraper_metrics(
     except Exception as e:
         logger.error(f"Failed to get scraper metrics: {e}", exc_info=True)
         raise HTTPException(500, detail=f"Failed to get scraper metrics: {e}")
+
+
+@router.get("/scraper/health")
+async def get_scraper_health(
+    session: Session = Depends(require_admin),
+    token: str = Header(alias="X-Admin-Token", default=None)
+):
+    """
+    Get scraper health status (DB + scheduler + alert config).
+    """
+    if token and token in valid_admin_tokens:
+        logger.debug("Using legacy admin token authentication")
+
+    try:
+        import manga_translator.server.routes.v1_scraper as v1_scraper_routes
+
+        v1_scraper_routes.init_task_store(v1_scraper_routes.TASK_DB_PATH)
+        return v1_scraper_routes.get_scraper_health_snapshot()
+    except Exception as e:
+        logger.error(f"Failed to get scraper health: {e}", exc_info=True)
+        raise _admin_scraper_http_error(500, "SCRAPER_ALERT_STORE_ERROR", f"Failed to get scraper health: {e}")
+
+
+@router.get("/scraper/alerts")
+async def get_scraper_alerts(
+    severity: Optional[str] = None,
+    rule: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+    session: Session = Depends(require_admin),
+    token: str = Header(alias="X-Admin-Token", default=None)
+):
+    """
+    List scraper alerts from SQLite store with filters and pagination.
+    """
+    if token and token in valid_admin_tokens:
+        logger.debug("Using legacy admin token authentication")
+
+    try:
+        import manga_translator.server.routes.v1_scraper as v1_scraper_routes
+
+        store = v1_scraper_routes.init_task_store(v1_scraper_routes.TASK_DB_PATH)
+        items, total = store.list_alerts(
+            severity=(severity or "").strip() or None,
+            rule=(rule or "").strip() or None,
+            limit=limit,
+            offset=offset,
+        )
+        safe_limit = max(1, min(int(limit), 200))
+        safe_offset = max(0, int(offset))
+        return {
+            "items": [item.to_payload() for item in items],
+            "total": total,
+            "limit": safe_limit,
+            "offset": safe_offset,
+            "has_more": safe_offset + safe_limit < total,
+        }
+    except Exception as e:
+        logger.error(f"Failed to list scraper alerts: {e}", exc_info=True)
+        raise _admin_scraper_http_error(500, "SCRAPER_ALERT_STORE_ERROR", f"Failed to list scraper alerts: {e}")
+
+
+@router.get("/scraper/queue/stats")
+async def get_scraper_queue_stats(
+    session: Session = Depends(require_admin),
+    token: str = Header(alias="X-Admin-Token", default=None)
+):
+    """
+    Get scraper queue counters and pending age from SQLite task store.
+    """
+    if token and token in valid_admin_tokens:
+        logger.debug("Using legacy admin token authentication")
+
+    try:
+        import manga_translator.server.routes.v1_scraper as v1_scraper_routes
+
+        store = v1_scraper_routes.init_task_store(v1_scraper_routes.TASK_DB_PATH)
+        return store.queue_stats()
+    except Exception as e:
+        logger.error(f"Failed to get scraper queue stats: {e}", exc_info=True)
+        raise _admin_scraper_http_error(500, "SCRAPER_ALERT_STORE_ERROR", f"Failed to get scraper queue stats: {e}")
+
+
+@router.post("/scraper/alerts/test-webhook")
+async def test_scraper_alert_webhook(
+    payload: Optional[dict] = Body(default=None),
+    session: Session = Depends(require_admin),
+    token: str = Header(alias="X-Admin-Token", default=None)
+):
+    """
+    Trigger a test webhook event for scraper alerts.
+    """
+    if token and token in valid_admin_tokens:
+        logger.debug("Using legacy admin token authentication")
+
+    try:
+        import manga_translator.server.routes.v1_scraper as v1_scraper_routes
+
+        webhook_url = None
+        if isinstance(payload, dict):
+            webhook_url = str(payload.get("webhook_url") or "").strip() or None
+
+        result = await v1_scraper_routes.trigger_test_webhook(webhook_url)
+        return {
+            "sent": bool(result.get("sent", False)),
+            "attempts": int(result.get("attempts", 0) or 0),
+            "status": str(result.get("status") or ("sent" if result.get("sent") else "failed")),
+            "message": str(result.get("message") or ""),
+        }
+    except ValueError as e:
+        raise _admin_scraper_http_error(400, "SCRAPER_ALERT_CONFIG_INVALID", str(e)) from e
+    except Exception as e:
+        logger.error(f"Failed to trigger scraper alert webhook: {e}", exc_info=True)
+        raise _admin_scraper_http_error(502, "SCRAPER_ALERT_WEBHOOK_FAILED", str(e)) from e
 
 
 @router.post("/tasks/{task_id}/cancel")

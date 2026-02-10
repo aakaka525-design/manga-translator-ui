@@ -29,6 +29,13 @@ from .providers import (
     resolve_provider,
 )
 from .task_store import ScraperTaskStore
+from .alerts import (
+    DEFAULT_ALERT_SETTINGS,
+    ScraperAlertEngine,
+    normalize_alert_settings,
+    send_test_webhook,
+    send_webhook,
+)
 
 __all__ = [
     "CloudflareChallengeError",
@@ -54,4 +61,9 @@ __all__ = [
     "providers_payload",
     "resolve_provider",
     "ScraperTaskStore",
+    "DEFAULT_ALERT_SETTINGS",
+    "ScraperAlertEngine",
+    "normalize_alert_settings",
+    "send_test_webhook",
+    "send_webhook",
 ]

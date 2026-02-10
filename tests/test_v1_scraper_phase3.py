@@ -228,6 +228,8 @@ def test_task_status_contains_retry_fields(phase3_app):
         assert data["max_retries"] == 2
         assert data["error_code"] == "SCRAPER_RETRY_EXHAUSTED"
         assert data["last_error"] == "network timeout"
+        assert data["queue_status"] == "failed"
+        assert data["worker_id"] == "local-worker"
 
 
 def test_recover_stale_tasks_marks_error(phase3_app):
