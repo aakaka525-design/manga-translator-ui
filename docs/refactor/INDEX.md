@@ -11,6 +11,9 @@
 - Phase3 Plan: `docs/plans/2026-02-10-scraper-phase3-reliability.md`
 - Phase3 Worklog: `docs/refactor/2026-02-10-phase3-worklog.md`
 - Phase3 API Contract: `docs/api/2026-02-10-v1-scraper-phase3-contract.md`
+- Phase4 Eval Plan: `docs/plans/2026-02-10-phase4-priority-evaluation.md`
+- Phase4 Eval Worklog: `docs/refactor/2026-02-10-phase4-eval-worklog.md`
+- Phase4 Decision: `docs/decisions/2026-02-10-phase4-go-no-go.md`
 
 ## 验证快照
 - 后端: `pytest -q tests/test_v1_routes.py` -> pass
