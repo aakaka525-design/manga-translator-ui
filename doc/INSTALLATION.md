@@ -17,7 +17,14 @@ git clone https://github.com/hgmzhn/manga-translator-ui.git
 cd manga-translator-ui
 ```
 
-### 2. 安装依赖
+### 2. 创建虚拟环境并激活
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
+
+### 3. 安装依赖
 
 ```bash
 # CPU
@@ -30,13 +37,19 @@ pip install -r requirements_cpu.txt
 # pip install -r requirements_amd.txt
 ```
 
-### 3. 启动 Web 服务
+### 4. 依赖检查
+
+```bash
+python scripts/check_runtime_deps.py
+```
+
+### 5. 启动 Web 服务
 
 ```bash
 python -m manga_translator web
 ```
 
-### 4. 构建前端（首次或前端改动后）
+### 6. 构建前端（首次或前端改动后）
 
 ```bash
 cd frontend
@@ -47,12 +60,22 @@ npm run build
 - 输出目录：`manga_translator/server/static/dist`
 - Git 策略：构建产物不入库（仅源码入库）
 
-### 5. 访问入口
+### 7. 访问入口
 
 - `http://localhost:8000/`
 - `http://localhost:8000/signin`
 - `http://localhost:8000/admin`
 - `http://localhost:8000/scraper`
+
+### 8. 前端开发模式（可选）
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+开发模式下 `/api`、`/auth`、`/admin` 会代理到后端 `http://localhost:8000`。
 
 ## 首次管理员初始化
 

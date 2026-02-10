@@ -22,6 +22,7 @@ presets/
 # Build output
 dist/
 manga_translator/server/static/dist/
+frontend/stats.html
 *.egg-info/
 
 # Models directory (large binary files - use git-lfs or separate download)

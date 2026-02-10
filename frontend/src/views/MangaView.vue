@@ -3,6 +3,7 @@ import { onMounted, onUnmounted, computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMangaStore } from '@/stores/manga'
 import { useTranslateStore } from '@/stores/translate'
+import { useSettingsStore } from '@/stores/settings'
 import { useToastStore } from '@/stores/toast'
 import { mangaApi, translateApi } from '@/api'
 import ComicBackground from '@/components/ui/ComicBackground.vue'
@@ -14,6 +15,7 @@ const route = useRoute()
 const router = useRouter()
 const mangaStore = useMangaStore()
 const translateStore = useTranslateStore()
+const settingsStore = useSettingsStore()
 const toast = useToastStore()
 const deletingManga = ref(false)
 const deletingChapterId = ref(null)
@@ -183,9 +185,11 @@ async function translateChapter(chapter, event) {
   try {
     await translateApi.translateChapter({
       manga_id: mangaStore.currentManga.id,
-      chapter_id: chapter.id
+      chapter_id: chapter.id,
+      source_language: settingsStore.settings.sourceLang,
+      target_language: settingsStore.settings.targetLang,
     })
-    toast.show('翻译任务已启动', 'success')
+    toast.show('翻译任务已提交，等待处理结果', 'info')
   } catch (e) {
     console.error('Translate failed:', e)
     toast.show('翻译启动失败: ' + e.message, 'error')

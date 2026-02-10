@@ -15,7 +15,14 @@
 
 ## 快速开始（源码运行）
 
-1. 安装 Python 依赖（按硬件选择一套）：
+1. 创建并激活 Python 虚拟环境：
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
+
+2. 安装 Python 依赖（按硬件选择一套）：
 
 ```bash
 pip install -r requirements_cpu.txt
@@ -25,13 +32,19 @@ pip install -r requirements_gpu.txt
 pip install -r requirements_amd.txt
 ```
 
-2. 启动 Web 服务：
+3. 运行前置检查（Python 版本与关键依赖）：
+
+```bash
+python scripts/check_runtime_deps.py
+```
+
+4. 启动 Web 服务：
 
 ```bash
 python -m manga_translator web
 ```
 
-3. 首次前端构建（仅首次或前端代码有改动时）：
+5. 首次前端构建（仅首次或前端代码有改动时）：
 
 ```bash
 cd frontend
@@ -39,11 +52,21 @@ npm ci
 npm run build
 ```
 
-4. 访问页面：
+6. 访问页面：
 - 首页：`http://localhost:8000/`
 - 登录页：`http://localhost:8000/signin`
 - 管理页：`http://localhost:8000/admin`
 - 爬虫页：`http://localhost:8000/scraper`
+
+前端开发模式（可选）：
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+开发模式下 `/api`、`/auth`、`/admin` 会代理到本地后端 `http://localhost:8000`。
 
 ## 鉴权初始化（无默认账号密码）
 

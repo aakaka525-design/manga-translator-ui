@@ -45,10 +45,31 @@ def _normalize_url(base_url: str, maybe_url: str) -> str:
     return urljoin(base_url, maybe_url)
 
 
+def _canonical_series_url(base_url: str, maybe_url: str, *, allowed_sections: tuple[str, ...]) -> Optional[str]:
+    full_url = _normalize_url(base_url, maybe_url)
+    parsed = urlparse(full_url)
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) != 2:
+        return None
+
+    section, slug = parts
+    if section not in allowed_sections or not slug:
+        return None
+
+    return f"{parsed.scheme}://{parsed.netloc}/{section}/{slug}/"
+
+
 def _looks_like_challenge(html: str) -> bool:
     sample = html.lower()
     indicators = ["cloudflare", "cf-challenge", "attention required", "just a moment"]
     return any(mark in sample for mark in indicators)
+
+
+def _request_headers(user_agent: str) -> dict[str, str]:
+    return {
+        "User-Agent": user_agent,
+        "Accept-Encoding": "gzip, deflate",
+    }
 
 
 async def _fetch_html(
@@ -59,11 +80,61 @@ async def _fetch_html(
     timeout_sec: float = 25,
 ) -> str:
     timeout = aiohttp.ClientTimeout(total=timeout_sec)
+    request_headers = {"Accept-Encoding": "gzip, deflate"}
+    request_headers.update(headers)
     async with aiohttp.ClientSession(timeout=timeout, cookies=cookies) as session:
-        async with session.get(url, headers=headers) as response:
-            response.raise_for_status()
+        async with session.get(url, headers=request_headers) as response:
             text = await response.text()
+            if _looks_like_challenge(text):
+                raise CloudflareChallengeError("检测到站点验证，请先上传可用状态文件")
+            response.raise_for_status()
     return text
+
+
+def _extract_ajax_config(html: str, base_url: str) -> Optional[tuple[str, str]]:
+    soup = BeautifulSoup(html, "html.parser")
+    holder = soup.select_one("#manga-chapters-holder[data-id]")
+    if holder is None:
+        return None
+
+    manga_id = str(holder.get("data-id") or "").strip()
+    if not manga_id:
+        return None
+
+    ajax_url = None
+    match = re.search(r'"ajax_url"\s*:\s*"([^"]+)"', html)
+    if match:
+        ajax_url = _normalize_url(base_url, match.group(1))
+    if not ajax_url:
+        ajax_url = _normalize_url(base_url, "/wp-admin/admin-ajax.php")
+
+    return ajax_url, manga_id
+
+
+async def _fetch_chapters_via_ajax(
+    ajax_url: str,
+    manga_id: str,
+    *,
+    cookies: dict[str, str],
+    headers: dict[str, str],
+    referer: str,
+    timeout_sec: float = 25,
+) -> str:
+    timeout = aiohttp.ClientTimeout(total=timeout_sec)
+    request_headers = {"Accept-Encoding": "gzip, deflate", "Referer": referer}
+    request_headers.update(headers)
+
+    async with aiohttp.ClientSession(timeout=timeout, cookies=cookies) as session:
+        async with session.post(
+            ajax_url,
+            headers=request_headers,
+            data={"action": "manga_get_chapters", "manga": manga_id},
+        ) as response:
+            text = await response.text()
+            if _looks_like_challenge(text):
+                raise CloudflareChallengeError("检测到站点验证，请先上传可用状态文件")
+            response.raise_for_status()
+            return text
 
 
 def _extract_cover(item, base_url: str) -> Optional[str]:
@@ -104,18 +175,18 @@ def parse_search(html: str, base_url: str) -> list[MangaItem]:
             if not link:
                 continue
 
-            full_url = _normalize_url(base_url, str(link))
-            if "/manga/" not in full_url:
+            full_url = _canonical_series_url(base_url, str(link), allowed_sections=("manga",))
+            if not full_url:
                 continue
             manga_id = _infer_slug(full_url)
-            if manga_id in seen:
+            if full_url in seen:
                 continue
 
             title_node = item.select_one(".post-title, .h5 a, .manga-name")
             title = title_node.get_text(strip=True) if title_node else manga_id
             cover = _extract_cover(item, base_url)
             results.append(MangaItem(id=manga_id, title=title or manga_id, url=full_url, cover_url=cover))
-            seen.add(manga_id)
+            seen.add(full_url)
 
     return results
 
@@ -196,15 +267,14 @@ async def search_manga(
     user_agent: str,
 ) -> list[MangaItem]:
     search_url = urljoin(base_url, f"/?s={quote_plus(keyword)}&post_type=wp-manga")
-    html = await _fetch_html(search_url, cookies=cookies, headers={"User-Agent": user_agent})
+    html = await _fetch_html(search_url, cookies=cookies, headers=_request_headers(user_agent))
     results = parse_search(html, base_url)
 
     # fast path for slug-style query
     slug = re.sub(r"[^a-z0-9]+", "-", keyword.lower()).strip("-")
-    if slug:
+    if slug and not results:
         direct_url = urljoin(base_url, f"/manga/{slug}/")
-        if not any(item.id == slug for item in results):
-            results.insert(0, MangaItem(id=slug, title=keyword, url=direct_url, cover_url=None))
+        results.append(MangaItem(id=slug, title=keyword, url=direct_url, cover_url=None))
 
     if _looks_like_challenge(html) and not results:
         raise CloudflareChallengeError("检测到站点验证，请先上传可用状态文件")
@@ -235,7 +305,7 @@ async def list_catalog(
         separator = "&" if "?" in url else "?"
         url = f"{url}{separator}m_orderby={quote_plus(orderby)}"
 
-    html = await _fetch_html(url, cookies=cookies, headers={"User-Agent": user_agent})
+    html = await _fetch_html(url, cookies=cookies, headers=_request_headers(user_agent))
     items = parse_search(html, base_url)
     has_more = parse_catalog_has_more(html)
     if _looks_like_challenge(html) and not items:
@@ -250,8 +320,22 @@ async def list_chapters(
     cookies: dict[str, str],
     user_agent: str,
 ) -> list[ChapterItem]:
-    html = await _fetch_html(manga_url, cookies=cookies, headers={"User-Agent": user_agent})
+    headers = _request_headers(user_agent)
+    html = await _fetch_html(manga_url, cookies=cookies, headers=headers)
     chapters = parse_chapters(html, base_url)
+    if not chapters:
+        config = _extract_ajax_config(html, base_url)
+        if config:
+            ajax_url, manga_id = config
+            ajax_html = await _fetch_chapters_via_ajax(
+                ajax_url,
+                manga_id,
+                cookies=cookies,
+                headers=headers,
+                referer=manga_url,
+            )
+            chapters = parse_chapters(ajax_html, base_url)
+
     if _looks_like_challenge(html) and not chapters:
         raise CloudflareChallengeError("检测到站点验证，请先上传可用状态文件")
     return chapters
@@ -264,7 +348,7 @@ async def fetch_reader_images(
     cookies: dict[str, str],
     user_agent: str,
 ) -> list[str]:
-    html = await _fetch_html(chapter_url, cookies=cookies, headers={"User-Agent": user_agent})
+    html = await _fetch_html(chapter_url, cookies=cookies, headers=_request_headers(user_agent))
     images = parse_reader_images(html, base_url)
     if _looks_like_challenge(html) and not images:
         raise CloudflareChallengeError("检测到站点验证，请先上传可用状态文件")

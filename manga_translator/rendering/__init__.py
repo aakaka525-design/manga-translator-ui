@@ -991,10 +991,32 @@ def resize_regions_to_font_size(img: np.ndarray, text_regions: List['TextBlock']
                     from shapely.ops import unary_union
                     try:
                         unrotated_polygons = []
-                        for i, p in enumerate(region.lines):
+                        for p in region.lines:
                             unrotated_p = rotate_polygons(region.center, p.reshape(1, -1, 2), region.angle, to_int=False)
-                            unrotated_polygons.append(Polygon(unrotated_p.reshape(-1, 2)))
-                        union_poly = unary_union(unrotated_polygons)
+                            poly = Polygon(unrotated_p.reshape(-1, 2))
+                            if not poly.is_valid:
+                                poly = poly.buffer(0)
+                            if poly.is_empty:
+                                continue
+                            unrotated_polygons.append(poly)
+                        if not unrotated_polygons:
+                            raise ValueError("No valid polygons for union")
+                        try:
+                            union_poly = unary_union(unrotated_polygons)
+                        except Exception:
+                            repaired_polygons = []
+                            for poly in unrotated_polygons:
+                                repaired = poly.buffer(0)
+                                if repaired.is_empty:
+                                    continue
+                                repaired_polygons.append(repaired)
+                            if not repaired_polygons:
+                                raise
+                            union_poly = unary_union(repaired_polygons)
+                        if getattr(union_poly, "is_empty", False):
+                            raise ValueError("Empty union polygon")
+                        if getattr(union_poly, "geom_type", "") == "MultiPolygon":
+                            union_poly = max(union_poly.geoms, key=lambda geom: geom.area)
                         unrotated_base_poly = union_poly.envelope
                         # 使用外接矩形面积（bubble_size），包含框之间的空白
                         original_area = region.unrotated_size[0] * region.unrotated_size[1]

@@ -4,11 +4,14 @@
 提供 FastAPI 依赖函数用于验证用户身份和权限。
 """
 
+import inspect
 import logging
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
-from fastapi import Header, HTTPException, Depends, Query
+from fastapi import Header, HTTPException, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
+from manga_translator.server.core.auth import valid_admin_tokens
 from manga_translator.server.core.models import Session
 from manga_translator.server.core.session_service import SessionService
 from manga_translator.server.core.permission_service import PermissionService
@@ -164,15 +167,22 @@ async def require_auth(
 
 
 async def require_admin(
-    session: Session = Depends(require_auth)
+    request: Request,
+    x_admin_token: Optional[str] = Header(None, alias="X-Admin-Token"),
+    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
+    token: Optional[str] = Query(None, description="会话令牌（用于下载器兼容）")
 ) -> Session:
     """
-    FastAPI 依赖函数：要求管理员认证
-    
-    验证用户是否为管理员。如果不是管理员，抛出 403 错误。
+    FastAPI 依赖函数：要求管理员认证（兼容 legacy X-Admin-Token）
+
+    优先校验 X-Admin-Token，命中后直接通过。
+    否则回退到 require_auth 的会话鉴权并校验 admin 角色。
     
     Args:
-        session: 从 require_auth 获取的会话对象
+        request: FastAPI 请求对象，用于处理依赖覆盖
+        x_admin_token: legacy 管理员令牌
+        x_session_token: 会话令牌请求头
+        token: 会话令牌 URL 参数
     
     Returns:
         Session: 验证通过的管理员会话对象
@@ -180,6 +190,37 @@ async def require_admin(
     Raises:
         HTTPException: 如果用户不是管理员（403）
     """
+    if x_admin_token is not None:
+        if x_admin_token in valid_admin_tokens:
+            now = datetime.now(timezone.utc)
+            return Session(
+                session_id=f"legacy-admin-{x_admin_token[:8]}",
+                username="legacy-admin",
+                role="admin",
+                token=x_admin_token,
+                created_at=now,
+                last_activity=now,
+                ip_address="legacy",
+                user_agent="legacy-admin-token",
+                is_active=True,
+            )
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error": {
+                    "code": "INVALID_TOKEN",
+                    "message": "管理员令牌无效或已过期"
+                }
+            }
+        )
+
+    auth_dependency = request.app.dependency_overrides.get(require_auth, require_auth)
+    try:
+        resolved = auth_dependency(x_session_token=x_session_token, token=token)
+    except TypeError:
+        resolved = auth_dependency()
+    session = await resolved if inspect.isawaitable(resolved) else resolved
+
     if session.role != 'admin':
         logger.warning(
             f"Authorization failed: User '{session.username}' "

@@ -4,7 +4,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import ReaderView from "@/views/ReaderView.vue";
 import { useMangaStore } from "@/stores/manga";
 import { useToastStore } from "@/stores/toast";
-import { mangaApi } from "@/api";
+import { mangaApi, translateApi } from "@/api";
 
 let routeParams = { mangaId: "manga-1", chapterId: "ch-1" };
 const routerPush = vi.fn();
@@ -25,6 +25,7 @@ vi.mock("@/composables/useReadingHistory", () => ({
 }));
 
 vi.mock("@/api", () => ({
+  getSessionToken: vi.fn(() => "token-test"),
   mangaApi: {
     getChapter: vi.fn(),
   },
@@ -79,6 +80,14 @@ function mountReader(chapterId = "ch-1") {
 describe("reader mobile actions", () => {
   beforeEach(() => {
     Object.defineProperty(window, "scrollTo", { value: vi.fn(), writable: true });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        json: async () => ({}),
+      })
+    );
     routeParams = { mangaId: "manga-1", chapterId: "ch-1" };
     routerPush.mockReset();
     routerGo.mockReset();
@@ -130,5 +139,28 @@ describe("reader mobile actions", () => {
     expect(
       last.wrapper.get('[data-test="mobile-prev-chapter"]').attributes("disabled")
     ).toBeUndefined();
+  });
+
+  it("reloads chapter pages after retranslate request succeeds", async () => {
+    const { wrapper, toastStore } = mountReader("ch-1");
+    translateApi.retranslatePage.mockResolvedValue({ status: "completed" });
+    await flushPromises();
+
+    expect(mangaApi.getChapter).toHaveBeenCalledTimes(1);
+
+    const retranslateButton = wrapper.get('button[title="重新翻译"]');
+    await retranslateButton.trigger("click");
+    await flushPromises();
+
+    expect(translateApi.retranslatePage).toHaveBeenCalledTimes(1);
+    expect(translateApi.retranslatePage).toHaveBeenCalledWith({
+      manga_id: "manga-1",
+      chapter_id: "ch-1",
+      image_name: "1.jpg",
+      source_language: "en",
+      target_language: "zh",
+    });
+    expect(mangaApi.getChapter).toHaveBeenCalledTimes(2);
+    expect(toastStore.show).toHaveBeenCalledWith("翻译请求已提交", "success");
   });
 });

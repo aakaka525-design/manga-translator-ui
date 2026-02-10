@@ -68,14 +68,26 @@ def complete_mask_fill(text_lines: List[Tuple[int, int, int, int]], mask_shape):
         final_mask = cv2.rectangle(final_mask, (x, y), (x + w, y + h), (255), -1)
     return final_mask
 
-from pydensecrf.utils import compute_unary, unary_from_softmax
-import pydensecrf.densecrf as dcrf
+_DENSECRF_AVAILABLE = True
+_DENSECRF_IMPORT_ERROR = None
+_DENSECRF_WARNING_EMITTED = False
+try:
+    from pydensecrf.utils import compute_unary, unary_from_softmax
+    import pydensecrf.densecrf as dcrf
+except Exception as exc:  # noqa: BLE001
+    _DENSECRF_AVAILABLE = False
+    _DENSECRF_IMPORT_ERROR = exc
+    compute_unary = None
+    unary_from_softmax = None
+    dcrf = None
 
 # 兼容不同版本的 pydensecrf
-DIAG_KERNEL = getattr(dcrf, 'DIAG_KERNEL', 0)
-NO_NORMALIZATION = getattr(dcrf, 'NO_NORMALIZATION', 0)
+DIAG_KERNEL = getattr(dcrf, 'DIAG_KERNEL', 0) if dcrf is not None else 0
+NO_NORMALIZATION = getattr(dcrf, 'NO_NORMALIZATION', 0) if dcrf is not None else 0
 
 def refine_mask(rgbimg, rawmask):
+    global _DENSECRF_WARNING_EMITTED
+
     # Optimization: Early exit for empty or trivial masks
     if rawmask is None or rawmask.size == 0:
         return rawmask
@@ -85,6 +97,17 @@ def refine_mask(rgbimg, rawmask):
     # Optimization: Skip expensive CRF for very small regions (e.g. < 100 pixels)
     # The overhead of creating DenseCRF2D outweighs the benefit for tiny spots
     if rawmask.size < 100:
+        return rawmask
+
+    if not _DENSECRF_AVAILABLE:
+        if not _DENSECRF_WARNING_EMITTED:
+            logging.getLogger('manga_translator').warning(
+                "pydensecrf unavailable, skip CRF mask refinement: %s",
+                _DENSECRF_IMPORT_ERROR,
+            )
+            _DENSECRF_WARNING_EMITTED = True
+        if len(rawmask.shape) == 3:
+            return rawmask[:, :, 0]
         return rawmask
 
     if len(rawmask.shape) == 2:

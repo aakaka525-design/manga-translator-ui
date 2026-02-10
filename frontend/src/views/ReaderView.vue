@@ -2,6 +2,7 @@
 import { ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useMangaStore } from '@/stores/manga'
+import { useSettingsStore } from '@/stores/settings'
 import { useToastStore } from '@/stores/toast'
 import { mangaApi, translateApi } from '@/api'
 import { useKeyboard } from '@/composables/useKeyboard'
@@ -14,6 +15,7 @@ import ComicLoading from '@/components/ui/ComicLoading.vue'
 const route = useRoute()
 const router = useRouter()
 const mangaStore = useMangaStore()
+const settingsStore = useSettingsStore()
 const toast = useToastStore()
 const { addEntry } = useReadingHistory()
 
@@ -120,12 +122,16 @@ async function handleRetranslate(page) {
     await translateApi.retranslatePage({
       manga_id: mangaId.value,
       chapter_id: chapterId.value,
-      image_name: pageName
+      image_name: pageName,
+      source_language: settingsStore.settings.sourceLang,
+      target_language: settingsStore.settings.targetLang,
     })
+    await loadChapter()
     toast.show('翻译请求已提交', 'success')
   } catch (e) {
     console.error(e)
-    toast.show('翻译失败', 'error')
+    const message = e?.message ? `翻译失败: ${e.message}` : '翻译失败'
+    toast.show(message, 'error')
   }
 }
 

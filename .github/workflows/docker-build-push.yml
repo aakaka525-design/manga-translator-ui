@@ -22,7 +22,26 @@ env:
   IMAGE_NAME: manga-translator
 
 jobs:
+  test-before-build:
+    runs-on: ubuntu-latest
+    name: Run Backend Tests
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements_cpu.txt
+      - name: Run backend tests
+        run: |
+          pytest -q tests
+
   build-and-push:
+    needs: [test-before-build]
     runs-on: ubuntu-latest
     timeout-minutes: 120
     

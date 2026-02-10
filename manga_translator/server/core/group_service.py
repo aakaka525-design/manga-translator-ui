@@ -87,6 +87,15 @@ class GroupService:
             用户组配置字典，如果不存在返回 None
         """
         return self.groups.get(group_name)
+
+    def get_group_config(self, group_name: str) -> Optional[Dict[str, Any]]:
+        """
+        兼容接口：获取用户组配置。
+
+        QuotaManagementService 等新模块使用 `get_group_config` 命名，
+        旧实现提供 `get_group`。这里统一转发，避免服务间接口漂移。
+        """
+        return self.get_group(group_name)
     
     def get_parameter_config(self, group_name: str, parameter: str) -> Optional[Dict[str, Any]]:
         """

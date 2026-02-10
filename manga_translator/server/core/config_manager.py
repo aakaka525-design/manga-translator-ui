@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from typing import Optional
 
 from manga_translator import Config
+from manga_translator.server.core.auth import hash_password
 from manga_translator.utils import BASE_PATH
 
 
@@ -40,6 +41,7 @@ print(f"[INFO] Prompts directory: {PROMPTS_DIR}")
 
 # 默认管理端配置
 DEFAULT_ADMIN_SETTINGS = {
+    'admin_password_hash': '',
     'visible_sections': ['translator', 'cli', 'detector', 'ocr', 'inpainter', 'render', 'upscale', 'colorizer'],
     'hidden_keys': [
         'upscale.realcugan_model',
@@ -96,6 +98,7 @@ DEFAULT_ADMIN_SETTINGS = {
     },
     'user_access': {
         'require_password': False,
+        'user_password_hash': '',
         'user_password': '',
     },
     'api_key_policy': {
@@ -144,6 +147,24 @@ AVAILABLE_WORKFLOWS = [
 
 def load_admin_settings() -> dict:
     """从文件加载管理员配置"""
+    def _migrate_legacy_secrets(settings: dict) -> bool:
+        changed = False
+        legacy_admin_password = settings.get("admin_password")
+        if legacy_admin_password and not settings.get("admin_password_hash"):
+            settings["admin_password_hash"] = hash_password(legacy_admin_password)
+            settings["admin_password"] = ""
+            changed = True
+
+        user_access = settings.get("user_access")
+        if isinstance(user_access, dict):
+            legacy_user_password = user_access.get("user_password")
+            if legacy_user_password and not user_access.get("user_password_hash"):
+                user_access["user_password_hash"] = hash_password(legacy_user_password)
+                user_access["user_password"] = ""
+                settings["user_access"] = user_access
+                changed = True
+        return changed
+
     if os.path.exists(ADMIN_CONFIG_PATH):
         try:
             with open(ADMIN_CONFIG_PATH, 'r', encoding='utf-8') as f:
@@ -152,17 +173,22 @@ def load_admin_settings() -> dict:
                 # 合并默认配置和加载的配置
                 settings = DEFAULT_ADMIN_SETTINGS.copy()
                 settings.update(loaded_settings)
+                changed = False
                 
                 # 如果配置文件中没有密码，尝试从环境变量读取
-                if not settings.get('admin_password'):
+                if not settings.get("admin_password_hash"):
                     env_password = os.environ.get('MANGA_TRANSLATOR_ADMIN_PASSWORD')
                     if env_password and len(env_password) >= 6:
-                        settings['admin_password'] = env_password
-                        # 保存到配置文件
-                        save_admin_settings(settings)
+                        settings["admin_password_hash"] = hash_password(env_password)
+                        settings["admin_password"] = ""
+                        changed = True
                         print("[INFO] Admin password set from environment variable MANGA_TRANSLATOR_ADMIN_PASSWORD")
                     elif env_password:
                         print("[WARNING] MANGA_TRANSLATOR_ADMIN_PASSWORD is too short (minimum 6 characters)")
+
+                changed = _migrate_legacy_secrets(settings) or changed
+                if changed:
+                    save_admin_settings(settings)
                 
                 return settings
         except Exception as e:
@@ -175,7 +201,8 @@ def load_admin_settings() -> dict:
         # 首次启动时，尝试从环境变量读取密码
         env_password = os.environ.get('MANGA_TRANSLATOR_ADMIN_PASSWORD')
         if env_password and len(env_password) >= 6:
-            settings['admin_password'] = env_password
+            settings["admin_password_hash"] = hash_password(env_password)
+            settings["admin_password"] = ""
             # 保存到配置文件
             save_admin_settings(settings)
             print("[INFO] Admin password set from environment variable MANGA_TRANSLATOR_ADMIN_PASSWORD")

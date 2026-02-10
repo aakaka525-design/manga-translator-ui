@@ -9,7 +9,15 @@ from urllib.parse import quote_plus, urljoin
 import aiohttp
 from bs4 import BeautifulSoup
 
-from .mangaforfree import ChapterItem, CloudflareChallengeError, MangaItem, _infer_slug, _normalize_url, parse_catalog_has_more
+from .mangaforfree import (
+    ChapterItem,
+    CloudflareChallengeError,
+    MangaItem,
+    _canonical_series_url,
+    _infer_slug,
+    _normalize_url,
+    parse_catalog_has_more,
+)
 
 
 class BrowserUnavailableError(RuntimeError):
@@ -30,10 +38,14 @@ async def _fetch_html_http(
     timeout_sec: float = 25,
 ) -> str:
     timeout = aiohttp.ClientTimeout(total=timeout_sec)
+    headers = {"User-Agent": user_agent, "Accept-Encoding": "gzip, deflate"}
     async with aiohttp.ClientSession(timeout=timeout, cookies=cookies) as session:
-        async with session.get(url, headers={"User-Agent": user_agent}) as response:
+        async with session.get(url, headers=headers) as response:
+            text = await response.text()
+            if _looks_like_challenge(text):
+                raise CloudflareChallengeError("检测到站点验证，请先上传可用状态文件")
             response.raise_for_status()
-            return await response.text()
+            return text
 
 
 def _fetch_html_playwright_sync(url: str, user_agent: str, timeout_ms: int = 25000) -> str:
@@ -99,7 +111,7 @@ def parse_search(html: str, base_url: str) -> list[MangaItem]:
         "a[href*='/comic/']",
         "a[href*='/series/']",
     ]
-    markers = ("/manga/", "/webtoon/", "/comic/", "/series/")
+    allowed_sections = ("manga", "webtoon", "comic", "series")
     seen: set[str] = set()
     items: list[MangaItem] = []
 
@@ -111,16 +123,16 @@ def parse_search(html: str, base_url: str) -> list[MangaItem]:
                 href = anchor.get("href") if anchor else None
             if not href:
                 continue
-            url = _normalize_url(base_url, str(href))
-            if not any(marker in url for marker in markers):
+            url = _canonical_series_url(base_url, str(href), allowed_sections=allowed_sections)
+            if not url:
                 continue
             manga_id = _infer_slug(url)
-            if manga_id in seen:
+            if url in seen:
                 continue
             title_node = node.select_one(".post-title, .h5 a, .manga-name, h3, h2, .entry-title")
             title = title_node.get_text(strip=True) if title_node else manga_id
             items.append(MangaItem(id=manga_id, title=title or manga_id, url=url, cover_url=_extract_cover(node, base_url)))
-            seen.add(manga_id)
+            seen.add(url)
     return items
 
 
@@ -206,8 +218,8 @@ async def search_manga(
     )
     items = parse_search(html, base_url)
     slug = re.sub(r"[^a-z0-9]+", "-", keyword.lower()).strip("-")
-    if slug and not any(item.id == slug for item in items):
-        items.insert(0, MangaItem(id=slug, title=keyword, url=urljoin(base_url, f"/manga/{slug}/"), cover_url=None))
+    if slug and not items:
+        items.append(MangaItem(id=slug, title=keyword, url=urljoin(base_url, f"/manga/{slug}/"), cover_url=None))
     if _looks_like_challenge(html) and not items:
         raise CloudflareChallengeError("检测到站点验证，请先上传可用状态文件")
     return items

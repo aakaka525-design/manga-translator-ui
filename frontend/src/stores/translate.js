@@ -174,10 +174,12 @@ export const useTranslateStore = defineStore('translate', () => {
 
         if (finalStatus === 'error') {
             chapter.statusText = data.error_message ? `失败: ${data.error_message}` : '失败'
-            toastStore.show(`章节失败: ${chapter.name}`, 'error')
+            const detail = data.error_message ? ` (${data.error_message})` : ''
+            toastStore.show(`章节失败: ${chapter.name}${detail}`, 'error')
         } else if (failedCount > 0) {
             chapter.statusText = `部分完成 (${successCount}/${totalCount})`
-            toastStore.show(`章节部分完成: ${chapter.name} (${successCount}/${totalCount})`, 'warning')
+            const detail = data.error_message ? `，原因：${data.error_message}` : ''
+            toastStore.show(`章节部分完成: ${chapter.name} (${successCount}/${totalCount})${detail}`, 'warning')
         } else {
             chapter.statusText = '已完成'
             toastStore.show(`章节完成: ${chapter.name}`, 'success')

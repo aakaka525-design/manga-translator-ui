@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from urllib.parse import urlparse
 
 import httpx
@@ -219,7 +220,7 @@ def _extract_parse_result(html: str, url: str) -> dict:
 
 @router.post("/parse")
 async def parse(payload: ParseRequest, _session: Session = Depends(require_auth)):
-    html = _fetch_html(payload.url, payload.mode)
+    html = await asyncio.to_thread(_fetch_html, payload.url, payload.mode)
     return _extract_parse_result(html, payload.url)
 
 
@@ -228,7 +229,7 @@ async def list_parser(payload: ParseRequest, _session: Session = Depends(require
     site, base_url = _recognize_site(payload.url)
     recognized = site in {"mangaforfree", "toongod"} and base_url is not None
 
-    html = _fetch_html(payload.url, payload.mode)
+    html = await asyncio.to_thread(_fetch_html, payload.url, payload.mode)
     items = _extract_list_items(html, base_url or f"{urlparse(payload.url).scheme}://{urlparse(payload.url).netloc}")
 
     warnings: list[str] = []

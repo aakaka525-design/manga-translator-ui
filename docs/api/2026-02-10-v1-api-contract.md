@@ -26,13 +26,22 @@
 4. `DELETE /api/v1/manga/{manga_id}`
 5. `DELETE /api/v1/manga/{manga_id}/chapter/{chapter_id}`
 
+补充行为约束：
+
+- `translated_url` 带缓存戳查询参数：`?v=<mtime_ns>`，用于避免前端读取旧缓存图。
+- 若结果文件与原图内容完全一致（字节级一致），该页不会被视为“已翻译”（`translated_url=null`，`status=pending`）。
+
 ## Translate
 
 6. `POST /api/v1/translate/chapter`
 - 事件：`chapter_start -> progress -> chapter_complete`
+- 语义收敛：仅当页面存在可翻译文本区域（`regions_count > 0`）且输出有可见变化时计入成功；否则计入失败。
 
 7. `POST /api/v1/translate/page`
 - 事件：`page_complete | page_failed`
+- 当翻译流程执行完成但输出图与输入图无可见差异时，返回 `409`（detail 含 `no visible changes`），并触发 `page_failed`。
+- 当翻译流程执行完成但未检测到可翻译文本区域（`regions_count <= 0`）时，返回 `409`（detail 含 `no detected text regions`），并触发 `page_failed`。
+- 兼容语言码：请求中的 `target_language` 支持 UI 常用短码并在后端归一化（如 `zh -> CHS`, `zh-TW -> CHT`, `en -> ENG`）；未传时默认 `CHS`。
 
 8. `GET /api/v1/translate/events`
 - SSE，`Content-Type: text/event-stream`
@@ -77,6 +86,18 @@ Scraper 相关错误码（扩展并保留旧码）：
 
 20. `POST /api/v1/parser/parse`
 21. `POST /api/v1/parser/list`
+
+## Settings 与 System（兼容补充）
+
+22. `GET /api/v1/settings`
+23. `POST /api/v1/settings/model`
+24. `POST /api/v1/settings/upscale`
+25. `GET /api/v1/system/logs?lines=`
+
+鉴权要求：
+
+- `/api/v1/settings*`：需要 `X-Session-Token`
+- `/api/v1/system/logs`：需要 admin 权限（与 `/admin/logs` 一致，兼容 legacy `X-Admin-Token`）
 
 ## 管理端（Scraper 可观测）
 

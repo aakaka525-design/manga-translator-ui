@@ -68,7 +68,28 @@ class LibraryService:
                 return pages[0]
         return None
 
-    def _find_translated_file(self, translated_dir: Path, stem: str) -> Optional[Path]:
+    def _files_identical(self, original_file: Path, translated_file: Path) -> bool:
+        try:
+            if original_file.stat().st_size != translated_file.stat().st_size:
+                return False
+            with original_file.open("rb") as original, translated_file.open("rb") as translated:
+                while True:
+                    left = original.read(64 * 1024)
+                    right = translated.read(64 * 1024)
+                    if left != right:
+                        return False
+                    if not left:
+                        return True
+        except OSError:
+            return False
+
+    def _find_translated_file(
+        self,
+        translated_dir: Path,
+        stem: str,
+        *,
+        original_file: Optional[Path] = None,
+    ) -> Optional[Path]:
         if not translated_dir.exists():
             return None
         candidates = [
@@ -79,10 +100,14 @@ class LibraryService:
         ]
         for candidate in candidates:
             if candidate.exists() and candidate.is_file():
+                if original_file and self._files_identical(original_file, candidate):
+                    continue
                 return candidate
 
         for file_path in translated_dir.iterdir():
             if file_path.is_file() and file_path.suffix.lower() in IMAGE_EXTENSIONS and file_path.stem == stem:
+                if original_file and self._files_identical(original_file, file_path):
+                    continue
                 return file_path
         return None
 
@@ -90,8 +115,13 @@ class LibraryService:
         rel_path = file_path.relative_to(self.raw_dir.parent).as_posix()
         return f"/data/{quote(rel_path)}?v={file_path.stat().st_mtime_ns}"
 
-    def _to_output_url(self, manga_id: str, chapter_id: str, filename: str) -> str:
-        return f"/output/{quote(manga_id)}/{quote(chapter_id)}/{quote(filename)}"
+    def _to_output_url(self, manga_id: str, chapter_id: str, file_path: Path) -> str:
+        version = ""
+        try:
+            version = f"?v={file_path.stat().st_mtime_ns}"
+        except OSError:
+            pass
+        return f"/output/{quote(manga_id)}/{quote(chapter_id)}/{quote(file_path.name)}{version}"
 
     def list_manga(self) -> list[MangaInfo]:
         mangas: list[MangaInfo] = []
@@ -130,7 +160,11 @@ class LibraryService:
                 continue
 
             translated_dir = translated_manga_dir / chapter_dir.name
-            translated_count = sum(1 for page in pages if self._find_translated_file(translated_dir, page.stem))
+            translated_count = sum(
+                1
+                for page in pages
+                if self._find_translated_file(translated_dir, page.stem, original_file=page)
+            )
             page_count = len(pages)
             chapters.append(
                 ChapterInfo(
@@ -158,13 +192,13 @@ class LibraryService:
 
         page_payload: list[dict] = []
         for page in pages:
-            translated_file = self._find_translated_file(translated_dir, page.stem)
+            translated_file = self._find_translated_file(translated_dir, page.stem, original_file=page)
             page_payload.append(
                 {
                     "name": page.name,
                     "original_url": self._to_data_url(page),
                     "translated_url": (
-                        self._to_output_url(manga_id, chapter_id, translated_file.name)
+                        self._to_output_url(manga_id, chapter_id, translated_file)
                         if translated_file
                         else None
                     ),

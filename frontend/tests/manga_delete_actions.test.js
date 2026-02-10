@@ -5,7 +5,7 @@ import MangaView from "@/views/MangaView.vue";
 import { useMangaStore } from "@/stores/manga";
 import { useTranslateStore } from "@/stores/translate";
 import { useToastStore } from "@/stores/toast";
-import { mangaApi } from "@/api";
+import { mangaApi, translateApi } from "@/api";
 
 let routeParams = { id: "manga-1" };
 const routerPush = vi.fn();
@@ -16,6 +16,7 @@ vi.mock("vue-router", () => ({
 }));
 
 vi.mock("@/api", () => ({
+  getSessionToken: vi.fn(() => "token-test"),
   mangaApi: {
     list: vi.fn(),
     getChapters: vi.fn(),
@@ -74,6 +75,14 @@ function mountView() {
 
 describe("manga delete actions", () => {
   beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        json: async () => ({}),
+      })
+    );
     routeParams = { id: "manga-1" };
     routerPush.mockReset();
     vi.clearAllMocks();
@@ -187,5 +196,21 @@ describe("manga delete actions", () => {
     expect(chapterTranslateBtn.classes()).toContain("h-10");
     expect(chapterDeleteBtn.classes()).toContain("h-10");
     expect(hiddenChapterLabels).toHaveLength(0);
+  });
+
+  it("submits chapter translation with language settings payload", async () => {
+    translateApi.translateChapter.mockResolvedValue({ message: "ok" });
+    const { wrapper } = mountView();
+    await flushPromises();
+
+    await wrapper.get('[aria-label="翻译章节"]').trigger("click");
+    await flushPromises();
+
+    expect(translateApi.translateChapter).toHaveBeenCalledWith({
+      manga_id: "manga-1",
+      chapter_id: "ch-1",
+      source_language: "en",
+      target_language: "zh",
+    });
   });
 });

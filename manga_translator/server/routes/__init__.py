@@ -34,6 +34,8 @@ _EXPORTS = {
     "v1_translate_router": ("v1_translate", "router"),
     "v1_scraper_router": ("v1_scraper", "router"),
     "v1_parser_router": ("v1_parser", "router"),
+    "v1_settings_router": ("v1_settings", "router"),
+    "v1_system_router": ("v1_system", "router"),
 }
 
 __all__ = sorted(_EXPORTS)

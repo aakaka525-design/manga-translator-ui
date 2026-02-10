@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive } from 'vue'
+import { getSessionToken } from '@/api'
 
 const STORAGE_KEY = 'manhua_settings'
 
@@ -37,6 +38,10 @@ const availableUpscaleModelScales = {
 const availableUpscaleModelIds = new Set(availableUpscaleModels.map((model) => model.id))
 const defaultUpscaleModel = availableUpscaleModels[0]?.id ?? 'realesrgan-x4plus-anime'
 const defaultUpscaleScale = availableUpscaleModelScales[defaultUpscaleModel]?.[0] ?? 4
+
+function isSettingsFallbackStatus(status) {
+    return status === 401 || status === 403 || status === 404
+}
 
 export const useSettingsStore = defineStore('settings', () => {
     const showModal = ref(false)
@@ -124,16 +129,28 @@ export const useSettingsStore = defineStore('settings', () => {
         }
     }
 
+    function sessionHeaders(extraHeaders = {}) {
+        const headers = { ...extraHeaders }
+        const token = getSessionToken()
+        if (token) {
+            headers['X-Session-Token'] = token
+        }
+        return headers
+    }
+
     async function selectModel(model) {
         settings.aiModel = model.id
         settings.aiModelName = model.name
         saveSettings()
         try {
-            await fetch('/api/v1/settings/model', {
+            const response = await fetch('/api/v1/settings/model', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: sessionHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ model: model.id })
             })
+            if (!response.ok && !isSettingsFallbackStatus(response.status)) {
+                throw new Error(`Model update failed: ${response.status}`)
+            }
         } catch (e) {
             console.error('Failed to update model:', e)
         }
@@ -188,13 +205,16 @@ export const useSettingsStore = defineStore('settings', () => {
     async function postUpscaleSettings() {
         const response = await fetch('/api/v1/settings/upscale', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: sessionHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({
                 model: settings.upscaleModel,
                 scale: settings.upscaleScale,
                 enabled: settings.upscaleEnabled
             })
         })
+        if (isSettingsFallbackStatus(response.status)) {
+            return
+        }
         if (!response.ok) {
             let detail = ''
             try {
@@ -207,8 +227,15 @@ export const useSettingsStore = defineStore('settings', () => {
 
     async function syncSettingsFromServer() {
         try {
-            const response = await fetch('/api/v1/settings')
-            if (!response.ok) return
+            const response = await fetch('/api/v1/settings', {
+                headers: sessionHeaders()
+            })
+            if (!response.ok) {
+                if (isSettingsFallbackStatus(response.status)) {
+                    return
+                }
+                throw new Error(`Settings sync failed: ${response.status}`)
+            }
 
             const remote = await response.json()
             let changed = false
@@ -256,10 +283,16 @@ export const useSettingsStore = defineStore('settings', () => {
     async function fetchLogs() {
         loading.value = true
         try {
-            const res = await fetch('/api/v1/system/logs?lines=200')
+            const res = await fetch('/api/v1/system/logs?lines=200', {
+                headers: sessionHeaders()
+            })
             if (res.ok) {
                 const lines = await res.json()
-                logsContent.value = lines.join('')
+                logsContent.value = lines.join('\n')
+            } else if (res.status === 401 || res.status === 403) {
+                logsContent.value = '当前账号没有查看日志权限'
+            } else if (res.status === 404) {
+                logsContent.value = '日志接口暂不可用'
             } else {
                 logsContent.value = '获取日志失败'
             }

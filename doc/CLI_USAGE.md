@@ -31,6 +31,20 @@ python -m manga_translator -i ./manga_folder/
 
 ## 2. Web 服务运行
 
+推荐启动顺序（固定）：
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements_cpu.txt
+python scripts/check_runtime_deps.py
+python -m manga_translator web
+```
+
+若为 GPU/AMD 环境，请将 `requirements_cpu.txt` 替换为对应依赖文件。
+
+启动命令：
+
 ```bash
 python -m manga_translator web
 ```
@@ -67,6 +81,13 @@ python -m manga_translator web
 - Translate: `/api/v1/translate/*`
 - Scraper: `/api/v1/scraper/*`（含 `/providers`、`/task/{task_id}`）
 - Parser: `/api/v1/parser/*`
+- Settings: `GET /api/v1/settings`、`POST /api/v1/settings/model`、`POST /api/v1/settings/upscale`
+- System: `GET /api/v1/system/logs?lines=`（admin 权限）
+
+设置与系统日志接口鉴权说明：
+
+- `/api/v1/settings*`：需要 `X-Session-Token`
+- `/api/v1/system/logs`：需要 admin（与 `/admin/logs` 权限一致，兼容 legacy `X-Admin-Token`）
 
 ### Admin（Scraper 可观测）
 

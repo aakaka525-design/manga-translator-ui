@@ -5,6 +5,8 @@ import { VitePWA } from 'vite-plugin-pwa'
 import viteCompression from 'vite-plugin-compression'
 import { visualizer } from 'rollup-plugin-visualizer'
 
+const enableAnalyze = String(process.env.ANALYZE || '').toLowerCase() === 'true'
+
 // https://vitejs.dev/config/
 export default defineConfig({
     plugins: [
@@ -49,11 +51,15 @@ export default defineConfig({
             }
         }),
         viteCompression(),
-        visualizer({
-            open: false,
-            gzipSize: true,
-            brotliSize: true
-        })
+        ...(enableAnalyze
+            ? [
+                visualizer({
+                    open: false,
+                    gzipSize: true,
+                    brotliSize: true
+                })
+            ]
+            : [])
     ],
     resolve: {
         alias: {
@@ -63,6 +69,14 @@ export default defineConfig({
     server: {
         proxy: {
             '/api': {
+                target: 'http://localhost:8000',
+                changeOrigin: true
+            },
+            '/admin': {
+                target: 'http://localhost:8000',
+                changeOrigin: true
+            },
+            '/auth': {
                 target: 'http://localhost:8000',
                 changeOrigin: true
             },

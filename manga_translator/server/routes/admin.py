@@ -7,16 +7,23 @@ Updated to use the new session-based authentication system.
 
 import io
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
-from fastapi import APIRouter, Header, Form, HTTPException, Depends, Body
+from fastapi import APIRouter, Header, Form, HTTPException, Depends, Body, Request
 from fastapi.responses import StreamingResponse
 
 from manga_translator.server.core.config_manager import (
     admin_settings, save_admin_settings, ADMIN_CONFIG_PATH
 )
 from manga_translator.server.core.task_manager import server_config, init_semaphore
-from manga_translator.server.core.auth import valid_admin_tokens
+from manga_translator.server.core.auth import (
+    check_legacy_rate_limit,
+    clear_legacy_auth_failures,
+    hash_password,
+    record_legacy_auth_failure,
+    valid_admin_tokens,
+    verify_password_with_legacy_fallback,
+)
 from manga_translator.server.core.logging_manager import (
     global_log_queue, task_logs, task_logs_lock, add_log
 )
@@ -37,6 +44,24 @@ def _admin_scraper_http_error(status_code: int, code: str, message: str) -> HTTP
     return HTTPException(status_code=status_code, detail={"code": code, "message": message})
 
 
+def _legacy_rate_limit_key(request: Request, action: str) -> str:
+    client_host = request.client.host if request.client and request.client.host else "unknown"
+    return f"{action}:{client_host}"
+
+
+def _raise_rate_limit_error(retry_after: int) -> None:
+    raise HTTPException(
+        status_code=429,
+        detail={
+            "error": {
+                "code": "RATE_LIMIT_EXCEEDED",
+                "message": "请求过于频繁，请稍后重试",
+                "details": {"retry_after": retry_after},
+            }
+        },
+    )
+
+
 # ============================================================================
 # Admin Authentication Endpoints
 # ============================================================================
@@ -44,9 +69,10 @@ def _admin_scraper_http_error(status_code: int, code: str, message: str) -> HTTP
 @router.get("/need-setup")
 async def check_admin_setup():
     """Check if admin password needs first-time setup"""
+    admin_password_hash = admin_settings.get("admin_password_hash")
     admin_password = admin_settings.get('admin_password')
     return {
-        "need_setup": not admin_password or admin_password == ''
+        "need_setup": (not admin_password_hash) and (not admin_password or admin_password == '')
     }
 
 
@@ -54,18 +80,19 @@ async def check_admin_setup():
 async def setup_admin_password(password: str = Form(...)):
     """First-time admin password setup"""
     # Only allow setup if no password exists
-    if admin_settings.get('admin_password'):
+    if admin_settings.get("admin_password_hash") or admin_settings.get('admin_password'):
         raise HTTPException(403, detail="Admin password already set")
     
     if not password or len(password) < 6:
         raise HTTPException(400, detail="Password must be at least 6 characters")
     
-    # Save password to admin_settings
-    admin_settings['admin_password'] = password
+    # Save password hash to admin_settings (legacy plain field is cleared)
+    admin_settings["admin_password_hash"] = hash_password(password)
+    admin_settings["admin_password"] = ""
     save_admin_settings(admin_settings)
     
     # Also save to server_config (runtime use)
-    server_config['admin_password'] = password
+    server_config['admin_password'] = None
     
     # Generate token
     token = secrets.token_hex(32)
@@ -76,7 +103,7 @@ async def setup_admin_password(password: str = Form(...)):
 
 
 @router.post("/login")
-async def admin_login(password: str = Form(...)):
+async def admin_login(request: Request, password: str = Form(...)):
     """
     Admin login (DEPRECATED - redirects to new auth system)
     
@@ -84,47 +111,77 @@ async def admin_login(password: str = Form(...)):
     New clients should use POST /auth/login instead.
     """
     logger.warning("Deprecated /admin/login endpoint used. Please migrate to /auth/login")
+
+    rate_limit_key = _legacy_rate_limit_key(request, "admin_login")
+    allowed, retry_after = check_legacy_rate_limit(rate_limit_key)
+    if not allowed and retry_after is not None:
+        _raise_rate_limit_error(retry_after)
     
     # For backward compatibility, we still support the old token system
     # But we recommend using the new session-based system
+    admin_password_hash = admin_settings.get("admin_password_hash")
     admin_password = admin_settings.get('admin_password')
-    
-    if not admin_password:
+
+    if not admin_password_hash and not admin_password:
         raise HTTPException(400, detail="Admin password not set. Please setup first.")
-    
-    if password == admin_password:
-        token = secrets.token_hex(32)
-        valid_admin_tokens.add(token)
-        return {"success": True, "token": token}
-    return {"success": False, "message": "Invalid password"}
+
+    matched, mode = verify_password_with_legacy_fallback(password, admin_password_hash, admin_password)
+    if not matched:
+        record_legacy_auth_failure(rate_limit_key)
+        return {"success": False, "message": "Invalid password"}
+
+    clear_legacy_auth_failures(rate_limit_key)
+
+    if mode == "legacy":
+        admin_settings["admin_password_hash"] = hash_password(password)
+        admin_settings["admin_password"] = ""
+        save_admin_settings(admin_settings)
+        logger.info("Migrated legacy admin password to bcrypt hash")
+
+    token = secrets.token_hex(32)
+    valid_admin_tokens.add(token)
+    return {"success": True, "token": token}
 
 
 @router.post("/change-password")
 async def change_admin_password(
+    request: Request,
     old_password: str = Form(...),
     new_password: str = Form(...),
     token: str = Header(alias="X-Admin-Token", default=None)
 ):
     """Change admin password"""
+    rate_limit_key = _legacy_rate_limit_key(request, "admin_change_password")
+    allowed, retry_after = check_legacy_rate_limit(rate_limit_key)
+    if not allowed and retry_after is not None:
+        _raise_rate_limit_error(retry_after)
+
     # Verify token
     if not token or token not in valid_admin_tokens:
+        record_legacy_auth_failure(rate_limit_key)
         raise HTTPException(401, detail="Unauthorized")
     
     # Verify old password
+    admin_password_hash = admin_settings.get("admin_password_hash")
     admin_password = admin_settings.get('admin_password')
-    if old_password != admin_password:
+    matched, _ = verify_password_with_legacy_fallback(old_password, admin_password_hash, admin_password)
+    if not matched:
+        record_legacy_auth_failure(rate_limit_key)
         return {"success": False, "message": "旧密码错误"}
     
     # Verify new password
     if not new_password or len(new_password) < 6:
         return {"success": False, "message": "新密码至少需要6位"}
+
+    clear_legacy_auth_failures(rate_limit_key)
     
     # Update password
-    admin_settings['admin_password'] = new_password
+    admin_settings["admin_password_hash"] = hash_password(new_password)
+    admin_settings['admin_password'] = ""
     save_admin_settings(admin_settings)
     
     # Also update runtime config
-    server_config['admin_password'] = new_password
+    server_config['admin_password'] = None
     
     # Clear all old tokens (force re-login)
     valid_admin_tokens.clear()
@@ -333,18 +390,13 @@ async def get_scraper_tasks(
     provider: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
-    session: Session = Depends(require_admin),
-    token: str = Header(alias="X-Admin-Token", default=None)
+    _session: Session = Depends(require_admin),
 ):
     """
     Get scraper tasks from SQLite store with filters and pagination.
 
     Supports both new session-based auth (X-Session-Token) and legacy token auth (X-Admin-Token)
     """
-    # Legacy token support for backward compatibility
-    if token and token in valid_admin_tokens:
-        logger.debug("Using legacy admin token authentication")
-
     try:
         import manga_translator.server.routes.v1_scraper as v1_scraper_routes
 
@@ -372,18 +424,13 @@ async def get_scraper_tasks(
 @router.get("/scraper/metrics")
 async def get_scraper_metrics(
     hours: int = 24,
-    session: Session = Depends(require_admin),
-    token: str = Header(alias="X-Admin-Token", default=None)
+    _session: Session = Depends(require_admin),
 ):
     """
     Get scraper task metrics for recent N hours.
 
     Supports both new session-based auth (X-Session-Token) and legacy token auth (X-Admin-Token)
     """
-    # Legacy token support for backward compatibility
-    if token and token in valid_admin_tokens:
-        logger.debug("Using legacy admin token authentication")
-
     try:
         import manga_translator.server.routes.v1_scraper as v1_scraper_routes
 
@@ -396,15 +443,11 @@ async def get_scraper_metrics(
 
 @router.get("/scraper/health")
 async def get_scraper_health(
-    session: Session = Depends(require_admin),
-    token: str = Header(alias="X-Admin-Token", default=None)
+    _session: Session = Depends(require_admin),
 ):
     """
     Get scraper health status (DB + scheduler + alert config).
     """
-    if token and token in valid_admin_tokens:
-        logger.debug("Using legacy admin token authentication")
-
     try:
         import manga_translator.server.routes.v1_scraper as v1_scraper_routes
 
@@ -421,15 +464,11 @@ async def get_scraper_alerts(
     rule: Optional[str] = None,
     limit: int = 20,
     offset: int = 0,
-    session: Session = Depends(require_admin),
-    token: str = Header(alias="X-Admin-Token", default=None)
+    _session: Session = Depends(require_admin),
 ):
     """
     List scraper alerts from SQLite store with filters and pagination.
     """
-    if token and token in valid_admin_tokens:
-        logger.debug("Using legacy admin token authentication")
-
     try:
         import manga_translator.server.routes.v1_scraper as v1_scraper_routes
 
@@ -456,15 +495,11 @@ async def get_scraper_alerts(
 
 @router.get("/scraper/queue/stats")
 async def get_scraper_queue_stats(
-    session: Session = Depends(require_admin),
-    token: str = Header(alias="X-Admin-Token", default=None)
+    _session: Session = Depends(require_admin),
 ):
     """
     Get scraper queue counters and pending age from SQLite task store.
     """
-    if token and token in valid_admin_tokens:
-        logger.debug("Using legacy admin token authentication")
-
     try:
         import manga_translator.server.routes.v1_scraper as v1_scraper_routes
 
@@ -478,15 +513,11 @@ async def get_scraper_queue_stats(
 @router.post("/scraper/alerts/test-webhook")
 async def test_scraper_alert_webhook(
     payload: Optional[dict] = Body(default=None),
-    session: Session = Depends(require_admin),
-    token: str = Header(alias="X-Admin-Token", default=None)
+    _session: Session = Depends(require_admin),
 ):
     """
     Trigger a test webhook event for scraper alerts.
     """
-    if token and token in valid_admin_tokens:
-        logger.debug("Using legacy admin token authentication")
-
     try:
         import manga_translator.server.routes.v1_scraper as v1_scraper_routes
 

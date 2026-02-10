@@ -3,16 +3,24 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 import sys
+import time
 import types
 from datetime import datetime, timezone
 from pathlib import Path
 
+import aiohttp
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from manga_translator.server.core.middleware import require_admin, require_auth
 from manga_translator.server.core.models import Session
+from manga_translator.server.core.auth import valid_admin_tokens
+from manga_translator.server.core.account_service import AccountService
+from manga_translator.server.core.permission_service import PermissionService
+from manga_translator.server.core.session_service import SessionService
+from manga_translator.server.core.middleware import init_middleware_services
+from manga_translator.server.core.logging_manager import global_log_queue
 
 # Keep tests isolated from optional runtime-only dependencies.
 import manga_translator as mt_pkg
@@ -36,6 +44,7 @@ sys.modules.setdefault(
 )
 
 import manga_translator.server.routes.admin as admin_routes
+import manga_translator.server.routes.v1_parser as v1_parser
 import manga_translator.server.routes.v1_scraper as v1_scraper
 from manga_translator.server.core.config_manager import DEFAULT_ADMIN_SETTINGS, admin_settings
 from manga_translator.server.scraper_v1.alerts import ScraperAlertEngine
@@ -52,6 +61,39 @@ def _admin_session() -> Session:
         ip_address="127.0.0.1",
         user_agent="pytest",
         is_active=True,
+    )
+
+
+def _provider_stub():
+    async def _noop_search(base_url, keyword, cookies, user_agent, http_mode, force_engine):
+        _ = (base_url, keyword, cookies, user_agent, http_mode, force_engine)
+        return []
+
+    async def _noop_catalog(base_url, page, orderby, path, cookies, user_agent, http_mode, force_engine):
+        _ = (base_url, page, orderby, path, cookies, user_agent, http_mode, force_engine)
+        return [], False
+
+    async def _noop_chapters(base_url, manga_url, cookies, user_agent, http_mode, force_engine):
+        _ = (base_url, manga_url, cookies, user_agent, http_mode, force_engine)
+        return []
+
+    async def _reader_images(base_url, chapter_url, cookies, user_agent, http_mode, force_engine):
+        _ = (base_url, chapter_url, cookies, user_agent, http_mode, force_engine)
+        return ["https://example.org/image-1.jpg"]
+
+    return v1_scraper.ProviderAdapter(
+        key="generic",
+        label="Generic",
+        hosts=(),
+        supports_http=True,
+        supports_playwright=True,
+        supports_custom_host=True,
+        default_catalog_path="/manga/",
+        search=_noop_search,
+        catalog=_noop_catalog,
+        chapters=_noop_chapters,
+        reader_images=_reader_images,
+        auth_url="https://example.org",
     )
 
 
@@ -378,6 +420,83 @@ def test_task_status_queue_status_compatibility(phase4_app):
         assert payload["worker_id"] == "local-worker"
 
 
+def test_task_endpoint_none_fields_are_null_not_string_none(phase4_app):
+    task_id = "phase4-task-none-normalization"
+    now = datetime.now(timezone.utc).isoformat()
+    v1_scraper._scraper_tasks[task_id] = {
+        "task_id": task_id,
+        "status": "success",
+        "message": "done",
+        "report": {"ok": True},
+        "created_at": now,
+        "updated_at": now,
+        "created_tick": time.monotonic(),
+        "retry_count": 0,
+        "max_retries": 2,
+        "next_retry_at": None,
+        "error_code": None,
+        "last_error": None,
+    }
+
+    with TestClient(phase4_app) as client:
+        resp = client.get(f"/api/v1/scraper/task/{task_id}")
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["next_retry_at"] is None
+        assert payload["error_code"] is None
+        assert payload["last_error"] is None
+
+
+def test_access_check_toongod_403_returns_forbidden_structured(monkeypatch: pytest.MonkeyPatch, phase4_app):
+    text_called = {"value": False}
+
+    class _FakeResponse:
+        status = 403
+
+        async def text(self):
+            text_called["value"] = True
+            raise aiohttp.ClientPayloadError("Can not decode content-encoding: br")
+
+    class _FakeResponseCtx:
+        def __init__(self, response):
+            self._response = response
+
+        async def __aenter__(self):
+            return self._response
+
+        async def __aexit__(self, exc_type, exc, tb):
+            _ = (exc_type, exc, tb)
+            return False
+
+    class _FakeClientSession:
+        def __init__(self, *args, **kwargs):
+            _ = (args, kwargs)
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            _ = (exc_type, exc, tb)
+            return False
+
+        def get(self, url, headers=None):
+            _ = (url, headers)
+            return _FakeResponseCtx(_FakeResponse())
+
+    monkeypatch.setattr(v1_scraper.aiohttp, "ClientSession", _FakeClientSession)
+
+    with TestClient(phase4_app) as client:
+        resp = client.post(
+            "/api/v1/scraper/access-check",
+            json={"base_url": "https://toongod.org", "site_hint": "toongod"},
+        )
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["status"] == "forbidden"
+        assert payload["http_status"] == 403
+        assert text_called["value"] is False
+
+
 @pytest.mark.asyncio
 async def test_alert_scheduler_start_stop(monkeypatch: pytest.MonkeyPatch, phase4_app):
     _ = phase4_app
@@ -428,3 +547,244 @@ def test_phase4_admin_auth_requires_admin(phase4_data, phase4_config):
     with TestClient(app) as client:
         resp = client.get("/admin/scraper/health")
         assert resp.status_code == 403
+
+
+def test_admin_scraper_legacy_token_auth_works(phase4_data, phase4_config):
+    _ = phase4_config
+    v1_scraper.TASK_DB_PATH = phase4_data["db_path"]
+    v1_scraper.init_task_store(phase4_data["db_path"])
+
+    app = FastAPI()
+    app.include_router(admin_routes.router)
+
+    token = "phase4-legacy-admin-token"
+    valid_admin_tokens.add(token)
+    try:
+        with TestClient(app) as client:
+            resp = client.get("/admin/scraper/health", headers={"X-Admin-Token": token})
+        assert resp.status_code == 200
+    finally:
+        valid_admin_tokens.discard(token)
+
+
+def test_admin_scraper_legacy_token_invalid_rejected(phase4_data, phase4_config):
+    _ = phase4_config
+    v1_scraper.TASK_DB_PATH = phase4_data["db_path"]
+    v1_scraper.init_task_store(phase4_data["db_path"])
+
+    app = FastAPI()
+    app.include_router(admin_routes.router)
+
+    with TestClient(app) as client:
+        resp = client.get("/admin/scraper/health", headers={"X-Admin-Token": "phase4-invalid-token"})
+    assert resp.status_code == 401
+
+
+def test_download_store_failure_does_not_leave_in_memory_pending_task(
+    monkeypatch: pytest.MonkeyPatch,
+    phase4_app,
+):
+    _ = phase4_app
+    v1_scraper._scraper_tasks.clear()
+
+    provider = _provider_stub()
+    monkeypatch.setattr(v1_scraper, "resolve_provider", lambda base_url, site_hint: provider)
+
+    store = v1_scraper._get_task_store()
+
+    def _raise_store_error(*args, **kwargs):
+        _ = (args, kwargs)
+        raise RuntimeError("sqlite create_task failed")
+
+    monkeypatch.setattr(store, "create_task", _raise_store_error)
+
+    payload = {
+        "base_url": "https://example.org",
+        "manga": {"id": "demo", "title": "Demo", "url": "https://example.org/manga/demo/"},
+        "chapter": {"id": "ch-1", "title": "CH1", "url": "https://example.org/manga/demo/ch-1/"},
+    }
+
+    with TestClient(phase4_app) as client:
+        resp = client.post("/api/v1/scraper/download", json=payload)
+
+    assert resp.status_code == 500
+    assert resp.json()["detail"]["code"] == "SCRAPER_TASK_STORE_ERROR"
+    assert v1_scraper._scraper_tasks == {}
+
+
+@pytest.mark.asyncio
+async def test_download_non_retryable_failure_keeps_retry_count_and_error_code_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+    phase4_app,
+):
+    _ = phase4_app
+    provider = _provider_stub()
+    monkeypatch.setattr(v1_scraper, "resolve_provider", lambda base_url, site_hint: provider)
+
+    async def _non_retryable_download(*args, **kwargs):
+        _ = (args, kwargs)
+        return False, "HTTP 403", False
+
+    monkeypatch.setattr(v1_scraper, "_download_image", _non_retryable_download)
+
+    task_id = "phase4-non-retryable"
+    created_at = datetime.now(timezone.utc).isoformat()
+    v1_scraper._scraper_tasks[task_id] = {
+        "task_id": task_id,
+        "status": "pending",
+        "message": "queued",
+        "created_at": created_at,
+        "updated_at": created_at,
+        "created_tick": asyncio.get_event_loop().time(),
+        "retry_count": 0,
+        "max_retries": 2,
+        "next_retry_at": None,
+        "error_code": None,
+        "last_error": None,
+        "report": None,
+        "provider": "generic",
+    }
+    store = v1_scraper._get_task_store()
+    store.create_task(
+        task_id,
+        status="pending",
+        message="queued",
+        request_payload={"base_url": "https://example.org"},
+        provider="generic",
+        request_fingerprint="fp-phase4-non-retryable",
+    )
+
+    req = v1_scraper.ScraperDownloadRequest(
+        base_url="https://example.org",
+        manga=v1_scraper.MangaPayload(id="demo", title="Demo", url="https://example.org/manga/demo/"),
+        chapter=v1_scraper.ChapterPayload(id="ch-1", title="CH1", url="https://example.org/manga/demo/ch-1/"),
+        http_mode=True,
+    )
+
+    await v1_scraper._run_download_task(
+        task_id,
+        req,
+        provider,
+        "https://example.org",
+        {},
+        "pytest-user-agent",
+        None,
+        retry_count=0,
+        max_retries=2,
+        request_fingerprint="fp-phase4-non-retryable",
+    )
+
+    payload = v1_scraper._scraper_tasks[task_id]
+    assert payload["status"] == "error"
+    assert payload["retry_count"] == 0
+    assert payload["max_retries"] == 2
+    assert payload["error_code"] == "SCRAPER_DOWNLOAD_FAILED"
+
+    record = store.get_task(task_id)
+    assert record is not None
+    assert record.status == "error"
+    assert record.retry_count == 0
+    assert record.error_code == "SCRAPER_DOWNLOAD_FAILED"
+
+
+def test_parser_routes_use_thread_offload_for_fetch(monkeypatch: pytest.MonkeyPatch):
+    app = FastAPI()
+    app.include_router(v1_parser.router)
+
+    async def _fake_auth():
+        return _admin_session()
+
+    app.dependency_overrides[require_auth] = _fake_auth
+
+    html = """
+    <html>
+      <head><title>Parser Demo</title></head>
+      <body>
+        <a href="/manga/demo-series/">Demo Series</a>
+        <p>First paragraph with enough length for parser output.</p>
+      </body>
+    </html>
+    """
+
+    def _fake_fetch_html(url: str, mode: str = "http") -> str:
+        _ = (url, mode)
+        return html
+
+    to_thread_calls: list[tuple[object, tuple[object, ...], dict[str, object]]] = []
+
+    async def _fake_to_thread(func, *args, **kwargs):
+        to_thread_calls.append((func, args, kwargs))
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(v1_parser, "_fetch_html", _fake_fetch_html)
+    monkeypatch.setattr(v1_parser.asyncio, "to_thread", _fake_to_thread)
+
+    with TestClient(app) as client:
+        parse_resp = client.post(
+            "/api/v1/parser/parse",
+            json={"url": "https://mangaforfree.com/manga/demo-series/", "mode": "http"},
+        )
+        assert parse_resp.status_code == 200
+        list_resp = client.post(
+            "/api/v1/parser/list",
+            json={"url": "https://mangaforfree.com/manga/", "mode": "http"},
+        )
+        assert list_resp.status_code == 200
+
+    assert len(to_thread_calls) == 2
+    assert all(call[0] is _fake_fetch_html for call in to_thread_calls)
+
+
+def test_admin_legacy_token_auth_works_for_admin_settings(tmp_path: Path):
+    accounts = AccountService(accounts_file=str(tmp_path / "accounts.json"))
+    accounts.create_user("admin", "123456", "admin")
+    sessions = SessionService(
+        sessions_file=str(tmp_path / "sessions.json"),
+        enable_persistence=False,
+        session_timeout_minutes=60,
+    )
+    permissions = PermissionService(accounts)
+    init_middleware_services(accounts, sessions, permissions)
+
+    app = FastAPI()
+    app.include_router(admin_routes.router)
+    token = "legacy-admin-settings-token"
+    valid_admin_tokens.add(token)
+    try:
+        with TestClient(app) as client:
+            resp = client.get("/admin/settings", headers={"X-Admin-Token": token})
+        assert resp.status_code == 200
+    finally:
+        valid_admin_tokens.discard(token)
+
+
+def test_admin_legacy_token_auth_works_for_admin_logs(tmp_path: Path):
+    accounts = AccountService(accounts_file=str(tmp_path / "accounts.json"))
+    accounts.create_user("admin", "123456", "admin")
+    sessions = SessionService(
+        sessions_file=str(tmp_path / "sessions.json"),
+        enable_persistence=False,
+        session_timeout_minutes=60,
+    )
+    permissions = PermissionService(accounts)
+    init_middleware_services(accounts, sessions, permissions)
+
+    app = FastAPI()
+    app.include_router(admin_routes.router)
+    token = "legacy-admin-logs-token"
+    valid_admin_tokens.add(token)
+    global_log_queue.append(
+        {
+            "timestamp": "2026-02-10T00:00:00+00:00",
+            "level": "INFO",
+            "message": "legacy-token-log-line",
+        }
+    )
+    try:
+        with TestClient(app) as client:
+            resp = client.get("/admin/logs", headers={"X-Admin-Token": token})
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert isinstance(payload.get("logs"), list)
+    finally:
+        valid_admin_tokens.discard(token)

@@ -370,6 +370,26 @@ def _scraper_http_error(status_code: int, code: str, message: str) -> HTTPExcept
     return HTTPException(status_code=status_code, detail={"code": code, "message": message})
 
 
+def _optional_text(value: object | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.lower() == "none":
+        return None
+    return text
+
+
+def _map_upstream_client_error(exc: aiohttp.ClientResponseError, fallback_code: str) -> HTTPException:
+    status = int(exc.status or 500)
+    if status in {401, 403}:
+        return _scraper_http_error(403, "SCRAPER_AUTH_CHALLENGE", str(exc))
+    if status == 404:
+        return _scraper_http_error(404, fallback_code, str(exc))
+    return _scraper_http_error(500, fallback_code, str(exc))
+
+
 def _safe_name(value: str, default: str = "item") -> str:
     cleaned = re.sub(r"[^\w\-]+", "_", value, flags=re.UNICODE).strip("_")
     return cleaned or default
@@ -808,7 +828,10 @@ async def _run_download_task(
 
     if success_count <= 0:
         status = "error"
-        error_code = "SCRAPER_RETRY_EXHAUSTED"
+        if retryable_failures and retry_count >= max_retries:
+            error_code = "SCRAPER_RETRY_EXHAUSTED"
+        else:
+            error_code = "SCRAPER_DOWNLOAD_FAILED"
     elif failed_count > 0:
         status = "partial"
         error_code = None
@@ -832,7 +855,7 @@ async def _run_download_task(
         message=message,
         report=report,
         finished=True,
-        retry_count=max_retries if status == "error" else retry_count,
+        retry_count=retry_count,
         max_retries=max_retries,
         error_code=error_code,
         last_error=last_error,
@@ -861,6 +884,8 @@ async def search(req: ScraperSearchRequest, _session: Session = Depends(require_
         raise _scraper_http_error(400, "SCRAPER_BROWSER_UNAVAILABLE", str(exc)) from exc
     except CloudflareChallengeError as exc:
         raise _scraper_http_error(403, "SCRAPER_AUTH_CHALLENGE", str(exc)) from exc
+    except aiohttp.ClientResponseError as exc:
+        raise _map_upstream_client_error(exc, "SCRAPER_SEARCH_FAILED") from exc
     except Exception as exc:  # noqa: BLE001
         raise _scraper_http_error(500, "SCRAPER_SEARCH_FAILED", str(exc)) from exc
 
@@ -892,6 +917,8 @@ async def catalog(req: ScraperCatalogRequest, _session: Session = Depends(requir
         raise _scraper_http_error(400, "SCRAPER_BROWSER_UNAVAILABLE", str(exc)) from exc
     except CloudflareChallengeError as exc:
         raise _scraper_http_error(403, "SCRAPER_AUTH_CHALLENGE", str(exc)) from exc
+    except aiohttp.ClientResponseError as exc:
+        raise _map_upstream_client_error(exc, "SCRAPER_CATALOG_FAILED") from exc
     except Exception as exc:  # noqa: BLE001
         raise _scraper_http_error(500, "SCRAPER_CATALOG_FAILED", str(exc)) from exc
 
@@ -924,6 +951,8 @@ async def chapters(req: ScraperChaptersRequest, _session: Session = Depends(requ
         raise _scraper_http_error(400, "SCRAPER_BROWSER_UNAVAILABLE", str(exc)) from exc
     except CloudflareChallengeError as exc:
         raise _scraper_http_error(403, "SCRAPER_AUTH_CHALLENGE", str(exc)) from exc
+    except aiohttp.ClientResponseError as exc:
+        raise _map_upstream_client_error(exc, "SCRAPER_CHAPTERS_FAILED") from exc
     except Exception as exc:  # noqa: BLE001
         raise _scraper_http_error(500, "SCRAPER_CHAPTERS_FAILED", str(exc)) from exc
 
@@ -1015,6 +1044,8 @@ async def download(req: ScraperDownloadRequest, _session: Session = Depends(requ
             request_fingerprint=request_fingerprint,
         )
     except Exception as exc:  # noqa: BLE001
+        async with _scraper_tasks_lock:
+            _scraper_tasks.pop(task_id, None)
         raise _scraper_http_error(500, "SCRAPER_TASK_STORE_ERROR", str(exc)) from exc
 
     cookies = _merge_cookies(base_url, req.storage_state_path, req.cookies)
@@ -1043,22 +1074,22 @@ async def get_scraper_task(task_id: str, _session: Session = Depends(require_aut
         task = _scraper_tasks.get(task_id)
 
     if task:
-        status = str(task.get("status", "unknown"))
-        created_at = str(task.get("created_at", "")) or None
-        started_at = str(task.get("started_at", "")) or None
+        status = _optional_text(task.get("status")) or "unknown"
+        created_at = _optional_text(task.get("created_at"))
+        started_at = _optional_text(task.get("started_at"))
         return ScraperTaskStatus(
             task_id=task_id,
             status=status,
-            message=str(task.get("message", "")),
+            message=_optional_text(task.get("message")) or "",
             report=task.get("report") if isinstance(task.get("report"), dict) else None,
             persisted=True,
             created_at=created_at,
-            updated_at=str(task.get("updated_at", "")) or None,
+            updated_at=_optional_text(task.get("updated_at")),
             retry_count=int(task.get("retry_count", 0) or 0),
             max_retries=int(task.get("max_retries", TASK_MAX_RETRIES) or TASK_MAX_RETRIES),
-            next_retry_at=str(task.get("next_retry_at", "")) or None,
-            error_code=str(task.get("error_code", "")) or None,
-            last_error=str(task.get("last_error", "")) or None,
+            next_retry_at=_optional_text(task.get("next_retry_at")),
+            error_code=_optional_text(task.get("error_code")),
+            last_error=_optional_text(task.get("last_error")),
             queue_status=_task_status_to_queue_status(status),
             enqueued_at=created_at,
             dequeued_at=started_at,
@@ -1107,14 +1138,16 @@ async def access_check(req: ScraperAccessCheckRequest, _session: Session = Depen
     cookies = _merge_cookies(base_url, req.storage_state_path, None)
 
     timeout = aiohttp.ClientTimeout(total=15)
-    headers = {"User-Agent": _default_user_agent()}
+    headers = {
+        "User-Agent": _default_user_agent(),
+        "Accept-Encoding": "gzip, deflate",
+    }
     if cookies:
         headers["Cookie"] = "; ".join(f"{key}={value}" for key, value in cookies.items())
 
     try:
         async with aiohttp.ClientSession(timeout=timeout, cookies=cookies) as session:
             async with session.get(target_url, headers=headers) as response:
-                text = await response.text()
                 if response.status == 403:
                     return ScraperAccessCheckResponse(status="forbidden", http_status=403, message="站点拒绝访问（403）")
                 if response.status >= 400:
@@ -1123,7 +1156,14 @@ async def access_check(req: ScraperAccessCheckRequest, _session: Session = Depen
                         http_status=response.status,
                         message=f"站点返回 HTTP {response.status}",
                     )
-                if "cloudflare" in text.lower() and "just a moment" in text.lower():
+
+                try:
+                    text = await response.text()
+                except Exception as exc:  # noqa: BLE001
+                    return ScraperAccessCheckResponse(status="error", http_status=response.status, message=str(exc))
+
+                lowered = text.lower()
+                if "just a moment" in lowered or ("cloudflare" in lowered and "attention required" in lowered):
                     return ScraperAccessCheckResponse(status="forbidden", http_status=403, message="触发站点验证")
                 return ScraperAccessCheckResponse(status="ok", http_status=response.status, message="站点可访问")
     except Exception as exc:  # noqa: BLE001

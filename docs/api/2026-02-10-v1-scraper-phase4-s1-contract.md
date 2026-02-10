@@ -29,7 +29,18 @@
 - `success | partial -> done`
 - `error -> failed`
 
+字段语义补充（2026-02-10 修订）：
+
+- `retry_count` 表示“实际已执行重试次数”，不再在非重试耗尽失败场景写成 `max_retries`。
+- `error_code` 仅在“可重试失败且达到重试上限”时使用 `SCRAPER_RETRY_EXHAUSTED`。
+- 其他 `success_count == 0` 的下载失败场景使用 `SCRAPER_DOWNLOAD_FAILED`。
+
 ## 管理端新增接口（admin 权限）
+
+鉴权兼容补充（2026-02-10 修订）：
+
+- `/admin/scraper/*` 真实支持 legacy `X-Admin-Token` 直通。
+- 未携带 token 仍返回 401；非 admin session 仍返回 403。
 
 ### `GET /admin/scraper/health`
 

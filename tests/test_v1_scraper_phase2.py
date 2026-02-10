@@ -14,6 +14,8 @@ import manga_translator.server.routes.v1_parser as v1_parser
 import manga_translator.server.routes.v1_scraper as v1_scraper
 from manga_translator.server.scraper_v1 import ProviderUnavailableError, resolve_provider
 from manga_translator.server.scraper_v1 import generic as generic_provider
+from manga_translator.server.scraper_v1 import mangaforfree as mangaforfree_provider
+from manga_translator.server.scraper_v1 import toongod as toongod_provider
 
 
 @pytest.fixture
@@ -65,6 +67,164 @@ def test_provider_resolution_matrix():
 
     with pytest.raises(ProviderUnavailableError):
         resolve_provider("https://example.org", "mangaforfree")
+
+
+def test_parse_search_filters_series_urls_for_mangaforfree():
+    html = """
+    <a href="/manga/">root</a>
+    <a href="/manga/demo-series/">Demo Series</a>
+    <a href="/manga/demo-series/chapter-1/">Chapter 1</a>
+    <a href="/manga/demo-series/chapter-1/p/2/">Chapter 1 Page 2</a>
+    """
+    items = mangaforfree_provider.parse_search(html, "https://example.org")
+    urls = [item.url for item in items]
+    assert urls == ["https://example.org/manga/demo-series/"]
+
+
+def test_parse_search_filters_series_urls_for_toongod():
+    html = """
+    <a href="/webtoon/hero-webtoon/">Hero Webtoon</a>
+    <a href="/webtoon/hero-webtoon/chapter-3/">Hero Chapter</a>
+    <a href="/manga/demo-series/">Demo Series</a>
+    <a href="/manga/">root</a>
+    """
+    items = toongod_provider.parse_search(html, "https://example.org")
+    urls = [item.url for item in items]
+    assert urls == [
+        "https://example.org/webtoon/hero-webtoon/",
+        "https://example.org/manga/demo-series/",
+    ]
+
+
+def test_parse_search_filters_series_urls_for_generic():
+    html = """
+    <a href="/manga/demo-series/">Demo Series</a>
+    <a href="/webtoon/hero-webtoon/">Hero Webtoon</a>
+    <a href="/comic/super-comic/">Super Comic</a>
+    <a href="/series/future-series/">Future Series</a>
+    <a href="/manga/demo-series/chapter-1/">Demo Series Chapter</a>
+    <a href="/manga/">root</a>
+    """
+    items = generic_provider.parse_search(html, "https://example.org")
+    urls = [item.url for item in items]
+    assert urls == [
+        "https://example.org/manga/demo-series/",
+        "https://example.org/webtoon/hero-webtoon/",
+        "https://example.org/comic/super-comic/",
+        "https://example.org/series/future-series/",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mangaforfree_search_does_not_prepend_slug_when_results_exist(monkeypatch: pytest.MonkeyPatch):
+    html = '<a href="/manga/my-life-is-a-piece-of-cake/">My Life Is A Piece Of Cake</a>'
+
+    async def _fake_fetch_html(url: str, *, cookies: dict[str, str], headers: dict[str, str], timeout_sec: float = 25):
+        _ = (url, cookies, headers, timeout_sec)
+        return html
+
+    monkeypatch.setattr(mangaforfree_provider, "_fetch_html", _fake_fetch_html)
+
+    items = await mangaforfree_provider.search_manga(
+        "https://example.org",
+        "one piece",
+        cookies={},
+        user_agent="pytest-agent",
+    )
+    assert items
+    assert items[0].id == "my-life-is-a-piece-of-cake"
+    assert all(item.id != "one-piece" for item in items)
+
+
+@pytest.mark.asyncio
+async def test_toongod_search_does_not_prepend_slug_when_results_exist(monkeypatch: pytest.MonkeyPatch):
+    html = '<a href="/webtoon/hero-webtoon/">Hero Webtoon</a>'
+
+    async def _fake_fetch_html(url: str, *, cookies: dict[str, str], headers: dict[str, str], timeout_sec: float = 25):
+        _ = (url, cookies, headers, timeout_sec)
+        return html
+
+    monkeypatch.setattr(toongod_provider, "_fetch_html", _fake_fetch_html)
+
+    items = await toongod_provider.search_manga(
+        "https://example.org",
+        "solo leveling",
+        cookies={},
+        user_agent="pytest-agent",
+    )
+    assert items
+    assert items[0].id == "hero-webtoon"
+    assert all(item.id != "solo-leveling" for item in items)
+
+
+@pytest.mark.asyncio
+async def test_generic_search_does_not_prepend_slug_when_results_exist(monkeypatch: pytest.MonkeyPatch):
+    html = '<a href="/comic/super-comic/">Super Comic</a>'
+
+    async def _fake_fetch_html(
+        url: str,
+        *,
+        cookies: dict[str, str],
+        user_agent: str,
+        http_mode: bool,
+        force_engine: str | None,
+    ):
+        _ = (url, cookies, user_agent, http_mode, force_engine)
+        return html
+
+    monkeypatch.setattr(generic_provider, "_fetch_html", _fake_fetch_html)
+
+    items = await generic_provider.search_manga(
+        "https://example.org",
+        "one piece",
+        cookies={},
+        user_agent="pytest-agent",
+        http_mode=True,
+        force_engine=None,
+    )
+    assert items
+    assert items[0].id == "super-comic"
+    assert all(item.id != "one-piece" for item in items)
+
+
+@pytest.mark.asyncio
+async def test_mangaforfree_list_chapters_falls_back_to_ajax(monkeypatch: pytest.MonkeyPatch):
+    page_html = """
+    <html>
+      <body>
+        <div id="manga-chapters-holder" data-id="358958"></div>
+        <script>
+          var manga = {"ajax_url":"https://example.org/wp-admin/admin-ajax.php","manga_id":"358958"};
+        </script>
+      </body>
+    </html>
+    """
+    ajax_html = """
+    <ul class="main version-chap">
+      <li class="wp-manga-chapter"><a href="https://example.org/manga/demo-series/chapter-2/">Chapter 2</a></li>
+      <li class="wp-manga-chapter"><a href="https://example.org/manga/demo-series/chapter-1/">Chapter 1</a></li>
+    </ul>
+    """
+
+    async def _fake_fetch_html(url: str, *, cookies: dict[str, str], headers: dict[str, str], timeout_sec: float = 25):
+        _ = (url, cookies, headers, timeout_sec)
+        return page_html
+
+    async def _fake_fetch_ajax(ajax_url: str, manga_id: str, *, cookies: dict[str, str], headers: dict[str, str], referer: str):
+        _ = (ajax_url, manga_id, cookies, headers, referer)
+        return ajax_html
+
+    monkeypatch.setattr(mangaforfree_provider, "_fetch_html", _fake_fetch_html)
+    monkeypatch.setattr(mangaforfree_provider, "_fetch_chapters_via_ajax", _fake_fetch_ajax, raising=False)
+
+    chapters = await mangaforfree_provider.list_chapters(
+        "https://example.org",
+        "https://example.org/manga/demo-series/",
+        cookies={},
+        user_agent="pytest-agent",
+    )
+    assert len(chapters) == 2
+    assert [chapter.id for chapter in chapters] == ["chapter-1", "chapter-2"]
 
 
 def test_providers_endpoint(phase2_app):

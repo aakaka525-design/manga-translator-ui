@@ -49,6 +49,8 @@ from manga_translator.server.routes import (
     v1_translate_router,
     v1_scraper_router,
     v1_parser_router,
+    v1_settings_router,
+    v1_system_router,
 )
 
 # Import sessions_router
@@ -216,10 +218,19 @@ async def shutdown_event():
     logger.info("Server shutdown completed")
 
 # Configure middleware
+def _parse_cors_origins() -> list[str]:
+    raw = os.getenv("MANGA_TRANSLATOR_CORS_ORIGINS", "*")
+    origins = [item.strip() for item in raw.split(",") if item.strip()]
+    return origins or ["*"]
+
+
+cors_origins = _parse_cors_origins()
+allow_cors_credentials = "*" not in cors_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials=allow_cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -249,9 +260,16 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 # Mount static files
 static_dir = os.path.join(os.path.dirname(__file__), "static")
+dist_dir = os.path.join(static_dir, "dist")
+dist_assets_dir = os.path.join(dist_dir, "assets")
 if not os.path.exists(static_dir):
     os.makedirs(static_dir, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+# Vue build defaults to absolute `/assets/*` in production output.
+# Expose dist assets at root-level `/assets` so SPA scripts/styles resolve.
+if os.path.isdir(dist_assets_dir):
+    app.mount("/assets", StaticFiles(directory=dist_assets_dir), name="frontend-assets")
 
 # Mount data/output directories used by Vue web frontend.
 data_dir = os.path.join(os.path.dirname(__file__), "data")
@@ -268,6 +286,54 @@ async def favicon():
     favicon_path = os.path.join(static_dir, "favicon.ico")
     if os.path.exists(favicon_path):
         return FileResponse(favicon_path)
+    raise HTTPException(status_code=404)
+
+
+@app.get("/icon.png", include_in_schema=False)
+async def frontend_icon():
+    icon_path = os.path.join(dist_dir, "icon.png")
+    if os.path.exists(icon_path):
+        return FileResponse(icon_path)
+    raise HTTPException(status_code=404)
+
+
+@app.get("/manifest.webmanifest", include_in_schema=False)
+async def frontend_manifest():
+    manifest_path = os.path.join(dist_dir, "manifest.webmanifest")
+    if os.path.exists(manifest_path):
+        return FileResponse(manifest_path)
+    raise HTTPException(status_code=404)
+
+
+@app.get("/pwa-192x192.png", include_in_schema=False)
+async def frontend_pwa_icon_192():
+    icon_path = os.path.join(dist_dir, "pwa-192x192.png")
+    if os.path.exists(icon_path):
+        return FileResponse(icon_path)
+    raise HTTPException(status_code=404)
+
+
+@app.get("/pwa-512x512.png", include_in_schema=False)
+async def frontend_pwa_icon_512():
+    icon_path = os.path.join(dist_dir, "pwa-512x512.png")
+    if os.path.exists(icon_path):
+        return FileResponse(icon_path)
+    raise HTTPException(status_code=404)
+
+
+@app.get("/sw.js", include_in_schema=False)
+async def frontend_service_worker():
+    sw_path = os.path.join(dist_dir, "sw.js")
+    if os.path.exists(sw_path):
+        return FileResponse(sw_path)
+    raise HTTPException(status_code=404)
+
+
+@app.get("/workbox-{workbox_hash}.js", include_in_schema=False)
+async def frontend_workbox_js(workbox_hash: str):
+    workbox_path = os.path.join(dist_dir, f"workbox-{workbox_hash}.js")
+    if os.path.exists(workbox_path):
+        return FileResponse(workbox_path)
     raise HTTPException(status_code=404)
 
 
@@ -300,6 +366,8 @@ app.include_router(v1_manga_router)
 app.include_router(v1_translate_router)
 app.include_router(v1_scraper_router)
 app.include_router(v1_parser_router)
+app.include_router(v1_settings_router)
+app.include_router(v1_system_router)
 
 # Internal API endpoint for instance registration
 @app.post("/register", response_description="no response", tags=["internal-api"])
@@ -382,8 +450,8 @@ def run_server(args):
     task_manager.server_config['models_ttl'] = getattr(args, 'models_ttl', 0)
     task_manager.server_config['retry_attempts'] = getattr(args, 'retry_attempts', None)
     
-    # 从 admin_settings 加载管理员密码和并发设置
-    task_manager.server_config['admin_password'] = config_manager.admin_settings.get('admin_password')
+    # 历史字段保留但不再写入明文管理员密码
+    task_manager.server_config['admin_password'] = None
     if config_manager.admin_settings.get('max_concurrent_tasks'):
         task_manager.server_config['max_concurrent_tasks'] = config_manager.admin_settings['max_concurrent_tasks']
     

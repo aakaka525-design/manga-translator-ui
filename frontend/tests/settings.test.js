@@ -1,11 +1,19 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { setActivePinia, createPinia } from "pinia";
 import { useSettingsStore } from "@/stores/settings";
+import { SESSION_TOKEN_KEY } from "@/api";
 
 beforeEach(() => {
   setActivePinia(createPinia());
   vi.stubGlobal("fetch", vi.fn());
+  vi.spyOn(console, "error").mockImplementation(() => {});
   localStorage.clear();
+  localStorage.setItem(SESSION_TOKEN_KEY, "session-token-for-settings-test");
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("settings store", () => {
@@ -20,6 +28,8 @@ describe("settings store", () => {
     const saved = JSON.parse(localStorage.getItem("manhua_settings"));
     expect(saved.upscaleModel).toBe("realesr-animevideov3-x4");
     expect(saved.upscaleScale).toBe(4);
+    const req = fetch.mock.calls.at(-1)[1];
+    expect(req.headers["X-Session-Token"]).toBe("session-token-for-settings-test");
   });
 
   it("toggles upscale enabled state and persists it", async () => {
@@ -71,5 +81,25 @@ describe("settings store", () => {
     const payload = JSON.parse(fetch.mock.calls.at(-1)[1].body);
     expect(payload.model).toBe("realesr-animevideov3-x2");
     expect(payload.scale).toBe(2);
+  });
+
+  it("degrades silently for forbidden model update response", async () => {
+    fetch.mockResolvedValue({ ok: false, status: 403, json: async () => ({ detail: "forbidden" }) });
+    const store = useSettingsStore();
+    await expect(store.selectModel({ id: "gpt-4o", name: "GPT-4o" })).resolves.toBeUndefined();
+    expect(store.settings.aiModel).toBe("gpt-4o");
+  });
+
+  it("keeps local settings when settings sync endpoint is unavailable", async () => {
+    fetch.mockResolvedValue({ ok: false, status: 404, json: async () => ({}) });
+    const store = useSettingsStore();
+    await expect(store.syncSettingsFromServer()).resolves.toBeUndefined();
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/v1/settings",
+      expect.objectContaining({
+        headers: expect.objectContaining({ "X-Session-Token": "session-token-for-settings-test" }),
+      }),
+    );
+    expect(store.settings.aiModel).toBeTruthy();
   });
 });
