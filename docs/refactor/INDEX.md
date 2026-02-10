@@ -14,11 +14,15 @@
 - Phase4 Eval Plan: `docs/plans/2026-02-10-phase4-priority-evaluation.md`
 - Phase4 Eval Worklog: `docs/refactor/2026-02-10-phase4-eval-worklog.md`
 - Phase4 Decision: `docs/decisions/2026-02-10-phase4-go-no-go.md`
+- Phase4 S1 Plan: `docs/plans/2026-02-10-phase4-s1-implementation.md`
+- Phase4 S1 Worklog: `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- Phase4 S1 API Contract: `docs/api/2026-02-10-v1-scraper-phase4-s1-contract.md`
 
 ## 验证快照
 - 后端: `pytest -q tests/test_v1_routes.py` -> pass
 - 后端（phase2）: `pytest -q tests/test_v1_routes.py tests/test_v1_scraper_phase2.py` -> pass
 - 后端（phase3）: `pytest -q tests/test_v1_routes.py tests/test_v1_scraper_phase2.py tests/test_v1_scraper_phase3.py` -> pass
+- 后端（phase4 S1）: `pytest -q tests/test_v1_routes.py tests/test_v1_scraper_phase2.py tests/test_v1_scraper_phase3.py tests/test_v1_scraper_phase4.py` -> pass
 - 前端单测: `cd frontend && npm test` -> pass
 - 前端构建: `cd frontend && npm run build` -> pass
 - 远端仓库: `gh repo view aakaka525-design/manga-translator-ui --json name,owner,isPrivate,defaultBranchRef,url` -> pass（private=true, defaultBranch=main）

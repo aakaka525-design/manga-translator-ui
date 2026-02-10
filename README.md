@@ -201,14 +201,15 @@ docker run -d --name manga-translator -p 8000:8000 hgmzhn/manga-translator:lates
    - 构建输出：`manga_translator/server/static/dist`
    - Git 策略：只提交前端源码，不提交 `manga_translator/server/static/dist` 产物
 
-6. **Scraper 三期能力（`/api/v1` 兼容）**：
+6. **Scraper 四期（S1）能力（`/api/v1` 兼容）**：
    - 站点 provider：`mangaforfree`、`toongod`、`generic`
    - 可选请求字段：`site_hint`、`force_engine`
    - provider 能力端点：`GET /api/v1/scraper/providers`
    - 下载任务状态持久化：SQLite `manga_translator/server/data/scraper_tasks.db`
-   - `GET /api/v1/scraper/task/{task_id}` 扩展：`retry_count`、`max_retries`、`next_retry_at`、`error_code`、`last_error`
-   - 管理端监控端点：`GET /admin/scraper/tasks`、`GET /admin/scraper/metrics`
-   - 新增错误码：`SCRAPER_TASK_DUPLICATE`、`SCRAPER_TASK_STALE`、`SCRAPER_RETRY_EXHAUSTED`
+   - `GET /api/v1/scraper/task/{task_id}` 扩展：`retry_count`、`max_retries`、`next_retry_at`、`error_code`、`last_error`、`queue_status`、`enqueued_at`、`dequeued_at`、`worker_id`
+   - 管理端监控端点：`GET /admin/scraper/tasks`、`GET /admin/scraper/metrics`、`GET /admin/scraper/health`、`GET /admin/scraper/alerts`、`POST /admin/scraper/alerts/test-webhook`、`GET /admin/scraper/queue/stats`
+   - 告警规则：`backlog_high`、`error_rate_high`、`stale_detected`（30s 轮询，300s 冷却）
+   - 新增错误码：`SCRAPER_TASK_DUPLICATE`、`SCRAPER_TASK_STALE`、`SCRAPER_RETRY_EXHAUSTED`、`SCRAPER_ALERT_WEBHOOK_FAILED`、`SCRAPER_ALERT_CONFIG_INVALID`、`SCRAPER_ALERT_STORE_ERROR`
 
 > 📖 **详细安装教程**：[安装指南](doc/INSTALLATION.md)  
 > 📖 **使用教程**：[命令行使用指南](doc/CLI_USAGE.md)
