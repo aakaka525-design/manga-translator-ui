@@ -5,6 +5,7 @@ import io
 import os
 import re
 import json
+import threading
 from base64 import b64decode
 from typing import Union
 
@@ -19,6 +20,44 @@ from contextlib import asynccontextmanager
 import logging
 
 logger = logging.getLogger('manga_translator.server')
+_TRANSLATION_THREAD_STATE = threading.local()
+
+
+def _get_translation_event_loop() -> asyncio.AbstractEventLoop:
+    """
+    Reuse one event loop per translator worker thread to avoid creating and
+    destroying loops for every request.
+    """
+    loop = getattr(_TRANSLATION_THREAD_STATE, "loop", None)
+    if loop is None or loop.is_closed():
+        loop = asyncio.new_event_loop()
+        _TRANSLATION_THREAD_STATE.loop = loop
+    asyncio.set_event_loop(loop)
+    return loop
+
+
+def _drain_pending_tasks(loop: asyncio.AbstractEventLoop) -> None:
+    pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
+    if not pending:
+        return
+    for task in pending:
+        task.cancel()
+    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+
+
+def _close_translation_event_loop_for_current_thread() -> None:
+    """
+    Test helper: close cached translator-thread loop in current thread.
+    """
+    loop = getattr(_TRANSLATION_THREAD_STATE, "loop", None)
+    if loop is None:
+        return
+    if not loop.is_closed():
+        try:
+            _drain_pending_tasks(loop)
+        finally:
+            loop.close()
+    _TRANSLATION_THREAD_STATE.loop = None
 
 
 class TaskLogHandler(logging.Handler):
@@ -132,7 +171,14 @@ async def to_pil_image(image: Union[str, bytes, Image.Image]) -> Image.Image:
         raise HTTPException(status_code=422, detail=str(e))
 
 
-def _run_translate_sync(pil_image, config: Config, task_id: str = None, cancel_check_callback=None):
+def _run_translate_sync(
+    pil_image,
+    config: Config,
+    task_id: str = None,
+    cancel_check_callback=None,
+    cleanup_reason: str | None = "single_request_complete",
+    cleanup_force: bool = False,
+):
     """
     同步执行翻译操作的辅助函数。
     用于在线程池中运行，避免阻塞 FastAPI 事件循环。
@@ -164,9 +210,8 @@ def _run_translate_sync(pil_image, config: Config, task_id: str = None, cancel_c
     if cancel_check_callback:
         translator.set_cancel_check_callback(cancel_check_callback)
     
-    # 在新线程中创建事件循环来运行异步翻译
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    # 在线程级别复用事件循环，减少 per-request loop 开销。
+    loop = _get_translation_event_loop()
     begin_translation_operation()
     try:
         result = loop.run_until_complete(translator.translate(pil_image, config))
@@ -178,30 +223,27 @@ def _run_translate_sync(pil_image, config: Config, task_id: str = None, cancel_c
             if cancel_check_callback:
                 translator.set_cancel_check_callback(None)
             
-            # 关闭事件循环前，取消所有待处理的任务
-            pending = asyncio.all_tasks(loop)
-            for task in pending:
-                task.cancel()
-            
-            # 等待所有任务取消完成
-            if pending:
-                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-            
-            # 关闭事件循环
-            loop.close()
-            
-            # 清除线程局部的事件循环引用（Docker环境关键）
-            asyncio.set_event_loop(None)
+            # 避免把遗留任务带入下一次请求
+            _drain_pending_tasks(loop)
             
             # 请求级内存清理：清理翻译器内部状态，保留模型
-            from manga_translator.server.core.task_manager import cleanup_after_request
-            cleanup_after_request(reason="single_request_complete")
+            if cleanup_force or cleanup_reason is not None:
+                from manga_translator.server.core.task_manager import cleanup_after_request
+
+                cleanup_after_request(force=cleanup_force, reason=cleanup_reason)
             
         except Exception as e:
             logger.warning(f"线程清理时出错: {e}")
 
 
-def _run_translate_batch_sync(images_with_configs: list, batch_size: int, task_id: str = None, cancel_check_callback=None):
+def _run_translate_batch_sync(
+    images_with_configs: list,
+    batch_size: int,
+    task_id: str = None,
+    cancel_check_callback=None,
+    cleanup_reason: str | None = "batch_request_complete",
+    cleanup_force: bool = False,
+):
     """
     同步执行批量翻译操作的辅助函数。
     用于在线程池中运行，避免阻塞 FastAPI 事件循环。
@@ -233,9 +275,8 @@ def _run_translate_batch_sync(images_with_configs: list, batch_size: int, task_i
     if cancel_check_callback:
         translator.set_cancel_check_callback(cancel_check_callback)
     
-    # 在新线程中创建事件循环来运行异步翻译
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    # 在线程级别复用事件循环，减少 per-request loop 开销。
+    loop = _get_translation_event_loop()
     begin_translation_operation()
     try:
         result = loop.run_until_complete(translator.translate_batch(images_with_configs, batch_size))
@@ -247,24 +288,14 @@ def _run_translate_batch_sync(images_with_configs: list, batch_size: int, task_i
             if cancel_check_callback:
                 translator.set_cancel_check_callback(None)
             
-            # 关闭事件循环前，取消所有待处理的任务
-            pending = asyncio.all_tasks(loop)
-            for task in pending:
-                task.cancel()
-            
-            # 等待所有任务取消完成
-            if pending:
-                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-            
-            # 关闭事件循环
-            loop.close()
-            
-            # 清除线程局部的事件循环引用（Docker环境关键）
-            asyncio.set_event_loop(None)
+            # 避免把遗留任务带入下一次请求
+            _drain_pending_tasks(loop)
             
             # 请求级内存清理：清理翻译器内部状态，保留模型
-            from manga_translator.server.core.task_manager import cleanup_after_request
-            cleanup_after_request(reason="batch_request_complete")
+            if cleanup_force or cleanup_reason is not None:
+                from manga_translator.server.core.task_manager import cleanup_after_request
+
+                cleanup_after_request(force=cleanup_force, reason=cleanup_reason)
             
         except Exception as e:
             logger.warning(f"线程清理时出错: {e}")
@@ -337,7 +368,14 @@ def prepare_translator_params(config: Config, workflow: str = "normal") -> dict:
     return translator_params
 
 
-async def get_ctx(req: Request, config: Config, image: str|bytes, workflow: str = "normal"):
+async def get_ctx(
+    req: Request,
+    config: Config,
+    image: str | bytes,
+    workflow: str = "normal",
+    cleanup_reason: str | None = "single_request_complete",
+    cleanup_force: bool = False,
+):
     """Translate single image. 使用全局翻译器实例，复用已加载的模型。"""
     from manga_translator.server.core.task_manager import get_semaphore
     from manga_translator.server.core.logging_manager import add_log
@@ -366,11 +404,27 @@ async def get_ctx(req: Request, config: Config, image: str|bytes, workflow: str 
                     add_log("获得翻译槽位，开始翻译", "INFO")
                     # 使用翻译线程池执行，复用全局翻译器
                     from manga_translator.server.core.task_manager import run_in_translator_thread
-                    ctx = await run_in_translator_thread(_run_translate_sync, pil_image, config)
+                    ctx = await run_in_translator_thread(
+                        _run_translate_sync,
+                        pil_image,
+                        config,
+                        None,
+                        None,
+                        cleanup_reason,
+                        cleanup_force,
+                    )
             else:
                 # 没有 semaphore 时直接执行
                 from manga_translator.server.core.task_manager import run_in_translator_thread
-                ctx = await run_in_translator_thread(_run_translate_sync, pil_image, config)
+                ctx = await run_in_translator_thread(
+                    _run_translate_sync,
+                    pil_image,
+                    config,
+                    None,
+                    None,
+                    cleanup_reason,
+                    cleanup_force,
+                )
         
         result = {
             'success': ctx.success if hasattr(ctx, 'success') else (ctx.result is not None),
@@ -669,7 +723,16 @@ def pack_message(status: int, data: bytes) -> bytes:
 
 
 
-async def get_batch_ctx(req: Request, config: Config, images: list[str|bytes], batch_size: int = 4, workflow: str = "normal", task_id: str = None):
+async def get_batch_ctx(
+    req: Request,
+    config: Config,
+    images: list[str | bytes],
+    batch_size: int = 4,
+    workflow: str = "normal",
+    task_id: str = None,
+    cleanup_reason: str | None = "batch_request_complete",
+    cleanup_force: bool = False,
+):
     """批量翻译（使用 UI 层逻辑）
     
     Args:
@@ -731,14 +794,26 @@ async def get_batch_ctx(req: Request, config: Config, images: list[str|bytes], b
                     from manga_translator.server.core.task_manager import run_in_translator_thread
                     cancel_callback = (lambda: is_task_cancelled(task_id)) if task_id else None
                     contexts = await run_in_translator_thread(
-                        _run_translate_batch_sync, images_with_configs, batch_size, task_id, cancel_callback
+                        _run_translate_batch_sync,
+                        images_with_configs,
+                        batch_size,
+                        task_id,
+                        cancel_callback,
+                        cleanup_reason,
+                        cleanup_force,
                     )
             else:
                 # 没有 semaphore 时直接执行
                 from manga_translator.server.core.task_manager import run_in_translator_thread
                 cancel_callback = (lambda: is_task_cancelled(task_id)) if task_id else None
                 contexts = await run_in_translator_thread(
-                    _run_translate_batch_sync, images_with_configs, batch_size, task_id, cancel_callback
+                    _run_translate_batch_sync,
+                    images_with_configs,
+                    batch_size,
+                    task_id,
+                    cancel_callback,
+                    cleanup_reason,
+                    cleanup_force,
                 )
             
             # 翻译后检查取消状态

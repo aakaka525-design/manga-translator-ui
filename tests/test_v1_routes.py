@@ -211,8 +211,21 @@ def test_translate_target_language_normalization():
     assert v1_translate._resolve_target_language("JPN") == "JPN"
 
 
+def test_chapter_execution_mode_auto_prefers_batch_pipeline_for_gemini_hq(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.delenv("MANGA_V1_CHAPTER_EXECUTION_MODE", raising=False)
+    monkeypatch.setattr(
+        "manga_translator.server.core.task_manager.get_server_config",
+        lambda: {"chapter_execution_mode": "auto"},
+    )
+
+    assert v1_translate._resolve_chapter_execution_mode(2, "gemini_hq") == "batch_pipeline"
+    assert v1_translate._resolve_chapter_execution_mode(1, "gemini_hq") == "single_page"
+
+
 @pytest.mark.anyio
-async def test_translate_single_image_keeps_unbounded_retry_attempts_and_normalizes_target(
+async def test_translate_single_image_uses_cli_retry_attempts_by_default_and_normalizes_target(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     source_path = tmp_path / "source.jpg"
@@ -226,8 +239,12 @@ async def test_translate_single_image_keeps_unbounded_retry_attempts_and_normali
         target_lang = "ENG"
         skip_lang = None
 
+    class _CliConfig:
+        attempts = 3
+
     class _Config:
         translator = _TranslatorConfig()
+        cli = _CliConfig()
 
     captured: dict[str, object] = {}
 
@@ -250,7 +267,7 @@ async def test_translate_single_image_keeps_unbounded_retry_attempts_and_normali
     result = await v1_translate._translate_single_image(source_path, output_path, None, "zh")
 
     assert output_path.exists()
-    assert captured["attempts"] == -1
+    assert captured["attempts"] == 3
     assert captured["target_lang"] == "CHS"
     assert result["fallback_used"] is False
     assert result["regions_count"] == 1
@@ -271,8 +288,12 @@ async def test_translate_single_image_uses_server_retry_attempts_override(
         target_lang = "ENG"
         skip_lang = None
 
+    class _CliConfig:
+        attempts = 3
+
     class _Config:
         translator = _TranslatorConfig()
+        cli = _CliConfig()
 
     captured: dict[str, object] = {}
 
@@ -303,6 +324,107 @@ async def test_translate_single_image_uses_server_retry_attempts_override(
     assert captured["target_lang"] == "CHS"
     assert result["fallback_used"] is False
     assert result["regions_count"] == 1
+
+
+@pytest.mark.anyio
+async def test_translate_single_image_skips_pixel_diff_when_regions_detected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    source_path = tmp_path / "source.jpg"
+    output_path = tmp_path / "output.jpg"
+
+    img = Image.new("RGB", (8, 8), color=(240, 240, 240))
+    img.save(source_path)
+
+    class _TranslatorConfig:
+        attempts = 1
+        target_lang = "ENG"
+        skip_lang = None
+
+    class _Config:
+        translator = _TranslatorConfig()
+
+    def _fake_load_default_config():
+        return _Config()
+
+    async def _fake_build_translate_context(_request, _config, payload):
+        with Image.open(io.BytesIO(payload)) as payload_img:
+            result_img = payload_img.convert("RGB")
+        return SimpleNamespace(result=result_img, text_regions=[object()])
+
+    def _should_not_be_called(*_args, **_kwargs):
+        raise AssertionError("_image_has_visible_changes should not be called when regions are detected")
+
+    monkeypatch.setattr(
+        "manga_translator.server.core.config_manager.load_default_config",
+        _fake_load_default_config,
+    )
+    monkeypatch.setattr(v1_translate, "_build_translate_context", _fake_build_translate_context)
+    monkeypatch.setattr(v1_translate, "_image_has_visible_changes", _should_not_be_called)
+
+    result = await v1_translate._translate_single_image(source_path, output_path, None, "zh")
+
+    assert output_path.exists()
+    assert result["fallback_used"] is False
+    assert result["regions_count"] == 1
+    assert result["output_changed"] is True
+    assert result["no_change_reason"] is None
+
+
+@pytest.mark.anyio
+async def test_translate_single_image_uses_pixel_diff_when_no_regions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    source_path = tmp_path / "source.jpg"
+    output_path = tmp_path / "output.jpg"
+
+    img = Image.new("RGB", (8, 8), color=(240, 240, 240))
+    img.save(source_path)
+
+    class _TranslatorConfig:
+        attempts = 1
+        target_lang = "ENG"
+        skip_lang = None
+
+    class _Config:
+        translator = _TranslatorConfig()
+
+    called = {"count": 0}
+
+    def _fake_load_default_config():
+        return _Config()
+
+    async def _fake_build_translate_context(_request, _config, payload):
+        with Image.open(io.BytesIO(payload)) as payload_img:
+            result_img = payload_img.convert("RGB")
+        return SimpleNamespace(result=result_img, text_regions=[])
+
+    def _fake_image_diff(*_args, **_kwargs):
+        called["count"] += 1
+        return False
+
+    monkeypatch.setattr(
+        "manga_translator.server.core.config_manager.load_default_config",
+        _fake_load_default_config,
+    )
+    monkeypatch.setattr(v1_translate, "_build_translate_context", _fake_build_translate_context)
+    monkeypatch.setattr(v1_translate, "_image_has_visible_changes", _fake_image_diff)
+
+    result = await v1_translate._translate_single_image(source_path, output_path, None, "zh")
+
+    assert output_path.exists()
+    assert called["count"] == 1
+    assert result["regions_count"] == 0
+    assert result["output_changed"] is False
+    assert result["no_change_reason"] == "no_text_regions_detected"
+
+
+def test_resolve_translate_attempts_falls_back_to_bounded_default():
+    config = SimpleNamespace(
+        translator=SimpleNamespace(attempts=None),
+        cli=SimpleNamespace(attempts=None),
+    )
+    assert v1_translate._resolve_translate_attempts(config) == 3
 
 
 def test_prepare_translator_params_aligns_use_gpu_with_server_config(monkeypatch: pytest.MonkeyPatch):

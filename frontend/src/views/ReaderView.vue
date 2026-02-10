@@ -119,6 +119,7 @@ async function handleRetranslate(page) {
   const pageName = page?.name || page
   toast.show('正在重新翻译...', 'info')
   try {
+    const previousTranslatedUrl = page?.translated_url || ''
     await translateApi.retranslatePage({
       manga_id: mangaId.value,
       chapter_id: chapterId.value,
@@ -127,7 +128,21 @@ async function handleRetranslate(page) {
       target_language: settingsStore.settings.targetLang,
     })
     await loadChapter()
-    toast.show('翻译请求已提交', 'success')
+    const refreshedPage = pages.value.find((item) => item.name === pageName)
+    const hasReadableOutput = Boolean(
+      refreshedPage?.translated_url &&
+      refreshedPage?.translated_url !== refreshedPage?.original_url
+    )
+    const translatedUrlChanged = Boolean(
+      refreshedPage?.translated_url &&
+      refreshedPage?.translated_url !== previousTranslatedUrl
+    )
+
+    if (hasReadableOutput || translatedUrlChanged) {
+      toast.show('翻译完成并已刷新页面', 'success')
+    } else {
+      toast.show('翻译任务已完成，但未检测到可读译图，请检查后端日志', 'warning')
+    }
   } catch (e) {
     console.error(e)
     const message = e?.message ? `翻译失败: ${e.message}` : '翻译失败'

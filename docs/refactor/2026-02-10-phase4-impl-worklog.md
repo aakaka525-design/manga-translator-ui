@@ -467,3 +467,30 @@
 - 验证命令: `pytest -q tests/test_translator_attempt_state.py -k \"limit_is_one or single_attempt_limit\" && pytest -q tests/test_translator_attempt_state.py tests/test_request_extraction_event_loop.py tests/test_v1_translate_perf_quick.py && pytest -q tests/test_v1_routes.py tests/test_v1_scraper_phase2.py tests/test_v1_scraper_phase3.py tests/test_v1_scraper_phase4.py`
 - 验证结果: pass（新增 attempts=1 边界回归通过；翻译链路与 scraper 主回归通过）
 - 提交哈希: a3fcfe0
+
+## BUGFIX-TRANSLATE-016
+- TASK-ID: BUGFIX-TRANSLATE-016
+- 状态: completed
+- 改动文件: `manga_translator/server/routes/v1_translate.py`, `manga_translator/server/request_extraction.py`, `manga_translator/server/main.py`, `manga_translator/args.py`, `manga_translator/rendering/__init__.py`, `tests/test_v1_translate_pipeline.py`, `tests/test_v1_translate_concurrency.py`, `tests/test_render_polygon_stability.py`, `tests/test_v1_translate_perf_quick.py`, `test_vue_api_path.py`
+- 接口影响: 无新增端点；`/api/v1/translate/chapter` 与页面进度事件新增可选诊断字段（`pipeline`、`stage_elapsed_ms`、`failure_stage`）；`single_page` 模式页并发强制为 1（稳定性优先）；`web` 模式 `use_gpu` 默认值改为“未显式指定时跟随配置文件”；渲染并集路径新增 `_safe_union_polygons` 容错。
+- 验证命令: `pytest -q tests/test_v1_translate_pipeline.py tests/test_v1_translate_concurrency.py tests/test_render_polygon_stability.py && pytest -q tests/test_v1_routes.py tests/test_v1_translate_perf_quick.py tests/test_request_extraction_event_loop.py tests/test_translator_attempt_state.py tests/test_v1_translate_pipeline.py tests/test_v1_translate_concurrency.py tests/test_render_polygon_stability.py`
+- 验证结果: pass（翻译链路新增/既有回归通过，稳定性策略与诊断字段生效）
+- 提交哈希: N/A
+
+## BUGFIX-TRANSLATE-017
+- TASK-ID: BUGFIX-TRANSLATE-017
+- 状态: completed
+- 改动文件: `frontend/src/api/index.js`, `frontend/src/views/ReaderView.vue`, `frontend/tests/reader_mobile_actions.test.js`
+- 接口影响: 无新增端点；前端长任务交互优化：翻译 API 请求超时策略调整（章节提交 60s、单页重翻译不限时），阅读页重翻译成功后新增“后端结果可读性”二次确认提示，避免“显示成功但页面无变化”的误导反馈。
+- 验证命令: `cd frontend && npm test -- --run && npm run build`
+- 验证结果: pass（前端 49/49；构建成功）
+- 提交哈希: N/A
+
+## BUGFIX-TRANSLATE-018
+- TASK-ID: BUGFIX-TRANSLATE-018
+- 状态: completed
+- 改动文件: `docs/2026-02-10-project-audit.md`, `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: 无运行时接口变化；补充 Qt/CLI 等价链路 vs Vue/API 等价链路实图对照结论（同一张 `001.jpg`）与耗时/产图指标。
+- 验证命令: `python - <<'PY' (同一输入图分别跑 CLI 核心 translate_batch 与 API 核心 _translate_single_image，记录 elapsed/output/md5/nonzero diff) PY`
+- 验证结果: pass（CLI `54.058s`，API `48.590s`；两侧均产出图片；API `fallback_used=false`、`output_changed=true`；输出路径：`/tmp/mt_repro3/cli_001.jpg`、`/tmp/mt_repro3/api_001.jpg`）
+- 提交哈希: N/A

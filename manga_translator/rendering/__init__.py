@@ -29,6 +29,48 @@ logger = get_logger('render')
 # Global variable to store default font path for regions without specific fonts
 _global_default_font_path = ''
 
+
+def _safe_union_polygons(polygons: List[np.ndarray]):
+    """
+    Union polygons with robust validity repair.
+    Returns a non-empty Polygon/MultiPolygon or raises ValueError.
+    """
+    from shapely.ops import unary_union
+
+    try:
+        from shapely.validation import make_valid
+    except Exception:  # noqa: BLE001
+        make_valid = None
+
+    repaired_polygons = []
+    for points in polygons:
+        poly = Polygon(points)
+        if poly.is_empty:
+            continue
+
+        if not poly.is_valid:
+            if make_valid is not None:
+                try:
+                    poly = make_valid(poly)
+                except Exception:  # noqa: BLE001
+                    poly = poly
+            if getattr(poly, "is_empty", False) or not getattr(poly, "is_valid", False):
+                poly = poly.buffer(0)
+
+        if getattr(poly, "is_empty", False):
+            continue
+
+        repaired_polygons.append(poly)
+
+    if not repaired_polygons:
+        raise ValueError("No valid polygons for union")
+
+    union_poly = unary_union(repaired_polygons)
+    if getattr(union_poly, "is_empty", False):
+        raise ValueError("Empty union polygon")
+
+    return union_poly
+
 def find_largest_inscribed_rect(mask: np.ndarray) -> tuple:
     """
     Find the largest axis-aligned rectangle that fits inside the mask.
@@ -988,31 +1030,12 @@ def resize_regions_to_font_size(img: np.ndarray, text_regions: List['TextBlock']
                 logger.debug(f"[SMART_SCALING DEBUG] Region has {len(region.lines)} lines in OCR result")
                 
                 if len(region.lines) > 1:
-                    from shapely.ops import unary_union
                     try:
-                        unrotated_polygons = []
+                        unrotated_points_list = []
                         for p in region.lines:
                             unrotated_p = rotate_polygons(region.center, p.reshape(1, -1, 2), region.angle, to_int=False)
-                            poly = Polygon(unrotated_p.reshape(-1, 2))
-                            if not poly.is_valid:
-                                poly = poly.buffer(0)
-                            if poly.is_empty:
-                                continue
-                            unrotated_polygons.append(poly)
-                        if not unrotated_polygons:
-                            raise ValueError("No valid polygons for union")
-                        try:
-                            union_poly = unary_union(unrotated_polygons)
-                        except Exception:
-                            repaired_polygons = []
-                            for poly in unrotated_polygons:
-                                repaired = poly.buffer(0)
-                                if repaired.is_empty:
-                                    continue
-                                repaired_polygons.append(repaired)
-                            if not repaired_polygons:
-                                raise
-                            union_poly = unary_union(repaired_polygons)
+                            unrotated_points_list.append(unrotated_p.reshape(-1, 2))
+                        union_poly = _safe_union_polygons(unrotated_points_list)
                         if getattr(union_poly, "is_empty", False):
                             raise ValueError("Empty union polygon")
                         if getattr(union_poly, "geom_type", "") == "MultiPolygon":

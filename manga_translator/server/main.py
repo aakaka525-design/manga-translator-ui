@@ -444,8 +444,16 @@ def run_server(args):
     """启动 Web API 服务器（纯API模式，不带界面）"""
     import uvicorn
     
+    resolved_use_gpu = getattr(args, 'use_gpu', None)
+    if resolved_use_gpu is None:
+        try:
+            default_config = config_manager.load_default_config()
+            resolved_use_gpu = bool(getattr(getattr(default_config, 'cli', None), 'use_gpu', False))
+        except Exception:
+            resolved_use_gpu = False
+
     # 设置服务器配置（在 prepare 之前）
-    task_manager.server_config['use_gpu'] = getattr(args, 'use_gpu', False)
+    task_manager.server_config['use_gpu'] = bool(resolved_use_gpu)
     task_manager.server_config['verbose'] = getattr(args, 'verbose', False)
     task_manager.server_config['models_ttl'] = getattr(args, 'models_ttl', 0)
     task_manager.server_config['retry_attempts'] = getattr(args, 'retry_attempts', None)
@@ -454,8 +462,30 @@ def run_server(args):
     task_manager.server_config['admin_password'] = None
     if config_manager.admin_settings.get('max_concurrent_tasks'):
         task_manager.server_config['max_concurrent_tasks'] = config_manager.admin_settings['max_concurrent_tasks']
+    if config_manager.admin_settings.get('chapter_page_concurrency'):
+        task_manager.server_config['chapter_page_concurrency'] = config_manager.admin_settings['chapter_page_concurrency']
+    if config_manager.admin_settings.get('cleanup_interval_requests'):
+        task_manager.server_config['cleanup_interval_requests'] = config_manager.admin_settings['cleanup_interval_requests']
+    if config_manager.admin_settings.get('chapter_execution_mode'):
+        task_manager.server_config['chapter_execution_mode'] = config_manager.admin_settings['chapter_execution_mode']
+    if config_manager.admin_settings.get('runtime_profile'):
+        task_manager.server_config['runtime_profile'] = config_manager.admin_settings['runtime_profile']
     
-    print(f"[SERVER CONFIG] use_gpu={task_manager.server_config['use_gpu']}, verbose={task_manager.server_config['verbose']}, models_ttl={task_manager.server_config['models_ttl']}, retry_attempts={task_manager.server_config['retry_attempts']}, max_concurrent_tasks={task_manager.server_config['max_concurrent_tasks']}")
+    print(
+        f"[SERVER CONFIG] use_gpu={task_manager.server_config['use_gpu']}, "
+        f"verbose={task_manager.server_config['verbose']}, "
+        f"models_ttl={task_manager.server_config['models_ttl']}, "
+        f"retry_attempts={task_manager.server_config['retry_attempts']}, "
+        f"max_concurrent_tasks={task_manager.server_config['max_concurrent_tasks']}, "
+        f"chapter_page_concurrency={task_manager.server_config['chapter_page_concurrency']}, "
+        f"cleanup_interval_requests={task_manager.server_config['cleanup_interval_requests']}, "
+        f"chapter_execution_mode={task_manager.server_config['chapter_execution_mode']}, "
+        f"runtime_profile={task_manager.server_config['runtime_profile']}"
+    )
+    if not task_manager.server_config['use_gpu']:
+        print("[SERVER CONFIG] use_gpu=False (set MT_USE_GPU=true or --use-gpu for GPU-aligned benchmarking)")
+    else:
+        print("[SERVER CONFIG] use_gpu=True (GPU path enabled)")
     
     # 初始化并发控制
     task_manager.init_semaphore()

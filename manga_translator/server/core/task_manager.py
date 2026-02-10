@@ -12,11 +12,40 @@ from concurrent.futures import ThreadPoolExecutor, Future
 from datetime import datetime, timezone
 from typing import Optional, Callable, Any
 import logging
+import os
 
 from manga_translator.server.core.logging_manager import add_log
 
 
 logger = logging.getLogger('manga_translator.server')
+
+
+def _env_positive_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        parsed = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _env_choice(name: str, default: str, choices: set[str]) -> str:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = str(raw).strip().lower()
+    return value if value in choices else default
+
+
+def _normalize_choice(value: object, default: str, choices: set[str]) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in choices else default
+
+
+CHAPTER_EXECUTION_MODE_CHOICES = {"single_page", "batch_pipeline", "auto"}
+RUNTIME_PROFILE_CHOICES = {"off", "basic"}
 
 
 # 翻译线程池（根据 max_concurrent_tasks 动态创建）
@@ -38,11 +67,53 @@ server_config = {
     'retry_attempts': None,
     'admin_password': None,
     'max_concurrent_tasks': 3,
+    'chapter_page_concurrency': _env_positive_int('MANGA_V1_CHAPTER_PAGE_CONCURRENCY', 3),
+    'cleanup_interval_requests': _env_positive_int('MANGA_V1_CLEANUP_INTERVAL_REQUESTS', 8),
+    'chapter_execution_mode': _env_choice(
+        'MANGA_V1_CHAPTER_EXECUTION_MODE',
+        'auto',
+        CHAPTER_EXECUTION_MODE_CHOICES,
+    ),
+    'runtime_profile': _env_choice('MANGA_V1_RUNTIME_PROFILE', 'basic', RUNTIME_PROFILE_CHOICES),
 }
 
 # 活动任务跟踪
 active_tasks = {}
 active_tasks_lock = threading.Lock()
+
+# 请求级清理节流状态
+_cleanup_request_counter = 0
+_cleanup_counter_lock = threading.Lock()
+
+# 翻译执行中的任务计数（用于避免在途任务期间的共享状态清理）
+_inflight_translation_ops = 0
+_inflight_ops_lock = threading.Lock()
+
+
+def begin_translation_operation() -> None:
+    global _inflight_translation_ops
+    with _inflight_ops_lock:
+        _inflight_translation_ops += 1
+
+
+def end_translation_operation() -> None:
+    global _inflight_translation_ops
+    with _inflight_ops_lock:
+        _inflight_translation_ops = max(0, _inflight_translation_ops - 1)
+
+
+def get_inflight_translation_operations() -> int:
+    with _inflight_ops_lock:
+        return _inflight_translation_ops
+
+
+def _is_low_memory_pressure() -> bool:
+    try:
+        import psutil
+
+        return bool(psutil.virtual_memory().percent >= 92)
+    except Exception:
+        return False
 
 
 def init_semaphore():
@@ -223,6 +294,60 @@ def update_server_config(config: dict):
         if old_value != new_value:
             init_semaphore()
             logger.info(f"并发数已更新: {old_value} -> {new_value}")
+            current_page_concurrency = server_config.get('chapter_page_concurrency', 3)
+            if isinstance(current_page_concurrency, int) and current_page_concurrency > new_value:
+                server_config['chapter_page_concurrency'] = max(1, new_value)
+                logger.info(
+                    "章节页并发已随 max_concurrent_tasks 自动钳制: "
+                    f"{current_page_concurrency} -> {server_config['chapter_page_concurrency']}"
+                )
+
+    if 'chapter_page_concurrency' in config:
+        new_value = config['chapter_page_concurrency']
+        try:
+            parsed = int(new_value)
+        except (TypeError, ValueError):
+            parsed = server_config.get('chapter_page_concurrency', 3)
+        if parsed <= 0:
+            parsed = server_config.get('chapter_page_concurrency', 3)
+        max_tasks = server_config.get('max_concurrent_tasks', 3)
+        if isinstance(max_tasks, int) and max_tasks > 0:
+            parsed = min(parsed, max_tasks)
+        old_value = server_config.get('chapter_page_concurrency', 3)
+        server_config['chapter_page_concurrency'] = parsed
+        if old_value != parsed:
+            logger.info(f"章节页并发已更新: {old_value} -> {parsed}")
+
+    if 'cleanup_interval_requests' in config:
+        old_value = server_config.get('cleanup_interval_requests', 8)
+        new_value = config['cleanup_interval_requests']
+        try:
+            parsed = int(new_value)
+        except (TypeError, ValueError):
+            parsed = old_value
+        if parsed <= 0:
+            parsed = old_value
+        server_config['cleanup_interval_requests'] = parsed
+        if old_value != parsed:
+            logger.info(f"cleanup 节流阈值已更新: {old_value} -> {parsed}")
+
+    if 'chapter_execution_mode' in config:
+        old_value = server_config.get('chapter_execution_mode', 'auto')
+        parsed = _normalize_choice(
+            config.get('chapter_execution_mode'),
+            old_value,
+            CHAPTER_EXECUTION_MODE_CHOICES,
+        )
+        server_config['chapter_execution_mode'] = parsed
+        if old_value != parsed:
+            logger.info(f"章节执行模式已更新: {old_value} -> {parsed}")
+
+    if 'runtime_profile' in config:
+        old_value = server_config.get('runtime_profile', 'basic')
+        parsed = _normalize_choice(config.get('runtime_profile'), old_value, RUNTIME_PROFILE_CHOICES)
+        server_config['runtime_profile'] = parsed
+        if old_value != parsed:
+            logger.info(f"运行时性能日志级别已更新: {old_value} -> {parsed}")
     
     for key in ['use_gpu', 'verbose', 'models_ttl', 'retry_attempts', 'admin_password']:
         if key in config:
@@ -400,7 +525,7 @@ def get_translator_status() -> dict:
         }
 
 
-def cleanup_after_request():
+def cleanup_after_request(force: bool = False, reason: Optional[str] = None) -> bool:
     """
     请求级内存清理（每次翻译请求结束后调用）
     
@@ -414,7 +539,35 @@ def cleanup_after_request():
     - 其他中间状态
     """
     import gc
-    
+    global _cleanup_request_counter
+
+    interval = server_config.get('cleanup_interval_requests', 8)
+    if not isinstance(interval, int) or interval <= 0:
+        interval = 8
+
+    low_memory = _is_low_memory_pressure()
+
+    with _cleanup_counter_lock:
+        _cleanup_request_counter += 1
+        request_count = _cleanup_request_counter
+        should_cleanup = force or low_memory or request_count >= interval
+        if not should_cleanup:
+            return False
+
+    inflight = get_inflight_translation_operations()
+    if inflight > 0 and not force and not low_memory:
+        logger.debug(
+            "[MEMORY] 跳过清理（在途翻译任务=%s，触发计数=%s/%s，reason=%s）",
+            inflight,
+            request_count,
+            interval,
+            reason or "interval",
+        )
+        return False
+
+    with _cleanup_counter_lock:
+        _cleanup_request_counter = 0
+
     with _translator_lock:
         if _global_translator is not None:
             logger.debug("[MEMORY] 开始请求级内存清理...")
@@ -465,7 +618,8 @@ def cleanup_after_request():
     except Exception:
         pass
     
-    logger.debug("[MEMORY] 请求级内存清理完成")
+    logger.debug("[MEMORY] 请求级内存清理完成 (reason=%s)", reason or ("low_memory" if low_memory else "interval"))
+    return True
 
 
 def cleanup_context(ctx):

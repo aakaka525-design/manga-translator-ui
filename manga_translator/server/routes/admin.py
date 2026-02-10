@@ -293,6 +293,10 @@ async def get_server_config(
     
     return {
         "max_concurrent_tasks": server_config.get('max_concurrent_tasks', 3),
+        "chapter_page_concurrency": server_config.get('chapter_page_concurrency', 3),
+        "cleanup_interval_requests": server_config.get('cleanup_interval_requests', 8),
+        "chapter_execution_mode": server_config.get('chapter_execution_mode', 'auto'),
+        "runtime_profile": server_config.get('runtime_profile', 'basic'),
         "use_gpu": server_config.get('use_gpu', False),
         "verbose": server_config.get('verbose', False),
         "admin_config_path": ADMIN_CONFIG_PATH,
@@ -332,7 +336,85 @@ async def update_server_config(
             logger.info(f"并发数已保存到配置文件: {new_value}")
         except Exception as e:
             logger.error(f"保存并发数到配置文件失败: {e}")
-    
+
+    if 'chapter_page_concurrency' in config:
+        old_value = server_config.get('chapter_page_concurrency', 3)
+        try:
+            new_value = int(config['chapter_page_concurrency'])
+        except (TypeError, ValueError):
+            new_value = old_value
+        if new_value <= 0:
+            new_value = old_value
+        max_concurrent_tasks = server_config.get('max_concurrent_tasks', 3)
+        if isinstance(max_concurrent_tasks, int) and max_concurrent_tasks > 0:
+            new_value = min(new_value, max_concurrent_tasks)
+        server_config['chapter_page_concurrency'] = new_value
+
+        if old_value != new_value:
+            logger.info(f"章节页并发已更新: {old_value} -> {new_value} by user '{session.username}'")
+
+        # Save to admin_config.json (persist)
+        try:
+            admin_settings['chapter_page_concurrency'] = new_value
+            save_admin_settings(admin_settings)
+            logger.info(f"章节页并发已保存到配置文件: {new_value}")
+        except Exception as e:
+            logger.error(f"保存章节页并发到配置文件失败: {e}")
+
+    if 'cleanup_interval_requests' in config:
+        old_value = server_config.get('cleanup_interval_requests', 8)
+        try:
+            new_value = int(config['cleanup_interval_requests'])
+        except (TypeError, ValueError):
+            new_value = old_value
+        if new_value <= 0:
+            new_value = old_value
+        server_config['cleanup_interval_requests'] = new_value
+
+        if old_value != new_value:
+            logger.info(f"cleanup_interval_requests 已更新: {old_value} -> {new_value} by user '{session.username}'")
+
+        try:
+            admin_settings['cleanup_interval_requests'] = new_value
+            save_admin_settings(admin_settings)
+            logger.info(f"cleanup_interval_requests 已保存到配置文件: {new_value}")
+        except Exception as e:
+            logger.error(f"保存 cleanup_interval_requests 到配置文件失败: {e}")
+
+    if 'chapter_execution_mode' in config:
+        old_value = str(server_config.get('chapter_execution_mode', 'auto'))
+        candidate = str(config.get('chapter_execution_mode', old_value)).strip().lower()
+        if candidate not in {'single_page', 'batch_pipeline', 'auto'}:
+            candidate = old_value
+        server_config['chapter_execution_mode'] = candidate
+
+        if old_value != candidate:
+            logger.info(f"chapter_execution_mode 已更新: {old_value} -> {candidate} by user '{session.username}'")
+
+        try:
+            admin_settings['chapter_execution_mode'] = candidate
+            save_admin_settings(admin_settings)
+            logger.info(f"chapter_execution_mode 已保存到配置文件: {candidate}")
+        except Exception as e:
+            logger.error(f"保存 chapter_execution_mode 到配置文件失败: {e}")
+
+    if 'runtime_profile' in config:
+        old_value = str(server_config.get('runtime_profile', 'basic'))
+        candidate = str(config.get('runtime_profile', old_value)).strip().lower()
+        if candidate not in {'off', 'basic'}:
+            candidate = old_value
+        server_config['runtime_profile'] = candidate
+
+        if old_value != candidate:
+            logger.info(f"runtime_profile 已更新: {old_value} -> {candidate} by user '{session.username}'")
+
+        try:
+            admin_settings['runtime_profile'] = candidate
+            save_admin_settings(admin_settings)
+            logger.info(f"runtime_profile 已保存到配置文件: {candidate}")
+        except Exception as e:
+            logger.error(f"保存 runtime_profile 到配置文件失败: {e}")
+
     return {"success": True}
 
 

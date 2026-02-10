@@ -152,15 +152,19 @@ def _resolve_translate_attempts(config) -> int:
     except Exception:  # noqa: BLE001
         pass
 
-    if isinstance(server_retry_attempts, int):
+    if isinstance(server_retry_attempts, int) and (server_retry_attempts > 0 or server_retry_attempts == -1):
         return server_retry_attempts
+
+    cli_attempts = getattr(getattr(config, "cli", None), "attempts", None)
+    if isinstance(cli_attempts, int) and (cli_attempts > 0 or cli_attempts == -1):
+        return cli_attempts
 
     configured_attempts = getattr(getattr(config, "translator", None), "attempts", None)
     if isinstance(configured_attempts, int) and (configured_attempts > 0 or configured_attempts == -1):
         return configured_attempts
 
-    # Keep compatibility with CLI semantics: fallback to unbounded retries.
-    return -1
+    # Keep a bounded default to avoid unintentional long-tail retries in API path.
+    return 3
 
 
 async def _await_translate_context(awaitable, timeout_seconds: int):
@@ -217,10 +221,6 @@ def _resolve_chapter_execution_mode(total_pages: int, translator_name: str | Non
     if configured != "auto":
         return configured
 
-    translator_key = (translator_name or "").strip().lower()
-    if translator_key == "gemini_hq":
-        # gemini_hq is sensitive to remote long-tail; keep auto mode conservative.
-        return "single_page"
     if total_pages <= 1:
         return "single_page"
     return "batch_pipeline"
@@ -268,8 +268,13 @@ def _resolve_chapter_page_concurrency(
 
     mode_key = (execution_mode or "").strip().lower()
     translator_key = (translator_name or "").strip().lower()
-    if translator_key == "gemini_hq" and mode_key != "batch_pipeline":
-        configured = min(configured, 2)
+
+    # Single-page mode executes through one shared translator instance.
+    # Force serial page execution to avoid cross-page mutable state races.
+    if mode_key and mode_key != "batch_pipeline":
+        configured = 1
+    elif translator_key == "gemini_hq" and mode_key != "batch_pipeline":
+        configured = min(configured, 1)
 
     if max_concurrent_tasks is None:
         return max(1, configured)
@@ -294,10 +299,23 @@ def _cleanup_translated_variants(manga_id: str, chapter_id: str, image_name: str
             logger.warning("failed to remove stale translated file: %s", file_path)
 
 
-async def _build_translate_context(request: Request, config, payload: bytes):
+async def _build_translate_context(
+    request: Request,
+    config,
+    payload: bytes,
+    cleanup_reason: str | None = "single_request_complete",
+    cleanup_force: bool = False,
+):
     from manga_translator.server.request_extraction import get_ctx
 
-    return await get_ctx(request, config, payload, "normal")
+    return await get_ctx(
+        request,
+        config,
+        payload,
+        "normal",
+        cleanup_reason=cleanup_reason,
+        cleanup_force=cleanup_force,
+    )
 
 
 def _image_has_visible_changes(source_payload: bytes, output_path: Path) -> bool:
@@ -333,12 +351,25 @@ def _prepare_output_image(image: Image.Image, output_path: Path) -> Image.Image:
     return image
 
 
+def _empty_stage_timing() -> dict[str, float]:
+    return {
+        "context": 0.0,
+        "render": 0.0,
+        "total": 0.0,
+    }
+
+
 async def _translate_single_image(
     image_path: Path,
     output_path: Path,
     source_language: str | None,
     target_language: str | None,
+    cleanup_reason: str | None = "single_request_complete",
+    cleanup_force: bool = False,
 ) -> dict:
+    started_at = time.perf_counter()
+    stage_elapsed_ms = _empty_stage_timing()
+    failure_stage = "context"
     payload = image_path.read_bytes()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -352,20 +383,41 @@ async def _translate_single_image(
         config.translator.target_lang = _resolve_target_language(target_language)
 
         fake_request = Request({"type": "http", "method": "POST", "path": "/api/v1/translate/page", "headers": []})
-        ctx = await _await_translate_context(
-            _build_translate_context(fake_request, config, payload),
-            TRANSLATE_CONTEXT_TIMEOUT_SEC,
-        )
+        context_started_at = time.perf_counter()
+        try:
+            context_awaitable = _build_translate_context(
+                fake_request,
+                config,
+                payload,
+                cleanup_reason=cleanup_reason,
+                cleanup_force=cleanup_force,
+            )
+        except TypeError as exc:
+            if "cleanup_reason" not in str(exc):
+                raise
+            # Backward-compatible path for tests/mocks overriding legacy signature.
+            context_awaitable = _build_translate_context(fake_request, config, payload)
+
+        ctx = await _await_translate_context(context_awaitable, TRANSLATE_CONTEXT_TIMEOUT_SEC)
+        stage_elapsed_ms["context"] = (time.perf_counter() - context_started_at) * 1000.0
         if not getattr(ctx, "result", None):
             raise RuntimeError("Translation produced no output image")
 
+        failure_stage = "render"
+        render_started_at = time.perf_counter()
         prepared_result = _prepare_output_image(ctx.result, output_path)
         prepared_result.save(output_path)
+        stage_elapsed_ms["render"] = (time.perf_counter() - render_started_at) * 1000.0
         regions_count = len(getattr(ctx, "text_regions", []) or [])
-        output_changed = _image_has_visible_changes(payload, output_path)
+        # Fast path: if OCR detected text regions, treat output as changed.
+        # This avoids expensive full-image diff on every translated page.
+        output_changed = regions_count > 0
+        if not output_changed:
+            output_changed = _image_has_visible_changes(payload, output_path)
         no_change_reason = None
         if not output_changed:
             no_change_reason = "no_text_regions_detected" if regions_count == 0 else "output_matches_source"
+        stage_elapsed_ms["total"] = (time.perf_counter() - started_at) * 1000.0
         return {
             "output_path": str(output_path),
             "regions_count": regions_count,
@@ -373,12 +425,15 @@ async def _translate_single_image(
             "no_change_reason": no_change_reason,
             "fallback_used": False,
             "fallback_reason": None,
+            "stage_elapsed_ms": stage_elapsed_ms,
+            "failure_stage": None,
         }
     except Exception as exc:  # noqa: BLE001
         # Compatibility fallback for environments where full translator deps are unavailable.
         logger.exception("v1 translate fallback used for %s", image_path)
         fallback_reason = str(exc).strip() or exc.__class__.__name__
         output_path.write_bytes(payload)
+        stage_elapsed_ms["total"] = (time.perf_counter() - started_at) * 1000.0
         return {
             "output_path": str(output_path),
             "regions_count": 0,
@@ -386,6 +441,8 @@ async def _translate_single_image(
             "no_change_reason": "fallback_copy",
             "fallback_used": True,
             "fallback_reason": fallback_reason,
+            "stage_elapsed_ms": stage_elapsed_ms,
+            "failure_stage": failure_stage,
         }
 
 
@@ -411,6 +468,8 @@ async def _translate_chapter_batch_pipeline(
     images: list[Path],
     page_concurrency: int,
 ) -> list[tuple[Path, dict | None, Exception | None]]:
+    started_at = time.perf_counter()
+    context_elapsed_ms = 0.0
     payloads = [image_path.read_bytes() for image_path in images]
     outputs: list[tuple[Path, dict | None, Exception | None]] = []
 
@@ -434,6 +493,7 @@ async def _translate_chapter_batch_pipeline(
             }
         )
         batch_timeout = TRANSLATE_CONTEXT_TIMEOUT_SEC * max(1, len(images))
+        context_started_at = time.perf_counter()
         contexts = await _await_translate_context(
             get_batch_ctx(
                 fake_request,
@@ -441,9 +501,12 @@ async def _translate_chapter_batch_pipeline(
                 payloads,
                 batch_size=max(1, page_concurrency),
                 workflow="normal",
+                cleanup_reason="chapter_batch_complete",
+                cleanup_force=False,
             ),
             batch_timeout,
         )
+        context_elapsed_ms = (time.perf_counter() - context_started_at) * 1000.0
 
         contexts_list = list(contexts or [])
         for idx, image_path in enumerate(images):
@@ -454,6 +517,9 @@ async def _translate_chapter_batch_pipeline(
             if idx >= len(contexts_list) or contexts_list[idx] is None:
                 fallback_reason = "translation returned empty result"
                 output_path.write_bytes(payload)
+                page_stage = _empty_stage_timing()
+                page_stage["context"] = context_elapsed_ms
+                page_stage["total"] = context_elapsed_ms
                 outputs.append(
                     (
                         image_path,
@@ -464,6 +530,8 @@ async def _translate_chapter_batch_pipeline(
                             "no_change_reason": "fallback_copy",
                             "fallback_used": True,
                             "fallback_reason": fallback_reason,
+                            "stage_elapsed_ms": page_stage,
+                            "failure_stage": "translate",
                         },
                         None,
                     )
@@ -475,13 +543,23 @@ async def _translate_chapter_batch_pipeline(
                 if not getattr(ctx, "result", None):
                     raise RuntimeError("Translation produced no output image")
 
+                render_started_at = time.perf_counter()
                 prepared_result = _prepare_output_image(ctx.result, output_path)
                 prepared_result.save(output_path)
+                render_elapsed_ms = (time.perf_counter() - render_started_at) * 1000.0
                 regions_count = len(getattr(ctx, "text_regions", []) or [])
-                output_changed = _image_has_visible_changes(payload, output_path)
+                # Fast path: if OCR detected text regions, treat output as changed.
+                # This avoids expensive full-image diff on every translated page.
+                output_changed = regions_count > 0
+                if not output_changed:
+                    output_changed = _image_has_visible_changes(payload, output_path)
                 no_change_reason = None
                 if not output_changed:
                     no_change_reason = "no_text_regions_detected" if regions_count == 0 else "output_matches_source"
+                page_stage = _empty_stage_timing()
+                page_stage["context"] = context_elapsed_ms
+                page_stage["render"] = render_elapsed_ms
+                page_stage["total"] = context_elapsed_ms + render_elapsed_ms
                 outputs.append(
                     (
                         image_path,
@@ -492,6 +570,8 @@ async def _translate_chapter_batch_pipeline(
                             "no_change_reason": no_change_reason,
                             "fallback_used": False,
                             "fallback_reason": None,
+                            "stage_elapsed_ms": page_stage,
+                            "failure_stage": None,
                         },
                         None,
                     )
@@ -499,6 +579,9 @@ async def _translate_chapter_batch_pipeline(
             except Exception as page_exc:  # noqa: BLE001
                 fallback_reason = str(page_exc).strip() or page_exc.__class__.__name__
                 output_path.write_bytes(payload)
+                page_stage = _empty_stage_timing()
+                page_stage["context"] = context_elapsed_ms
+                page_stage["total"] = context_elapsed_ms
                 outputs.append(
                     (
                         image_path,
@@ -509,6 +592,8 @@ async def _translate_chapter_batch_pipeline(
                             "no_change_reason": "fallback_copy",
                             "fallback_used": True,
                             "fallback_reason": fallback_reason,
+                            "stage_elapsed_ms": page_stage,
+                            "failure_stage": "render",
                         },
                         page_exc,
                     )
@@ -522,6 +607,9 @@ async def _translate_chapter_batch_pipeline(
             output_path = library_service.results_dir / request.manga_id / request.chapter_id / image_path.name
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_bytes(payload)
+            page_stage = _empty_stage_timing()
+            page_stage["context"] = context_elapsed_ms
+            page_stage["total"] = (time.perf_counter() - started_at) * 1000.0
             outputs.append(
                 (
                     image_path,
@@ -532,6 +620,8 @@ async def _translate_chapter_batch_pipeline(
                         "no_change_reason": "fallback_copy",
                         "fallback_used": True,
                         "fallback_reason": fallback_reason,
+                        "stage_elapsed_ms": page_stage,
+                        "failure_stage": "translate",
                     },
                     exc,
                 )
@@ -546,7 +636,9 @@ async def _publish_page_result(
     task_id: str,
     result: dict | None,
     error: Exception | None,
+    pipeline: str,
 ) -> bool:
+    stage_elapsed = dict(result.get("stage_elapsed_ms") or {}) if result else {}
     if error is not None:
         _cleanup_translated_variants(request.manga_id, request.chapter_id, image_path.name)
         await v1_event_bus.publish(
@@ -559,6 +651,9 @@ async def _publish_page_result(
                 "stage": "failed",
                 "status": "failed",
                 "error_message": str(error),
+                "pipeline": pipeline,
+                "failure_stage": "translate",
+                "stage_elapsed_ms": stage_elapsed,
             }
         )
         return False
@@ -574,6 +669,9 @@ async def _publish_page_result(
                 "stage": "failed",
                 "status": "failed",
                 "error_message": "translation returned empty result",
+                "pipeline": pipeline,
+                "failure_stage": "translate",
+                "stage_elapsed_ms": stage_elapsed,
             }
         )
         return False
@@ -585,8 +683,10 @@ async def _publish_page_result(
 
     if fallback_used or not output_changed or not has_regions:
         _cleanup_translated_variants(request.manga_id, request.chapter_id, image_path.name)
+        failure_stage = "validate"
         if fallback_used:
             error_message = f"fallback used: {result.get('fallback_reason') or 'translation unavailable'}"
+            failure_stage = result.get("failure_stage") or "translate"
         elif not has_regions:
             error_message = "no detected text regions"
         else:
@@ -601,6 +701,9 @@ async def _publish_page_result(
                 "stage": "failed",
                 "status": "failed",
                 "error_message": error_message,
+                "pipeline": pipeline,
+                "failure_stage": failure_stage,
+                "stage_elapsed_ms": stage_elapsed,
             }
         )
         return False
@@ -614,6 +717,8 @@ async def _publish_page_result(
             "image_name": image_path.name,
             "stage": "complete",
             "status": "completed",
+            "pipeline": pipeline,
+            "stage_elapsed_ms": stage_elapsed,
         }
     )
     return True
@@ -655,6 +760,7 @@ async def _process_chapter_job(request: ChapterTranslateRequest) -> None:
             "chapter_id": request.chapter_id,
             "total_pages": total,
             "page_concurrency": page_concurrency,
+            "pipeline": execution_mode,
             "runtime": runtime,
         }
     )
@@ -666,7 +772,14 @@ async def _process_chapter_job(request: ChapterTranslateRequest) -> None:
         batch_results = await _translate_chapter_batch_pipeline(request, images, page_concurrency)
         for image_path, result, error in batch_results:
             task_id = task_ids.get(image_path.name, str(uuid.uuid4()))
-            page_success = await _publish_page_result(request, image_path, task_id, result, error)
+            page_success = await _publish_page_result(
+                request,
+                image_path,
+                task_id,
+                result,
+                error,
+                pipeline="batch_pipeline",
+            )
             if page_success:
                 success += 1
             else:
@@ -704,7 +817,14 @@ async def _process_chapter_job(request: ChapterTranslateRequest) -> None:
         try:
             for done in asyncio.as_completed(tasks):
                 image_path, task_id, result, error = await done
-                page_success = await _publish_page_result(request, image_path, task_id, result, error)
+                page_success = await _publish_page_result(
+                    request,
+                    image_path,
+                    task_id,
+                    result,
+                    error,
+                    pipeline="single_page",
+                )
                 if page_success:
                     success += 1
                 else:
@@ -723,6 +843,20 @@ async def _process_chapter_job(request: ChapterTranslateRequest) -> None:
     else:
         status = "success"
 
+    translate_ms = (time.perf_counter() - translate_started_at) * 1000.0
+    total_ms = (time.perf_counter() - chapter_started_at) * 1000.0
+    chapter_stage_elapsed_ms = {
+        "translate": translate_ms,
+        "total": total_ms,
+    }
+
+    try:
+        from manga_translator.server.core.task_manager import cleanup_after_request
+
+        cleanup_after_request(force=True, reason="chapter_complete")
+    except Exception:  # noqa: BLE001
+        logger.debug("chapter-level cleanup skipped", exc_info=True)
+
     await v1_event_bus.publish(
         {
             "type": "chapter_complete",
@@ -732,12 +866,14 @@ async def _process_chapter_job(request: ChapterTranslateRequest) -> None:
             "success_count": success,
             "failed_count": failed,
             "total_count": total,
+            "execution_mode": execution_mode,
+            "pipeline": execution_mode,
+            "runtime": runtime,
+            "stage_elapsed_ms": chapter_stage_elapsed_ms,
         }
     )
 
     if runtime_profile == "basic":
-        translate_ms = (time.perf_counter() - translate_started_at) * 1000.0
-        total_ms = (time.perf_counter() - chapter_started_at) * 1000.0
         logger.info(
             "[v1_runtime] chapter=%s/%s mode=%s concurrency=%s use_gpu=%s "
             "success=%s failed=%s translate_ms=%.2f total_ms=%.2f",
@@ -851,6 +987,8 @@ async def translate_page(request: PageTranslateRequest, _session: Session = Depe
             "chapter_id": request.chapter_id,
             "image_name": request.image_name,
             "url": translated_url,
+            "pipeline": "single_page",
+            "stage_elapsed_ms": result.get("stage_elapsed_ms") or {},
         }
     )
 
@@ -861,6 +999,7 @@ async def translate_page(request: PageTranslateRequest, _session: Session = Depe
         "translated_url": translated_url,
         "output_changed": True,
         "regions_count": result["regions_count"],
+        "stage_elapsed_ms": result.get("stage_elapsed_ms") or {},
     }
 
 

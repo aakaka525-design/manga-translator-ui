@@ -161,6 +161,6 @@ describe("reader mobile actions", () => {
       target_language: "zh",
     });
     expect(mangaApi.getChapter).toHaveBeenCalledTimes(2);
-    expect(toastStore.show).toHaveBeenCalledWith("翻译请求已提交", "success");
+    expect(toastStore.show).toHaveBeenCalledWith("翻译完成并已刷新页面", "success");
   });
 });

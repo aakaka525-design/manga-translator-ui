@@ -25,7 +25,7 @@ export function clearSessionToken() {
 
 const api = axios.create({
     baseURL: '/api/v1',
-    timeout: 10000
+    timeout: 30000
 })
 
 function extractApiError(err) {
@@ -130,13 +130,13 @@ export const mangaApi = {
 export const translateApi = {
     // Translate a chapter
     translateChapter: async (payload) => {
-        const { data } = await api.post('/translate/chapter', payload)
+        const { data } = await api.post('/translate/chapter', payload, { timeout: 60000 })
         return data
     },
 
     // Re-translate a single page
     retranslatePage: async (payload) => {
-        const { data } = await api.post('/translate/page', payload)
+        const { data } = await api.post('/translate/page', payload, { timeout: 0 })
         return data
     },
 

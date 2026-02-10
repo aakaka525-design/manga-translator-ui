@@ -21,10 +21,20 @@ def create_parser():
                            default=int(os.getenv('MT_WEB_PORT', '8000')), 
                            type=int,
                            help='服务器端口（默认：8000，环境变量：MT_WEB_PORT）')
-    web_parser.add_argument('--use-gpu', 
+    env_use_gpu = os.getenv('MT_USE_GPU')
+    parsed_env_use_gpu = None
+    if env_use_gpu is not None:
+        parsed_env_use_gpu = env_use_gpu.lower() in ('true', '1', 'yes')
+
+    web_parser.add_argument('--use-gpu',
                            action='store_true',
-                           default=os.getenv('MT_USE_GPU', '').lower() in ('true', '1', 'yes'),
-                           help='使用 GPU（环境变量：MT_USE_GPU=true）')
+                           dest='use_gpu',
+                           help='使用 GPU（默认跟随配置文件/环境变量）')
+    web_parser.add_argument('--no-use-gpu',
+                           action='store_false',
+                           dest='use_gpu',
+                           help='显式关闭 GPU')
+    web_parser.set_defaults(use_gpu=parsed_env_use_gpu)
     web_parser.add_argument('--models-ttl', 
                            default=int(os.getenv('MT_MODELS_TTL', '0')), 
                            type=int,

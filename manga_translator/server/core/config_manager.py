@@ -96,6 +96,10 @@ DEFAULT_ADMIN_SETTINGS = {
         'max_image_size_mb': 10,
         'max_images_per_batch': 50,
     },
+    'chapter_page_concurrency': 3,
+    'cleanup_interval_requests': 8,
+    'chapter_execution_mode': 'auto',
+    'runtime_profile': 'basic',
     'user_access': {
         'require_password': False,
         'user_password_hash': '',
@@ -422,18 +426,56 @@ def reload_admin_settings_if_changed() -> bool:
         
         if current_mtime > _admin_config_mtime:
             old_concurrent = admin_settings.get('max_concurrent_tasks', 3)
+            old_chapter_page_concurrency = admin_settings.get('chapter_page_concurrency', 3)
+            old_cleanup_interval = admin_settings.get('cleanup_interval_requests', 8)
+            old_execution_mode = admin_settings.get('chapter_execution_mode', 'auto')
+            old_runtime_profile = admin_settings.get('runtime_profile', 'basic')
             
             # 重新加载配置
             admin_settings = load_admin_settings()
             _admin_config_mtime = current_mtime
             
             new_concurrent = admin_settings.get('max_concurrent_tasks', 3)
+            new_chapter_page_concurrency = admin_settings.get('chapter_page_concurrency', 3)
+            new_cleanup_interval = admin_settings.get('cleanup_interval_requests', 8)
+            new_execution_mode = admin_settings.get('chapter_execution_mode', 'auto')
+            new_runtime_profile = admin_settings.get('runtime_profile', 'basic')
             
-            # 如果并发数变化，更新 semaphore
-            if old_concurrent != new_concurrent:
+            # 如果并发配置变化，同步到 task_manager
+            if (
+                old_concurrent != new_concurrent
+                or old_chapter_page_concurrency != new_chapter_page_concurrency
+                or old_cleanup_interval != new_cleanup_interval
+                or old_execution_mode != new_execution_mode
+                or old_runtime_profile != new_runtime_profile
+            ):
                 from .task_manager import update_server_config
-                update_server_config({'max_concurrent_tasks': new_concurrent})
+                update_server_config(
+                    {
+                        'max_concurrent_tasks': new_concurrent,
+                        'chapter_page_concurrency': new_chapter_page_concurrency,
+                        'cleanup_interval_requests': new_cleanup_interval,
+                        'chapter_execution_mode': new_execution_mode,
+                        'runtime_profile': new_runtime_profile,
+                    }
+                )
                 print(f"[INFO] 配置热加载: max_concurrent_tasks {old_concurrent} -> {new_concurrent}")
+                print(
+                    "[INFO] 配置热加载: chapter_page_concurrency "
+                    f"{old_chapter_page_concurrency} -> {new_chapter_page_concurrency}"
+                )
+                print(
+                    "[INFO] 配置热加载: cleanup_interval_requests "
+                    f"{old_cleanup_interval} -> {new_cleanup_interval}"
+                )
+                print(
+                    "[INFO] 配置热加载: chapter_execution_mode "
+                    f"{old_execution_mode} -> {new_execution_mode}"
+                )
+                print(
+                    "[INFO] 配置热加载: runtime_profile "
+                    f"{old_runtime_profile} -> {new_runtime_profile}"
+                )
             
             return True
         

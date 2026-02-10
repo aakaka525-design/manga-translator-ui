@@ -34,6 +34,7 @@
 | 配额-用户组接口不一致（运行缺陷） | ✅ 已修复 | `GroupService` 新增 `get_group_config` 兼容方法，修复 `QuotaManagementService` 调用失败问题 |
 | 翻译“成功但无译图”语义偏差（运行缺陷） | ✅ 已修复 | `/api/v1/translate/*` 收敛为“`regions_count > 0` 且 `output_changed=True` 才算成功”；并统一 `target_language` 短码映射（`zh -> CHS`） |
 | 翻译落盘失败导致“显示成功但图片不变”（运行缺陷） | ✅ 已修复 | `v1_translate` 对 JPEG 输出自动处理 RGBA->RGB，避免 `cannot write mode RGBA as JPEG` 回退；失败分支清理同 stem 历史译图，避免前端误判 translated；翻译超时改为环境变量可配置（默认 600s） |
+| Vue/API 与 Qt/CLI 链路一致性与 503 收敛（运行缺陷） | ✅ 已修复 | `v1_translate` 新增章节级 `pipeline/stage_elapsed_ms/failure_stage` 诊断字段；`single_page` 模式强制串行避免共享翻译器竞态；`web` 模式 `use_gpu` 默认对齐配置文件；渲染多边形并集改为 `_safe_union_polygons` 容错；实图复测（同一张图）CLI `54.058s`，API `48.590s`，两侧均成功产图且 API 无 fallback/503 |
 
 ---
 
