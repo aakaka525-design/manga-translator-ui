@@ -1,6 +1,7 @@
 import re
 import time
 import asyncio
+import contextvars
 import json
 from typing import List, Tuple, Dict, Any
 from abc import abstractmethod
@@ -928,6 +929,12 @@ class CommonTranslator(InfererModule):
     def __init__(self):
         super().__init__()
         self.mtpe_adapter = MTPEAdapter()
+        # Per-request attempt state. Using ContextVar avoids cross-request contention
+        # when multiple threads share one translator instance.
+        self._attempt_state_var = contextvars.ContextVar(
+            f"{self.__class__.__name__}.attempt_state.{id(self)}",
+            default=None,
+        )
         self._last_request_ts = 0
         self.enable_post_translation_check = False
         self.post_check_repetition_threshold = 5
@@ -939,6 +946,49 @@ class CommonTranslator(InfererModule):
         self._max_total_attempts = -1  # 全局最大尝试次数
         self._cancel_check_callback = None  # 取消检查回调
         self._custom_api_params = {}  # 存储自定义API参数
+
+    def _get_attempt_state(self) -> Dict[str, int]:
+        state = self._attempt_state_var.get()
+        if state is None:
+            state = {"count": 0, "max": -1}
+            self._attempt_state_var.set(state)
+        return state
+
+    def _set_attempt_state(self, *, count: int | None = None, max_total: int | None = None) -> None:
+        state = dict(self._get_attempt_state())
+        if count is not None:
+            try:
+                parsed_count = int(count)
+            except (TypeError, ValueError):
+                parsed_count = 0
+            state["count"] = max(0, parsed_count)
+
+        if max_total is not None:
+            try:
+                parsed_max = int(max_total)
+            except (TypeError, ValueError):
+                parsed_max = -1
+            if parsed_max != -1 and parsed_max <= 0:
+                parsed_max = -1
+            state["max"] = parsed_max
+
+        self._attempt_state_var.set(state)
+
+    @property
+    def _global_attempt_count(self) -> int:
+        return int(self._get_attempt_state()["count"])
+
+    @_global_attempt_count.setter
+    def _global_attempt_count(self, value: int) -> None:
+        self._set_attempt_state(count=value)
+
+    @property
+    def _max_total_attempts(self) -> int:
+        return int(self._get_attempt_state()["max"])
+
+    @_max_total_attempts.setter
+    def _max_total_attempts(self, value: int) -> None:
+        self._set_attempt_state(max_total=value)
     
     def _load_custom_api_params(self):
         """从固定目录加载自定义API参数配置文件"""
@@ -1358,17 +1408,17 @@ class CommonTranslator(InfererModule):
             True: 还可以继续尝试
             False: 已达到总次数上限
         """
-        self._global_attempt_count += 1
-
         # 无限重试模式
         if self._max_total_attempts == -1:
+            self._global_attempt_count += 1
             return True
 
-        # 检查是否超过上限
+        # 先检查上限，确保 attempts=1 时仍能执行 1 次真实请求。
         if self._global_attempt_count >= self._max_total_attempts:
             self.logger.warning(f"Reached max total attempts: {self._global_attempt_count}/{self._max_total_attempts}")
             return False
 
+        self._global_attempt_count += 1
         return True
 
     class SplitException(Exception):

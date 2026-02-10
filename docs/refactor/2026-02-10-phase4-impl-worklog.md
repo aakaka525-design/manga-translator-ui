@@ -422,3 +422,48 @@
 - 验证命令: `pytest -q tests/test_v1_routes.py && pytest -q tests/test_v1_routes.py tests/test_v1_scraper_phase2.py tests/test_v1_scraper_phase3.py tests/test_v1_scraper_phase4.py && cd frontend && npm test -- --run && npm run build && python /tmp/mt_repro2_api_once.py && python /tmp/mt_repro2_metrics.py`
 - 验证结果: pass（后端 `61 passed`；前端 `49 passed`；build 成功；实图对照：Qt/CLI `real 61.39s`，API `elapsed_sec=217.03`，两侧均产出图片，路径分别为 `/tmp/mt_repro2/qt_out/001.jpg` 与 `/tmp/mt_repro2/api_case/results/bench/ch1/001.jpg`，指标 `mean_abs_diff`：Qt `4.328` / API `4.6609`）
 - 提交哈希: `b1b679f`
+
+## BUGFIX-TRANSLATE-011
+- TASK-ID: BUGFIX-TRANSLATE-011
+- 状态: completed
+- 改动文件: `manga_translator/translators/common.py`, `tests/test_translator_attempt_state.py`, `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: 无新增端点；修复 `gemini_hq/openai_hq` 等翻译器共享实例下“全局尝试计数”跨并发请求污染问题。`_global_attempt_count/_max_total_attempts` 改为基于 `ContextVar` 的请求隔离状态，避免线程B耗尽重试额度后线程A提前命中“达到最大尝试次数”。
+- 验证命令: `pytest -q tests/test_translator_attempt_state.py && pytest -q tests/test_v1_routes.py tests/test_v1_scraper_phase2.py tests/test_v1_scraper_phase3.py tests/test_v1_scraper_phase4.py tests/test_translator_attempt_state.py`
+- 验证结果: pass（新增并发隔离用例 `2 passed`；后端回归 `64 passed`）
+- 提交哈希: N/A
+
+## BUGFIX-TRANSLATE-012
+- TASK-ID: BUGFIX-TRANSLATE-012
+- 状态: completed
+- 改动文件: `manga_translator/server/routes/v1_translate.py`, `tests/test_v1_routes.py`, `tests/test_v1_translate_perf_quick.py`, `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: 无新增端点；修复 `/api/v1/translate/chapter` 在 `chapter_execution_mode=auto` 且翻译器为 `gemini_hq` 时被强制 `single_page` 的行为，改为多页默认走 `batch_pipeline`，与 CLI 批量链路对齐；单页章节仍保持 `single_page`。
+- 验证命令: `pytest -q tests/test_v1_routes.py -k chapter_execution_mode_auto_prefers_batch_pipeline_for_gemini_hq && pytest -q tests/test_v1_translate_perf_quick.py -k \"chapter_auto_mode_prefers_batch_pipeline_for_gemini_hq or mock_parallel_candidate_beats_serial_baseline or mock_parallel_with_tail_beats_serial or metrics_shape_is_complete\" && pytest -q tests/test_v1_translate_perf_quick.py tests/test_v1_routes.py tests/test_v1_scraper_phase2.py tests/test_v1_scraper_phase3.py tests/test_v1_scraper_phase4.py tests/test_translator_attempt_state.py`
+- 验证结果: pass（新增模式回归与性能脚本回归通过；后端组合回归 `74 passed, 1 skipped`）
+- 提交哈希: N/A
+
+## BUGFIX-TRANSLATE-013
+- TASK-ID: BUGFIX-TRANSLATE-013
+- 状态: completed
+- 改动文件: `manga_translator/server/request_extraction.py`, `tests/test_request_extraction_event_loop.py`, `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: 无新增端点；优化 API 翻译执行链路为“线程级事件循环复用”，修复每次请求创建/关闭 event loop 的开销。`_run_translate_sync/_run_translate_batch_sync` 改为复用当前翻译线程 loop，并保留 pending task 清理与请求级 cleanup 行为。
+- 验证命令: `pytest -q tests/test_request_extraction_event_loop.py && pytest -q tests/test_v1_routes.py tests/test_v1_scraper_phase2.py tests/test_v1_scraper_phase3.py tests/test_v1_scraper_phase4.py tests/test_translator_attempt_state.py && python - <<'PY' (500 次 _run_translate_sync 压测，统计 loops_created/ms_per_call) PY`
+- 验证结果: pass（loop 复用测试 `2 passed`；后端回归 `65 passed`；压测 `loops_created=1`, `ms_per_call=0.032`）
+- 提交哈希: N/A
+
+## BUGFIX-TRANSLATE-014
+- TASK-ID: BUGFIX-TRANSLATE-014
+- 状态: completed
+- 改动文件: `manga_translator/server/routes/v1_translate.py`, `tests/test_v1_routes.py`, `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: 无新增端点；优化翻译结果“可见变化”判定开销。对 `regions_count > 0` 的页面不再执行全图像素差分，直接标记 `output_changed=True`；仅在无文本区域时执行 `_image_has_visible_changes` 兜底判定，保持“无文本区域失败”语义。
+- 验证命令: `pytest -q tests/test_v1_routes.py -k \"skips_pixel_diff_when_regions_detected or uses_pixel_diff_when_no_regions\" && pytest -q tests/test_v1_routes.py tests/test_v1_scraper_phase2.py tests/test_v1_scraper_phase3.py tests/test_v1_scraper_phase4.py tests/test_translator_attempt_state.py tests/test_request_extraction_event_loop.py && python - <<'PY' (2000x3000 样本测 _image_has_visible_changes 开销与 fast-path 分支对照) PY`
+- 验证结果: pass（新增像素差分分支测试 `2 passed`；后端回归 `69 passed`；样本测得 `diff_ms_per_call=43.729`，fast-path 分支近似 `0`）
+- 提交哈希: N/A
+
+## BUGFIX-TRANSLATE-015
+- TASK-ID: BUGFIX-TRANSLATE-015
+- 状态: completed
+- 改动文件: `manga_translator/translators/common.py`, `tests/test_translator_attempt_state.py`, `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: 无新增端点；修复全局重试计数边界语义：`attempts=1` 现在允许执行 1 次真实翻译请求，不再在首轮直接命中“达到最大尝试次数（Unknown error）”导致 API 503 回退。
+- 验证命令: `pytest -q tests/test_translator_attempt_state.py -k \"limit_is_one or single_attempt_limit\" && pytest -q tests/test_translator_attempt_state.py tests/test_request_extraction_event_loop.py tests/test_v1_translate_perf_quick.py && pytest -q tests/test_v1_routes.py tests/test_v1_scraper_phase2.py tests/test_v1_scraper_phase3.py tests/test_v1_scraper_phase4.py`
+- 验证结果: pass（新增 attempts=1 边界回归通过；翻译链路与 scraper 主回归通过）
+- 提交哈希: N/A
