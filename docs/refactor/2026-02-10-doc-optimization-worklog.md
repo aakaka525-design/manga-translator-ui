@@ -16,7 +16,7 @@
 - 接口影响: 无
 - 验证命令: `rg --files README.md doc docs`
 - 验证结果: pass
-- 提交哈希: TBC
+- 提交哈希: e432d18
 
 ## DOC-002
 - TASK-ID: DOC-002
@@ -25,7 +25,7 @@
 - 接口影响: 无
 - 验证命令: `rg -n "doc/INDEX.md|docs/INDEX.md" README.md docs/refactor/INDEX.md`
 - 验证结果: pass
-- 提交哈希: TBC
+- 提交哈希: e432d18
 
 ## DOC-003
 - TASK-ID: DOC-003
@@ -34,7 +34,7 @@
 - 接口影响: 无
 - 验证命令: `rg -n "CHANGELOG_CN.md|../main/front/README_CN.md|旧版UI|新版UI" doc/README_CN.md doc/README.md`
 - 验证结果: pass（无匹配）
-- 提交哈希: TBC
+- 提交哈希: e432d18
 
 ## DOC-004
 - TASK-ID: DOC-004
@@ -43,7 +43,7 @@
 - 接口影响: 无
 - 验证命令: `rg -n "/signin|/admin|/auth/status|/auth/setup|/auth/login|dist" README.md doc/INSTALLATION.md doc/CLI_USAGE.md`
 - 验证结果: pass
-- 提交哈希: TBC
+- 提交哈希: e432d18
 
 ## DOC-005
 - TASK-ID: DOC-005
@@ -52,7 +52,7 @@
 - 接口影响: 文档引用统一到 API Contract
 - 验证命令: `rg -n "/admin/scraper/health|/admin/scraper/alerts|/admin/scraper/queue/stats|SCRAPER_ALERT_" README.md doc/CLI_USAGE.md docs/api/*.md`
 - 验证结果: pass
-- 提交哈希: TBC
+- 提交哈希: e432d18
 
 ## DOC-006
 - TASK-ID: DOC-006
@@ -61,7 +61,7 @@
 - 接口影响: 无
 - 验证命令: `rg --files doc | rg 'CHANGELOG_v' | wc -l && rg -n "CHANGELOG_INDEX.md" doc/INDEX.md README.md`
 - 验证结果: pass
-- 提交哈希: TBC
+- 提交哈希: e432d18
 
 ## DOC-007
 - TASK-ID: DOC-007
@@ -70,7 +70,7 @@
 - 接口影响: 无
 - 验证命令: `set -euo pipefail; missing=0; while IFS= read -r f; do while IFS= read -r raw; do link="$raw"; link="${link%%#*}"; link="${link%%\?*}"; [[ -z "$link" || "$link" =~ ^https?:// || "$link" =~ ^mailto: || "$link" =~ ^data: || "$link" =~ ^javascript: ]] && continue; [[ "$link" == /* ]] && target=".$link" || target="$(dirname "$f")/$link"; [[ -e "$target" ]] || { echo "MISSING $f -> $link"; missing=1; }; done < <(grep -oE '\[[^][]+\]\(([^)]+)\)' "$f" | sed -E 's/.*\(([^)]+)\)/\1/' || true); done < <(rg --files README.md doc docs/INDEX.md docs/api docs/DOC_STYLE.md docs/refactor/INDEX.md -g '*.md'); [[ $missing -eq 0 ]] && echo NO_MISSING_LOCAL_LINKS; rg -n "CHANGELOG_CN.md|../main/front/README_CN.md|旧版UI|新版UI" README.md doc docs/INDEX.md docs/refactor/INDEX.md -S`
 - 验证结果: pass
-- 提交哈希: TBC
+- 提交哈希: e432d18
 
 ## DOC-008
 - TASK-ID: DOC-008
@@ -79,7 +79,7 @@
 - 接口影响: 无
 - 验证命令: `rg -n "文档检查|坏链|入口一致|鉴权流程|更新映射" doc/DEVELOPMENT.md docs/DOC_STYLE.md`
 - 验证结果: pass
-- 提交哈希: TBC
+- 提交哈希: e432d18
 
 ## DOC-009
 - TASK-ID: DOC-009
@@ -88,4 +88,4 @@
 - 接口影响: 无
 - 验证命令: `git status --short && git log --oneline -n 30 && rg -n "TASK-ID|提交哈希" docs/refactor/2026-02-10-doc-optimization-worklog.md`
 - 验证结果: pass
-- 提交哈希: TBC
+- 提交哈希: e432d18
