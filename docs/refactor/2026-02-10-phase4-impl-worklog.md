@@ -466,4 +466,4 @@
 - 接口影响: 无新增端点；修复全局重试计数边界语义：`attempts=1` 现在允许执行 1 次真实翻译请求，不再在首轮直接命中“达到最大尝试次数（Unknown error）”导致 API 503 回退。
 - 验证命令: `pytest -q tests/test_translator_attempt_state.py -k \"limit_is_one or single_attempt_limit\" && pytest -q tests/test_translator_attempt_state.py tests/test_request_extraction_event_loop.py tests/test_v1_translate_perf_quick.py && pytest -q tests/test_v1_routes.py tests/test_v1_scraper_phase2.py tests/test_v1_scraper_phase3.py tests/test_v1_scraper_phase4.py`
 - 验证结果: pass（新增 attempts=1 边界回归通过；翻译链路与 scraper 主回归通过）
-- 提交哈希: N/A
+- 提交哈希: a3fcfe0
