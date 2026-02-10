@@ -124,7 +124,7 @@
 - 接口影响: `/admin/scraper/*` 的 `X-Admin-Token` 兼容由声明变为真实可用
 - 验证命令: `pytest -q tests/test_v1_scraper_phase4.py -k 'legacy_token'`
 - 验证结果: pass
-- 提交哈希: N/A
+- 提交哈希: 4327862
 
 ## FIX-002
 - TASK-ID: FIX-002
@@ -133,7 +133,7 @@
 - 接口影响: `/api/v1/scraper/download` 在 task store 写失败时回滚内存任务，避免幽灵 pending
 - 验证命令: `pytest -q tests/test_v1_scraper_phase4.py -k 'store_failure'`
 - 验证结果: pass
-- 提交哈希: N/A
+- 提交哈希: 4327862
 
 ## FIX-003
 - TASK-ID: FIX-003
@@ -142,7 +142,7 @@
 - 接口影响: `retry_count` 改为真实重试次数；`error_code` 仅在可重试耗尽时为 `SCRAPER_RETRY_EXHAUSTED`
 - 验证命令: `pytest -q tests/test_v1_scraper_phase4.py -k 'non_retryable'`
 - 验证结果: pass
-- 提交哈希: N/A
+- 提交哈希: 4327862
 
 ## FIX-004
 - TASK-ID: FIX-004
