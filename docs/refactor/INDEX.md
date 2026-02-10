@@ -8,6 +8,9 @@
 - Phase2 Plan: `docs/plans/2026-02-10-scraper-phase2-multisite.md`
 - Phase2 Worklog: `docs/refactor/2026-02-10-phase2-worklog.md`
 - Phase2 API Contract: `docs/api/2026-02-10-v1-scraper-phase2-contract.md`
+- Phase3 Plan: `docs/plans/2026-02-10-scraper-phase3-reliability.md`
+- Phase3 Worklog: `docs/refactor/2026-02-10-phase3-worklog.md`
+- Phase3 API Contract: `docs/api/2026-02-10-v1-scraper-phase3-contract.md`
 
 ## 验证快照
 - 后端: `pytest -q tests/test_v1_routes.py` -> pass
