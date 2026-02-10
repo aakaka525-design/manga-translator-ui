@@ -61,6 +61,44 @@ describe('admin scraper panel', () => {
           })
         }
       }
+      if (typeof url === 'string' && url.includes('/admin/scraper/health')) {
+        return {
+          ok: true,
+          json: async () => ({
+            status: 'ok',
+            db: { path: '/tmp/scraper_tasks.db', available: true },
+            scheduler: { running: true, poll_interval_sec: 30, last_run_at: '2026-02-10T08:00:00+00:00' },
+            alerts: { enabled: true, webhook_enabled: false, cooldown_sec: 300 },
+            time: '2026-02-10T08:00:00+00:00'
+          })
+        }
+      }
+      if (typeof url === 'string' && url.includes('/admin/scraper/alerts?')) {
+        return {
+          ok: true,
+          json: async () => ({
+            items: [],
+            total: 0,
+            limit: 20,
+            offset: 0,
+            has_more: false
+          })
+        }
+      }
+      if (typeof url === 'string' && url.includes('/admin/scraper/queue/stats')) {
+        return {
+          ok: true,
+          json: async () => ({
+            pending: 0,
+            running: 1,
+            retrying: 0,
+            done: 3,
+            failed: 2,
+            backlog: 1,
+            oldest_pending_age_sec: 5
+          })
+        }
+      }
       if (typeof url === 'string' && url.includes('/admin/tasks')) {
         return {
           ok: true,
@@ -99,6 +137,9 @@ describe('admin scraper panel', () => {
     const calledUrls = fetch.mock.calls.map(([url]) => String(url))
     expect(calledUrls.some((url) => url.startsWith('/admin/scraper/tasks'))).toBe(true)
     expect(calledUrls.some((url) => url.startsWith('/admin/scraper/metrics?hours=24'))).toBe(true)
+    expect(calledUrls.some((url) => url.startsWith('/admin/scraper/health'))).toBe(true)
+    expect(calledUrls.some((url) => url.startsWith('/admin/scraper/alerts?'))).toBe(true)
+    expect(calledUrls.some((url) => url.startsWith('/admin/scraper/queue/stats'))).toBe(true)
 
     wrapper.unmount()
   })
