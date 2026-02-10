@@ -110,19 +110,23 @@ class BatchTranslateRequest(BaseModel):
 async def to_pil_image(image: Union[str, bytes, Image.Image]) -> Image.Image:
     try:
         if isinstance(image, Image.Image):
+            image.load()
             return image
         elif isinstance(image, builtins.bytes):
             image = Image.open(io.BytesIO(image))
+            image.load()
             return image
         else:
             if re.match(r'^data:image/.+;base64,', image):
                 value = image.split(',', 1)[1]
                 image_data = b64decode(value)
                 image = Image.open(io.BytesIO(image_data))
+                image.load()
                 return image
             else:
                 response = requests.get(image)
                 image = Image.open(io.BytesIO(response.content))
+                image.load()
                 return image
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e))
@@ -142,7 +146,12 @@ def _run_translate_sync(pil_image, config: Config, task_id: str = None, cancel_c
     """
     import threading
 #     import gc
-    from manga_translator.server.core.task_manager import update_task_thread_id, get_global_translator
+    from manga_translator.server.core.task_manager import (
+        begin_translation_operation,
+        end_translation_operation,
+        get_global_translator,
+        update_task_thread_id,
+    )
     
     # 更新任务的线程ID
     if task_id:
@@ -158,11 +167,13 @@ def _run_translate_sync(pil_image, config: Config, task_id: str = None, cancel_c
     # 在新线程中创建事件循环来运行异步翻译
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    begin_translation_operation()
     try:
         result = loop.run_until_complete(translator.translate(pil_image, config))
         return result
     finally:
         try:
+            end_translation_operation()
             # 清除取消回调，避免影响下一个任务
             if cancel_check_callback:
                 translator.set_cancel_check_callback(None)
@@ -184,7 +195,7 @@ def _run_translate_sync(pil_image, config: Config, task_id: str = None, cancel_c
             
             # 请求级内存清理：清理翻译器内部状态，保留模型
             from manga_translator.server.core.task_manager import cleanup_after_request
-            cleanup_after_request()
+            cleanup_after_request(reason="single_request_complete")
             
         except Exception as e:
             logger.warning(f"线程清理时出错: {e}")
@@ -204,7 +215,12 @@ def _run_translate_batch_sync(images_with_configs: list, batch_size: int, task_i
     """
     import threading
 #     import gc
-    from manga_translator.server.core.task_manager import update_task_thread_id, get_global_translator
+    from manga_translator.server.core.task_manager import (
+        begin_translation_operation,
+        end_translation_operation,
+        get_global_translator,
+        update_task_thread_id,
+    )
     
     # 更新任务的线程ID
     if task_id:
@@ -220,11 +236,13 @@ def _run_translate_batch_sync(images_with_configs: list, batch_size: int, task_i
     # 在新线程中创建事件循环来运行异步翻译
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    begin_translation_operation()
     try:
         result = loop.run_until_complete(translator.translate_batch(images_with_configs, batch_size))
         return result
     finally:
         try:
+            end_translation_operation()
             # 清除取消回调
             if cancel_check_callback:
                 translator.set_cancel_check_callback(None)
@@ -246,7 +264,7 @@ def _run_translate_batch_sync(images_with_configs: list, batch_size: int, task_i
             
             # 请求级内存清理：清理翻译器内部状态，保留模型
             from manga_translator.server.core.task_manager import cleanup_after_request
-            cleanup_after_request()
+            cleanup_after_request(reason="batch_request_complete")
             
         except Exception as e:
             logger.warning(f"线程清理时出错: {e}")
@@ -273,7 +291,12 @@ def prepare_translator_params(config: Config, workflow: str = "normal") -> dict:
         if hasattr(config.cli, 'replace_translation'):
             config.cli.replace_translation = False
         if hasattr(config.cli, 'use_gpu'):
-            config.cli.use_gpu = False
+            try:
+                from manga_translator.server.core.task_manager import get_server_config
+
+                config.cli.use_gpu = bool(get_server_config().get('use_gpu', bool(config.cli.use_gpu)))
+            except Exception:  # noqa: BLE001
+                config.cli.use_gpu = bool(config.cli.use_gpu)
         if hasattr(config.cli, 'attempts'):
             attempts = config.cli.attempts
             # -1 表示无限重试，也是有效值，不应该被忽略
@@ -370,11 +393,14 @@ async def get_ctx(req: Request, config: Config, image: str|bytes, workflow: str 
         return ctx
     
     finally:
-        # 关闭输入图片
-        try:
-            pil_image.close()
-        except:
-            pass
+        # 如果任务在 wait_for 超时时被取消，底层翻译线程可能仍在使用该图片；
+        # 此时主动 close 会触发 "Operation on closed image"。
+        current_task = asyncio.current_task()
+        if current_task is None or not current_task.cancelled():
+            try:
+                pil_image.close()
+            except Exception:
+                pass
         
         # 注意：ctx的清理和内存回收已在_run_translate_sync的cleanup_after_request中处理
         # 这里只需要处理本函数创建的局部资源
@@ -751,16 +777,20 @@ async def get_batch_ctx(req: Request, config: Config, images: list[str|bytes], b
     finally:
         # 清理资源
         try:
+            current_task = asyncio.current_task()
+            should_close_inputs = current_task is None or not current_task.cancelled()
+
             # 清理 PIL 图片（原始输入图片）
-            for pil_img in pil_images:
-                try:
-                    pil_img.close()
-                except:
-                    pass
-            
+            if should_close_inputs:
+                for pil_img in pil_images:
+                    try:
+                        pil_img.close()
+                    except Exception:
+                        pass
+
             # 注意：contexts的清理和内存回收已在_run_translate_batch_sync的cleanup_after_request中处理
             # 不要调用translator.unload_models()，因为我们使用全局翻译器，模型应该被保留复用
-            
+
         except Exception as cleanup_error:
             logger.warning(f"批量翻译资源清理失败: {cleanup_error}")
 

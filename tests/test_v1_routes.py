@@ -17,6 +17,7 @@ from manga_translator.server.core.account_service import AccountService
 from manga_translator.server.core.middleware import init_middleware_services, require_auth
 from manga_translator.server.core.models import Session
 from manga_translator.server.core.permission_service import PermissionService
+import manga_translator.server.request_extraction as request_extraction
 from manga_translator.server.core.session_service import SessionService
 import manga_translator.server.routes.v1_manga as v1_manga
 import manga_translator.server.routes.v1_parser as v1_parser
@@ -25,6 +26,7 @@ import manga_translator.server.routes.v1_settings as v1_settings
 import manga_translator.server.routes.v1_system as v1_system
 import manga_translator.server.routes.v1_translate as v1_translate
 import manga_translator.server.routes.web as web
+from manga_translator.server.core import task_manager
 from manga_translator.server.core.logging_manager import global_log_queue
 
 
@@ -210,7 +212,7 @@ def test_translate_target_language_normalization():
 
 
 @pytest.mark.anyio
-async def test_translate_single_image_caps_retry_attempts_and_normalizes_target(
+async def test_translate_single_image_keeps_unbounded_retry_attempts_and_normalizes_target(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     source_path = tmp_path / "source.jpg"
@@ -248,11 +250,83 @@ async def test_translate_single_image_caps_retry_attempts_and_normalizes_target(
     result = await v1_translate._translate_single_image(source_path, output_path, None, "zh")
 
     assert output_path.exists()
-    assert captured["attempts"] == v1_translate.TRANSLATE_MAX_ATTEMPTS
+    assert captured["attempts"] == -1
     assert captured["target_lang"] == "CHS"
     assert result["fallback_used"] is False
     assert result["regions_count"] == 1
 
+
+@pytest.mark.anyio
+async def test_translate_single_image_uses_server_retry_attempts_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    source_path = tmp_path / "source.jpg"
+    output_path = tmp_path / "output.jpg"
+
+    img = Image.new("RGB", (8, 8), color=(240, 240, 240))
+    img.save(source_path)
+
+    class _TranslatorConfig:
+        attempts = -1
+        target_lang = "ENG"
+        skip_lang = None
+
+    class _Config:
+        translator = _TranslatorConfig()
+
+    captured: dict[str, object] = {}
+
+    def _fake_load_default_config():
+        return _Config()
+
+    async def _fake_build_translate_context(_request, config, payload):
+        captured["attempts"] = config.translator.attempts
+        captured["target_lang"] = config.translator.target_lang
+        with Image.open(io.BytesIO(payload)) as payload_img:
+            result_img = payload_img.convert("RGB")
+        return SimpleNamespace(result=result_img, text_regions=[object()])
+
+    monkeypatch.setattr(
+        "manga_translator.server.core.config_manager.load_default_config",
+        _fake_load_default_config,
+    )
+    monkeypatch.setattr(
+        "manga_translator.server.core.task_manager.get_server_config",
+        lambda: {"retry_attempts": 2},
+    )
+    monkeypatch.setattr(v1_translate, "_build_translate_context", _fake_build_translate_context)
+
+    result = await v1_translate._translate_single_image(source_path, output_path, None, "zh")
+
+    assert output_path.exists()
+    assert captured["attempts"] == 2
+    assert captured["target_lang"] == "CHS"
+    assert result["fallback_used"] is False
+    assert result["regions_count"] == 1
+
+
+def test_prepare_translator_params_aligns_use_gpu_with_server_config(monkeypatch: pytest.MonkeyPatch):
+    config = SimpleNamespace(
+        cli=SimpleNamespace(
+            load_text=False,
+            template=False,
+            generate_and_export=False,
+            upscale_only=False,
+            colorize_only=False,
+            inpaint_only=False,
+            replace_translation=False,
+            use_gpu=False,
+            attempts=3,
+        ),
+        render=SimpleNamespace(font_path=None, enable_template_alignment=False),
+    )
+
+    monkeypatch.setattr(
+        "manga_translator.server.core.task_manager.get_server_config",
+        lambda: {"use_gpu": True},
+    )
+    request_extraction.prepare_translator_params(config, workflow="normal")
+    assert config.cli.use_gpu is True
 
 @pytest.mark.anyio
 async def test_translate_single_image_converts_rgba_result_for_jpeg_output(
@@ -304,6 +378,10 @@ async def test_translate_chapter_emits_events(monkeypatch: pytest.MonkeyPatch, p
         return {"output_path": str(output_path), "regions_count": 1}
 
     monkeypatch.setattr(v1_translate, "_translate_single_image", _fake_translate)
+    monkeypatch.setenv("MANGA_V1_CHAPTER_EXECUTION_MODE", "single_page")
+    monkeypatch.setitem(task_manager.server_config, "use_gpu", True)
+    monkeypatch.setitem(task_manager.server_config, "chapter_page_concurrency", 2)
+    monkeypatch.setitem(task_manager.server_config, "max_concurrent_tasks", 4)
 
     queue: asyncio.Queue[str] = asyncio.Queue()
     v1_translate.v1_event_bus.add_listener(queue)
@@ -323,6 +401,12 @@ async def test_translate_chapter_emits_events(monkeypatch: pytest.MonkeyPatch, p
     assert "chapter_start" in event_types
     assert "progress" in event_types
     assert "chapter_complete" in event_types
+
+    chapter_start = [item for item in events if item["type"] == "chapter_start"][-1]
+    runtime = chapter_start["runtime"]
+    assert runtime["use_gpu"] is True
+    assert runtime["execution_mode"] == "single_page"
+    assert runtime["page_concurrency"] == chapter_start["page_concurrency"]
 
     final = [item for item in events if item["type"] == "chapter_complete"][-1]
     assert final["status"] == "success"

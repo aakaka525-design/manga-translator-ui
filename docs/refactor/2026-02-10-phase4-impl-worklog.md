@@ -413,3 +413,12 @@
 - 验证命令: `pytest -q tests/test_v1_routes.py -k 'translate_page_returns_503_when_fallback_used or translate_single_image_converts_rgba_result_for_jpeg_output' && python - <<'PY' (同一张真实样本生成 baseline/tuned 对比并统计像素差) PY`
 - 验证结果: pass（2 passed；实图对比 `DIFF_SOURCE_BASELINE=171292`, `DIFF_SOURCE_TUNED=171331`, `DIFF_BASELINE_TUNED=12676`，调参后输出有效变化且翻译成功）
 - 提交哈希: N/A
+
+## BUGFIX-TRANSLATE-010
+- TASK-ID: BUGFIX-TRANSLATE-010
+- 状态: completed
+- 改动文件: `manga_translator/server/routes/v1_translate.py`, `manga_translator/server/request_extraction.py`, `tests/test_v1_routes.py`, `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: `/api/v1/translate/page` 与 `/api/v1/translate/chapter` 执行语义向 CLI 对齐（默认不再强制 600s 超时；`attempts` 优先读取 server config `retry_attempts`，否则保持 translator/CLI 语义）；翻译参数中的 `use_gpu` 与 server 配置对齐；请求图像解码改为 eager load，避免超时取消时出现输入图像提前关闭导致的链路不一致。
+- 验证命令: `pytest -q tests/test_v1_routes.py && pytest -q tests/test_v1_routes.py tests/test_v1_scraper_phase2.py tests/test_v1_scraper_phase3.py tests/test_v1_scraper_phase4.py && cd frontend && npm test -- --run && npm run build && python /tmp/mt_repro2_api_once.py && python /tmp/mt_repro2_metrics.py`
+- 验证结果: pass（后端 `61 passed`；前端 `49 passed`；build 成功；实图对照：Qt/CLI `real 61.39s`，API `elapsed_sec=217.03`，两侧均产出图片，路径分别为 `/tmp/mt_repro2/qt_out/001.jpg` 与 `/tmp/mt_repro2/api_case/results/bench/ch1/001.jpg`，指标 `mean_abs_diff`：Qt `4.328` / API `4.6609`）
+- 提交哈希: N/A
