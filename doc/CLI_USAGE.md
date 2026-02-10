@@ -537,10 +537,13 @@ npm run build
 - 输出目录：`manga_translator/server/static/dist`
 - Git 规则：`dist` 仅用于部署产物，不提交到仓库
 
-**Scraper 二期（`/api/v1` 兼容扩展）**：
+**Scraper 三期（`/api/v1` 兼容扩展）**：
 - 支持 provider：`mangaforfree`、`toongod`、`generic`
 - 可选字段：`site_hint`、`force_engine`
 - 任务持久化：`manga_translator/server/data/scraper_tasks.db`
+- 任务状态扩展字段：`retry_count`、`max_retries`、`next_retry_at`、`error_code`、`last_error`
+- 管理端监控端点：`/admin/scraper/tasks`、`/admin/scraper/metrics`
+- 新增错误码：`SCRAPER_TASK_DUPLICATE`、`SCRAPER_TASK_STALE`、`SCRAPER_RETRY_EXHAUSTED`
 
 **适用场景**：
 - ✅ **个人使用** - 通过浏览器随时随地访问
@@ -583,7 +586,7 @@ npm run build
 | `/docs` | GET | API 文档（Swagger UI） |
 | `/translate/queue-size` | POST | 获取任务队列大小 |
 
-### Scraper v1 二期端点
+### Scraper v1 三期端点
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
@@ -592,7 +595,7 @@ npm run build
 | `/api/v1/scraper/catalog` | POST | 站点目录（支持 `site_hint`、`force_engine`） |
 | `/api/v1/scraper/chapters` | POST | 获取章节（支持 `site_hint`、`force_engine`） |
 | `/api/v1/scraper/download` | POST | 提交下载任务（支持 `site_hint`、`force_engine`） |
-| `/api/v1/scraper/task/{task_id}` | GET | 查询任务状态（含 `persisted/created_at/updated_at`） |
+| `/api/v1/scraper/task/{task_id}` | GET | 查询任务状态（含 `persisted/created_at/updated_at/retry_count/max_retries/next_retry_at/error_code/last_error`） |
 
 ### 认证端点 (`/auth`)
 
@@ -645,6 +648,8 @@ npm run build
 | `/admin/announcement` | PUT | 更新公告 |
 | `/admin/tasks` | GET | 获取所有活动任务 |
 | `/admin/tasks/{task_id}/cancel` | POST | 取消指定任务（支持 force 参数） |
+| `/admin/scraper/tasks` | GET | 获取 Scraper 任务列表（支持 status/provider/limit/offset） |
+| `/admin/scraper/metrics` | GET | 获取 Scraper 任务聚合指标（支持 hours） |
 | `/admin/logs` | GET | 获取日志（支持筛选和分页） |
 | `/admin/logs/export` | GET | 导出日志为文本文件 |
 | `/admin/env-vars` | GET/POST | 获取/保存环境变量 |

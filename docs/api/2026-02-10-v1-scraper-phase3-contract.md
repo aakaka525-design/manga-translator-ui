@@ -82,6 +82,14 @@
 - `SCRAPER_TASK_STALE`：服务重启后发现陈旧任务并标记失败。
 - `SCRAPER_RETRY_EXHAUSTED`：达到重试上限后仍失败。
 
+## 下载任务稳定性策略
+
+- 幂等指纹：`sha256(normalized_base_url + provider + manga_id + chapter_id)`
+- 幂等窗口：30 分钟内同指纹且状态为 `pending/running/retrying` 时直接返回已有任务
+- 单图重试：最多 3 次，退避 `0.5s -> 1.0s -> 2.0s`，仅针对超时/连接错误/HTTP 429/5xx
+- 任务级重试：`success_count == 0` 且 `retry_count < max_retries` 时进入 `retrying`，默认延迟 15 秒
+- 启动恢复：`pending/running/retrying` 且 `updated_at` 超过 10 分钟的任务将标记为 `SCRAPER_TASK_STALE`
+
 ## 数据持久化扩展
 
 `scraper_tasks` 表新增字段：
