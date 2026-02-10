@@ -1,6 +1,12 @@
 # Refactor Index
 
-## 核心文档
+## 文档入口
+
+- 用户侧文档入口：`doc/INDEX.md`
+- 工程侧文档入口：`docs/INDEX.md`
+
+## 核心实施文档
+
 - Plan: `docs/plans/2026-02-10-vue-web-scraper-refactor.md`
 - Worklog: `docs/refactor/2026-02-10-worklog.md`
 - Cleanup Manifest: `docs/refactor/2026-02-10-cleanup-manifest.md`
@@ -17,8 +23,11 @@
 - Phase4 S1 Plan: `docs/plans/2026-02-10-phase4-s1-implementation.md`
 - Phase4 S1 Worklog: `docs/refactor/2026-02-10-phase4-impl-worklog.md`
 - Phase4 S1 API Contract: `docs/api/2026-02-10-v1-scraper-phase4-s1-contract.md`
+- Docs Optimization Plan: `docs/plans/2026-02-10-doc-optimization.md`
+- Docs Optimization Worklog: `docs/refactor/2026-02-10-doc-optimization-worklog.md`
 
 ## 验证快照
+
 - 后端: `pytest -q tests/test_v1_routes.py` -> pass
 - 后端（phase2）: `pytest -q tests/test_v1_routes.py tests/test_v1_scraper_phase2.py` -> pass
 - 后端（phase3）: `pytest -q tests/test_v1_routes.py tests/test_v1_scraper_phase2.py tests/test_v1_scraper_phase3.py` -> pass
@@ -29,6 +38,7 @@
 - 远端分支: `git ls-remote --heads personal` -> pass（含 `main`, `codex/vue-web-refactor`）
 
 ## 交付规则
+
 - 前端源码入库：`frontend/**`
 - 前端构建产物不入库：`manga_translator/server/static/dist/**`
 - 远端协作仓库：`https://github.com/aakaka525-design/manga-translator-ui`

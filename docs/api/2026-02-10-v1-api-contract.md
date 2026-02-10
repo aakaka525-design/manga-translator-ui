@@ -1,96 +1,101 @@
 # 2026-02-10 v1 API Contract
 
+## 契约范围
+
+本文件是 `/api/v1/*` 的总览契约（非破坏性扩展已合并）。
+
+- 兼容策略：不删除既有 v1 端点，不修改既有必填字段
+- 鉴权策略：`POST /auth/login` + `X-Session-Token`
+- 浏览器受限场景：SSE 与图片代理支持 `?token=`
+
 ## Auth Contract
-- 复用现有会话机制：`POST /auth/login` + `X-Session-Token`。
-- 所有 `/api/v1/*` 路由均受保护。
-- SSE 与图片代理支持 `?token=` 查询参数（用于浏览器受限场景）。
+
+- `GET /auth/status`：检查是否需要初始化
+- `POST /auth/setup`：首次创建管理员
+- `POST /auth/login`：登录并获取会话 token
+- `POST /auth/logout`：注销
+- `GET /auth/check`：验证会话
+
+> 无默认账号密码，必须先走 `status -> setup -> login`。
 
 ## Manga
 
 1. `GET /api/v1/manga`
-- 返回: `[{ id, name, cover_url, chapter_count }]`
-
 2. `GET /api/v1/manga/{manga_id}/chapters`
-- 返回: `[{ id, name, has_original, has_translated, translated_count, page_count, is_complete }]`
-
 3. `GET /api/v1/manga/{manga_id}/chapter/{chapter_id}`
-- 返回: `{ manga_id, chapter_id, pages: [{ name, original_url, translated_url, status, status_reason, warning_counts }] }`
-
 4. `DELETE /api/v1/manga/{manga_id}`
-- 返回: `{ message }`
-
 5. `DELETE /api/v1/manga/{manga_id}/chapter/{chapter_id}`
-- 返回: `{ message }`
 
 ## Translate
 
 6. `POST /api/v1/translate/chapter`
-- 请求: `{ manga_id, chapter_id, source_language?, target_language? }`
-- 返回: `{ message, page_count }`
-- 事件: `chapter_start` -> `progress` -> `chapter_complete`
+- 事件：`chapter_start -> progress -> chapter_complete`
 
 7. `POST /api/v1/translate/page`
-- 请求: `{ manga_id, chapter_id, image_name, source_language?, target_language? }`
-- 返回: `{ task_id, status, output_path, regions_count }`
-- 事件: `page_complete` / `page_failed`
+- 事件：`page_complete | page_failed`
 
 8. `GET /api/v1/translate/events`
-- SSE 数据流，`Content-Type: text/event-stream`
+- SSE，`Content-Type: text/event-stream`
 
-## Scraper (MangaForFree only)
+## Scraper
 
-9. `POST /api/v1/scraper/search`
-- 请求: `{ base_url, keyword, ...scraper options }`
-- 返回: `[{ id, title, url, cover_url }]`
+9. `GET /api/v1/scraper/providers`
+- 返回 provider 与 capability 列表
 
-10. `POST /api/v1/scraper/catalog`
-- 请求: `{ base_url, page, orderby?, path?, ... }`
-- 返回: `{ page, has_more, items: [...] }`
+10. `POST /api/v1/scraper/search`
+11. `POST /api/v1/scraper/catalog`
+12. `POST /api/v1/scraper/chapters`
+13. `POST /api/v1/scraper/download`
+14. `GET /api/v1/scraper/task/{task_id}`
+15. `POST /api/v1/scraper/state-info`
+16. `POST /api/v1/scraper/access-check`
+17. `POST /api/v1/scraper/upload-state`
+18. `GET /api/v1/scraper/auth-url`
+19. `GET /api/v1/scraper/image`
 
-11. `POST /api/v1/scraper/chapters`
-- 请求: `{ base_url, manga, ... }`
-- 返回: `[{ id, title, url, index, downloaded, downloaded_count, downloaded_total }]`
+Scraper 请求体扩展（可选）：
 
-12. `POST /api/v1/scraper/download`
-- 请求: `{ base_url, manga, chapter, ... }`
-- 返回: `{ task_id, status, message }`
+- `site_hint?: "mangaforfree" | "toongod" | "generic"`
+- `force_engine?: "http" | "playwright"`
 
-13. `GET /api/v1/scraper/task/{task_id}`
-- 返回: `{ task_id, status, message, report? }`
+`GET /api/v1/scraper/task/{task_id}` 可选扩展字段：
 
-14. `POST /api/v1/scraper/state-info`
-- 请求: `{ base_url?, storage_state_path? }`
-- 返回: `{ status, cookie_name?, expires_at?, expires_at_text?, expires_in_sec?, message? }`
+- `persisted`, `created_at`, `updated_at`
+- `retry_count`, `max_retries`, `next_retry_at`, `error_code`, `last_error`
+- `queue_status`, `enqueued_at`, `dequeued_at`, `worker_id`
 
-15. `POST /api/v1/scraper/access-check`
-- 请求: `{ base_url, storage_state_path?, path? }`
-- 返回: `{ status, http_status?, message? }`
+Scraper 相关错误码（扩展并保留旧码）：
 
-16. `POST /api/v1/scraper/upload-state`
-- Form: `base_url`, `file(json)`
-- 返回: `{ path, status, message?, expires_at?, expires_at_text? }`
-
-17. `GET /api/v1/scraper/auth-url`
-- 返回: `{ url }`
-
-18. `GET /api/v1/scraper/image`
-- 查询: `url`, `base_url`, `storage_state_path?`, `user_agent?`, `token?`
-- 返回: 图片流
-
-- 非 MangaForFree 站点统一返回结构化错误:
-  - `detail.code = SCRAPER_SITE_UNSUPPORTED`
+- `SCRAPER_PROVIDER_UNAVAILABLE`
+- `SCRAPER_BROWSER_UNAVAILABLE`
+- `SCRAPER_TASK_STORE_ERROR`
+- `SCRAPER_TASK_DUPLICATE`
+- `SCRAPER_TASK_STALE`
+- `SCRAPER_RETRY_EXHAUSTED`
 
 ## Parser
 
-19. `POST /api/v1/parser/parse`
-- 请求: `{ url, mode }`
-- 返回: `{ url, title, author, cover_url, paragraphs, warnings }`
+20. `POST /api/v1/parser/parse`
+21. `POST /api/v1/parser/list`
 
-20. `POST /api/v1/parser/list`
-- 请求: `{ url, mode }`
-- 返回: `{ page_type, recognized, site, downloadable, items, warnings }`
+## 管理端（Scraper 可观测）
+
+管理端接口位于 `/admin/*`（admin 权限），详见：
+
+- `docs/api/2026-02-10-v1-scraper-phase4-s1-contract.md`
+
+核心端点：
+
+- `GET /admin/scraper/tasks`
+- `GET /admin/scraper/metrics`
+- `GET /admin/scraper/health`
+- `GET /admin/scraper/alerts`
+- `POST /admin/scraper/alerts/test-webhook`
+- `GET /admin/scraper/queue/stats`
 
 ## SPA Routes
+
+以下路由由后端返回 `manga_translator/server/static/dist/index.html`：
 
 - `/`
 - `/signin`
@@ -99,4 +104,4 @@
 - `/manga/:id`
 - `/read/:mangaId/:chapterId`
 
-以上路由均由后端返回 `manga_translator/server/static/dist/index.html`。
+兼容入口：`/static/login.html -> /signin`（307）
