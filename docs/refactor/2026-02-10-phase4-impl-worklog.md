@@ -16,7 +16,7 @@
 - 接口影响: 无
 - 验证命令: `ls docs/plans docs/refactor docs/api`
 - 验证结果: pass
-- 提交哈希: PENDING
+- 提交哈希: b3a7b61
 
 ## TASK-036
 - TASK-ID: TASK-036
@@ -25,7 +25,7 @@
 - 接口影响: 默认配置新增 `scraper_alerts`
 - 验证命令: `pytest -q tests/test_v1_scraper_phase4.py -k config`
 - 验证结果: pass
-- 提交哈希: PENDING
+- 提交哈希: 4929a86
 
 ## TASK-037
 - TASK-ID: TASK-037
@@ -34,7 +34,7 @@
 - 接口影响: SQLite 新增 `scraper_alerts` 表、告警查询、队列统计
 - 验证命令: `pytest -q tests/test_v1_scraper_phase4.py -k 'alert_store or queue_stats or migration'`
 - 验证结果: pass
-- 提交哈希: PENDING
+- 提交哈希: 4929a86
 
 ## TASK-038
 - TASK-ID: TASK-038
@@ -43,7 +43,7 @@
 - 接口影响: 告警规则与 webhook 重试发送能力新增
 - 验证命令: `pytest -q tests/test_v1_scraper_phase4.py -k 'rules or webhook or cooldown'`
 - 验证结果: pass
-- 提交哈希: PENDING
+- 提交哈希: 4929a86
 
 ## TASK-039
 - TASK-ID: TASK-039
@@ -52,7 +52,7 @@
 - 接口影响: 新增 `/admin/scraper/health`、`/admin/scraper/alerts`、`/admin/scraper/alerts/test-webhook`、`/admin/scraper/queue/stats`
 - 验证命令: `pytest -q tests/test_v1_scraper_phase4.py -k 'admin and health and alerts and queue and auth'`
 - 验证结果: pass
-- 提交哈希: PENDING
+- 提交哈希: 4929a86
 
 ## TASK-040
 - TASK-ID: TASK-040
@@ -61,7 +61,7 @@
 - 接口影响: `GET /api/v1/scraper/task/{task_id}` 扩展 `queue_status/enqueued_at/dequeued_at/worker_id`
 - 验证命令: `pytest -q tests/test_v1_scraper_phase4.py -k 'task_status and queue_status and compatibility'`
 - 验证结果: pass
-- 提交哈希: PENDING
+- 提交哈希: 4929a86
 
 ## TASK-041
 - TASK-ID: TASK-041
@@ -70,7 +70,7 @@
 - 接口影响: 启动/关闭接入告警调度与退化健康状态
 - 验证命令: `pytest -q tests/test_v1_scraper_phase4.py -k 'startup or shutdown or scheduler'`
 - 验证结果: pass
-- 提交哈希: PENDING
+- 提交哈希: 4929a86
 
 ## TASK-042
 - TASK-ID: TASK-042
@@ -79,7 +79,7 @@
 - 接口影响: 新增 `fetchHealth/fetchAlerts/fetchQueueStats/sendTestWebhook` 与错误码映射
 - 验证命令: `cd frontend && npm test -- --run -t 'admin scraper store'`
 - 验证结果: pass
-- 提交哈希: PENDING
+- 提交哈希: 9cd1c65
 
 ## TASK-043
 - TASK-ID: TASK-043
@@ -88,7 +88,7 @@
 - 接口影响: `/admin` 新增健康、告警、队列统计与 webhook 测试区块
 - 验证命令: `cd frontend && npm test -- --run -t 'admin scraper panel'`
 - 验证结果: pass
-- 提交哈希: PENDING
+- 提交哈希: 9cd1c65
 
 ## TASK-044
 - TASK-ID: TASK-044
@@ -97,7 +97,7 @@
 - 接口影响: 后端 phase4 告警与兼容性测试覆盖新增
 - 验证命令: `pytest -q tests/test_v1_routes.py tests/test_v1_scraper_phase2.py tests/test_v1_scraper_phase3.py tests/test_v1_scraper_phase4.py`
 - 验证结果: pass
-- 提交哈希: PENDING
+- 提交哈希: 4929a86
 
 ## TASK-045
 - TASK-ID: TASK-045
@@ -106,7 +106,7 @@
 - 接口影响: 前端管理页监控与 webhook 测试行为测试新增
 - 验证命令: `cd frontend && npm test -- --run && npm run build`
 - 验证结果: pass
-- 提交哈希: PENDING
+- 提交哈希: 9cd1c65
 
 ## TASK-046
 - TASK-ID: TASK-046
@@ -115,4 +115,4 @@
 - 接口影响: 文档闭环与交付规则更新
 - 验证命令: `git status --short && git log --oneline -n 20 && git ls-remote --heads personal`
 - 验证结果: pass
-- 提交哈希: PENDING
+- 提交哈希: b3a7b61
