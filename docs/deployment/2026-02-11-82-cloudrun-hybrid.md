@@ -132,6 +132,13 @@ Cloud Run 推荐资源（已实测）：
   - `run-l4-nozr-euw1` -> `NvidiaL4GpuAllocNoZonalRedundancyPerProjectRegion`
   - `run-l4-zr-euw1` -> `NvidiaL4GpuAllocPerProjectRegion`
   - 系统回写：`preferredValue=1`，`grantedValue=0`
+- 追加排查（CLI）：
+  - L4（no-zonal-redundancy）在 `us-central1/us-east1/us-east4/us-west1/asia-east1/asia-northeast1` 全部回写 `grantedValue=0`
+  - RTX Pro 6000（no-zonal-redundancy）在 `europe-west1/us-central1` 全部回写 `grantedValue=0`
+- 配额偏好对象（已创建）：
+  - `run-l4-nozr-euw1`, `run-l4-zr-euw1`
+  - `run-l4-nozr-uscentral1`, `run-l4-nozr-useast1`, `run-l4-nozr-useast4`, `run-l4-nozr-uswest1`, `run-l4-nozr-asiaeast1`, `run-l4-nozr-asianortheast1`
+  - `run-rtx-nozr-europewest1`, `run-rtx-nozr-uscentral1`
 - 阻塞解除条件：
   - 至少一个区域获得 `run.googleapis.com` 的 L4 GPU 配额（`grantedValue >= 1`）
   - 获批后复跑 GPU 部署命令并切流。

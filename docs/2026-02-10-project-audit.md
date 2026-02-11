@@ -345,7 +345,8 @@
   - `You do not have quota for using GPUs ...`
 - **已做动作**：
   - 使用 `gcloud beta quotas preferences create` 提交了 `europe-west1` 的 L4 quota 偏好申请（有/无 zonal redundancy 两条）。
-  - 系统立即回写 `grantedValue=0`，未授予 GPU 额度。
+  - 扩展到多区域（`us-central1/us-east1/us-east4/us-west1/asia-east1/asia-northeast1`）的 L4 no-zr 申请，仍全部 `grantedValue=0`。
+  - 追加 RTX Pro 6000 no-zr（`europe-west1/us-central1`）申请，仍全部 `grantedValue=0`。
 - **影响**：
   - 当前无法执行你选择的 Cloud Run GPU 生产切换；服务继续以 CPU revision 运行。
 
