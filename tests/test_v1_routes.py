@@ -753,6 +753,145 @@ def test_translate_routes_with_auth_override(monkeypatch: pytest.MonkeyPatch, au
         assert page_resp.json()["status"] == "completed"
 
 
+def test_translate_chapter_returns_execution_metadata(monkeypatch: pytest.MonkeyPatch, authed_app):
+    monkeypatch.setattr(v1_translate, "_resolve_translate_execution_backend", lambda: "local")
+
+    with TestClient(authed_app) as client:
+        chapter_resp = client.post(
+            "/api/v1/translate/chapter",
+            json={"manga_id": "demo_manga", "chapter_id": "chapter_1"},
+        )
+        assert chapter_resp.status_code == 200
+        payload = chapter_resp.json()
+        assert payload["page_count"] == 1
+        assert payload["execution_backend"] == "local"
+        assert isinstance(payload["task_id"], str) and payload["task_id"]
+        assert isinstance(payload["accepted_at"], str) and payload["accepted_at"]
+
+
+def test_internal_translate_page_requires_internal_token(monkeypatch: pytest.MonkeyPatch, patch_services):
+    monkeypatch.setenv("MANGA_INTERNAL_API_TOKEN", "secret-token")
+
+    app = FastAPI()
+    app.include_router(v1_translate.internal_router)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/internal/translate/page",
+            files={"image": ("001.jpg", b"raw-image", "image/jpeg")},
+        )
+        assert response.status_code == 401
+
+
+def test_build_context_translations_uses_latest_three():
+    values = ["page-1", "page-2", "", None, "page-3", "page-4", "page-5"]
+    assert v1_translate._build_context_translations(values) == ["page-3", "page-4", "page-5"]
+
+
+@pytest.mark.anyio
+async def test_execute_page_with_retry_succeeds_after_transient_failure(tmp_path: Path):
+    image_path = tmp_path / "001.jpg"
+    image_path.write_bytes(b"raw")
+    output_path = tmp_path / "out" / "001.jpg"
+    state = {"attempts": 0}
+
+    class _FlakyExecutor(v1_translate.TranslateExecutor):
+        backend = "cloudrun"
+
+        async def translate_page(self, image_path, output_path, source_language, target_language, *, context_translations=None):
+            _ = (image_path, source_language, target_language, context_translations)
+            state["attempts"] += 1
+            if state["attempts"] == 1:
+                raise RuntimeError("503 upstream unavailable")
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(b"translated")
+            return {
+                "output_path": str(output_path),
+                "regions_count": 1,
+                "output_changed": True,
+                "stage_elapsed_ms": {},
+            }
+
+    result, error, attempts = await v1_translate._execute_page_with_retry(
+        executor=_FlakyExecutor(),
+        image_path=image_path,
+        output_path=output_path,
+        source_language="en",
+        target_language="zh",
+        context_translations=["ctx-a", "ctx-b", "ctx-c", "ctx-d"],
+        max_retries=2,
+    )
+    assert error is None
+    assert result is not None
+    assert attempts == 2
+    assert state["attempts"] == 2
+
+
+@pytest.mark.anyio
+async def test_execute_page_with_retry_non_retryable_reports_actual_attempts(tmp_path: Path):
+    image_path = tmp_path / "001.jpg"
+    image_path.write_bytes(b"raw")
+    output_path = tmp_path / "out" / "001.jpg"
+
+    class _FatalExecutor(v1_translate.TranslateExecutor):
+        backend = "cloudrun"
+
+        async def translate_page(self, image_path, output_path, source_language, target_language, *, context_translations=None):
+            _ = (image_path, output_path, source_language, target_language, context_translations)
+            raise RuntimeError("validation failed: bad payload")
+
+    result, error, attempts = await v1_translate._execute_page_with_retry(
+        executor=_FatalExecutor(),
+        image_path=image_path,
+        output_path=output_path,
+        source_language="en",
+        target_language="zh",
+        max_retries=3,
+    )
+    assert result is None
+    assert isinstance(error, RuntimeError)
+    assert attempts == 1
+
+
+@pytest.mark.anyio
+async def test_translate_chapter_partial_keeps_successful_pages(
+    monkeypatch: pytest.MonkeyPatch,
+    patch_services,
+    sample_data,
+):
+    chapter_dir = sample_data["raw_dir"] / "demo_manga" / "chapter_1"
+    (chapter_dir / "002.jpg").write_bytes(b"demo-image-2")
+
+    async def _fake_translate(image_path, output_path, source_language, target_language):
+        _ = (source_language, target_language)
+        if image_path.name == "002.jpg":
+            raise RuntimeError("upstream failed")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"translated-ok")
+        return {"output_path": str(output_path), "regions_count": 1, "output_changed": True}
+
+    monkeypatch.setattr(v1_translate, "_translate_single_image", _fake_translate)
+    monkeypatch.setenv("MANGA_V1_CHAPTER_EXECUTION_MODE", "single_page")
+
+    queue: asyncio.Queue[str] = asyncio.Queue()
+    v1_translate.v1_event_bus.add_listener(queue)
+    req = v1_translate.ChapterTranslateRequest(manga_id="demo_manga", chapter_id="chapter_1")
+    await v1_translate._process_chapter_job(req)
+
+    events = []
+    while not queue.empty():
+        raw = await queue.get()
+        events.append(json.loads(raw.removeprefix("data: ").strip()))
+    v1_translate.v1_event_bus.remove_listener(queue)
+
+    final = [item for item in events if item["type"] == "chapter_complete"][-1]
+    assert final["status"] == "partial"
+    assert final["success_count"] == 1
+    assert final["failed_count"] == 1
+    assert (sample_data["results_dir"] / "demo_manga" / "chapter_1" / "001.jpg").exists()
+    assert not (sample_data["results_dir"] / "demo_manga" / "chapter_1" / "002.jpg").exists()
+
+
 def test_translate_page_returns_503_when_fallback_used(monkeypatch: pytest.MonkeyPatch, authed_app):
     async def _fake_translate(image_path, output_path, source_language, target_language):
         _ = (image_path, source_language, target_language)

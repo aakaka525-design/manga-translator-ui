@@ -512,3 +512,75 @@
 - 验证命令: `pytest -q tests/test_runtime_gpu_lazy_init.py tests/test_v1_translate_concurrency.py tests/test_v1_routes.py && pytest -q && /usr/bin/time -p python test_vue_api_path_timed.py --runs 1 --image manga_translator/server/data/raw/isekai-dragondick-knight-commander/chapter-1/001.jpg --output result/test_vue_api_timed_001_phasefix.jpg && /usr/bin/time -p python test_qt_cli_path_timed.py --runs 1 --image manga_translator/server/data/raw/isekai-dragondick-knight-commander/chapter-1/001.jpg --output result/test_qt_cli_timed_001_phasefix.jpg`
 - 验证结果: pass（`37 passed`；全量 `122 passed, 1 skipped`；实图 API `TOTAL_get_ctx=57.11s, device=mps`；Qt/CLI `TOTAL_translate_batch=55.96s, device=mps`；耗时比 `1.02 <= 1.3`；两侧均成功产图）
 - 提交哈希: eb887c3, 293de53
+
+## BUGFIX-TRANSLATE-021
+- TASK-ID: BUGFIX-TRANSLATE-021
+- 状态: completed
+- 改动文件: `frontend/src/stores/translate.js`, `frontend/tests/translate.test.js`, `docs/2026-02-10-project-audit.md`, `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: 无新增/删除 API；前端章节状态机从“仅 `chapter_complete` 收口”改为“`progress` 覆盖总页数也可收口”，解决“已翻译仍显示处理中”问题并保持 SSE 协议兼容
+- 验证命令: `cd frontend && npm test -- --run tests/translate.test.js && cd frontend && npm test -- --run tests/smoke.test.js tests/manga_delete_actions.test.js`
+- 验证结果: pass（新增用例先红后绿；`translate.test.js` 3/3 通过；回归 `smoke + manga_delete_actions` 9/9 通过）
+- 提交哈希: N/A
+
+## TASK-DEP-01
+- TASK-ID: TASK-DEP-01
+- 状态: completed
+- 改动文件: `deploy/nginx/manga-translator-82.conf`, `deploy/systemd/manga-translator.service`, `docs/deployment/2026-02-11-82-cloudrun-hybrid.md`
+- 接口影响: 无 API 变更；新增 82 生产入口模板（Nginx 反代 `/api` `/auth` `/admin` `/output` + SSE，systemd 常驻服务模板）
+- 验证命令: `rg -n "location /api/|location /auth/|location /admin/|location /output/|translate/events|ExecStart=|MANGA_TRANSLATE_EXECUTION_BACKEND" deploy/nginx/manga-translator-82.conf deploy/systemd/manga-translator.service`
+- 验证结果: pass
+- 提交哈希: N/A
+
+## TASK-DEP-02
+- TASK-ID: TASK-DEP-02
+- 状态: completed
+- 改动文件: `manga_translator/server/routes/v1_translate.py`, `manga_translator/server/request_extraction.py`, `tests/test_v1_routes.py`
+- 接口影响: `POST /api/v1/translate/chapter` 新增可选返回 `task_id/execution_backend/accepted_at`；章节执行改为 executor 编排并固定“逐页成功保留、失败页重试后独立失败、章节可 partial”
+- 验证命令: `pytest -q tests/test_v1_routes.py -k "translate_chapter_returns_execution_metadata or translate_chapter_partial_keeps_successful_pages"`
+- 验证结果: pass
+- 提交哈希: N/A
+
+## TASK-DEP-03
+- TASK-ID: TASK-DEP-03
+- 状态: completed
+- 改动文件: `manga_translator/server/routes/v1_translate.py`, `manga_translator/server/routes/__init__.py`, `manga_translator/server/main.py`, `deploy/cloudrun/deploy-compute.sh`
+- 接口影响: 新增内部端点 `POST /internal/translate/page`（内部 token 鉴权）；Cloud Run 计算执行器落地
+- 验证命令: `pytest -q tests/test_v1_routes.py -k "internal_translate_page_requires_internal_token"`
+- 验证结果: pass
+- 提交哈希: N/A
+
+## TASK-DEP-04
+- TASK-ID: TASK-DEP-04
+- 状态: completed
+- 改动文件: `manga_translator/server/routes/v1_translate.py`, `manga_translator/server/request_extraction.py`, `tests/test_v1_routes.py`
+- 接口影响: HQ 上下文透传固定为前 3 页 `context_translations`，无实例内会话态依赖
+- 验证命令: `pytest -q tests/test_v1_routes.py -k "build_context_translations_uses_latest_three"`
+- 验证结果: pass
+- 提交哈希: N/A
+
+## TASK-DEP-05
+- TASK-ID: TASK-DEP-05
+- 状态: completed
+- 改动文件: `manga_translator/server/routes/v1_translate.py`, `docs/api/2026-02-10-v1-api-contract.md`
+- 接口影响: 章节/SSE 事件补充可选诊断字段 `execution_backend`、`remote_elapsed_ms`、`failure_stage`、`pipeline`，用于远端计算可观测
+- 验证命令: `rg -n "execution_backend|remote_elapsed_ms|failure_stage|pipeline|accepted_at|task_id|/internal/translate/page" manga_translator/server/routes/v1_translate.py docs/api/2026-02-10-v1-api-contract.md`
+- 验证结果: pass
+- 提交哈希: N/A
+
+## TASK-DEP-06
+- TASK-ID: TASK-DEP-06
+- 状态: completed
+- 改动文件: `docs/deployment/2026-02-11-82-cloudrun-hybrid.md`
+- 接口影响: 无 API 变更；补充一期二进制回传的流量/耗时审计项与二期 GCS 直写立项阈值
+- 验证命令: `rg -n "传输与成本审计|request_bytes_total|response_bytes_total|transport_ratio" docs/deployment/2026-02-11-82-cloudrun-hybrid.md`
+- 验证结果: pass
+- 提交哈希: N/A
+
+## TASK-DEP-07
+- TASK-ID: TASK-DEP-07
+- 状态: completed
+- 改动文件: `docs/deployment/2026-02-11-82-cloudrun-hybrid.md`
+- 接口影响: 无 API 变更；新增 82 主机与 Cloud Run 安全加固基线（禁 root 远程、密钥登录、内部 token + Secret Manager）
+- 验证命令: `rg -n "安全加固基线|PermitRootLogin no|PasswordAuthentication no|Secret Manager|X-Internal-Token" docs/deployment/2026-02-11-82-cloudrun-hybrid.md`
+- 验证结果: pass
+- 提交哈希: N/A

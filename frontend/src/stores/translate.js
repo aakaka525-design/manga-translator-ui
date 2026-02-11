@@ -139,6 +139,22 @@ export const useTranslateStore = defineStore('translate', () => {
         const completed = Number(chapter.completedPages || 0)
         const failed = Number(chapter.failedPages || 0)
 
+        if (total > 0 && completed >= total) {
+            const successCount = Math.max(completed - failed, 0)
+            markChapterComplete(
+                {
+                    manga_id: data.manga_id,
+                    chapter_id: data.chapter_id,
+                    success_count: successCount,
+                    failed_count: failed,
+                    total_count: total,
+                    status: successCount <= 0 ? 'error' : (failed > 0 ? 'partial' : 'success')
+                },
+                { silent: true }
+            )
+            return
+        }
+
         if (total > 0) {
             chapter.progress = Math.min(99, Math.round((completed / total) * 100))
             if (isFinal) {
@@ -152,9 +168,11 @@ export const useTranslateStore = defineStore('translate', () => {
         }
     }
 
-    function markChapterComplete(data) {
+    function markChapterComplete(data, options = {}) {
+        const silent = options.silent === true
         const chapter = findChapter(data.manga_id, data.chapter_id)
         if (!chapter) return
+        if (!chapter.isTranslating && Number(chapter.progress || 0) >= 100) return
 
         const successCount = data.success_count !== undefined ? data.success_count : 0
         const totalCount = data.total_count !== undefined ? data.total_count : chapter.page_count
@@ -174,15 +192,21 @@ export const useTranslateStore = defineStore('translate', () => {
 
         if (finalStatus === 'error') {
             chapter.statusText = data.error_message ? `失败: ${data.error_message}` : '失败'
-            const detail = data.error_message ? ` (${data.error_message})` : ''
-            toastStore.show(`章节失败: ${chapter.name}${detail}`, 'error')
+            if (!silent) {
+                const detail = data.error_message ? ` (${data.error_message})` : ''
+                toastStore.show(`章节失败: ${chapter.name}${detail}`, 'error')
+            }
         } else if (failedCount > 0) {
             chapter.statusText = `部分完成 (${successCount}/${totalCount})`
-            const detail = data.error_message ? `，原因：${data.error_message}` : ''
-            toastStore.show(`章节部分完成: ${chapter.name} (${successCount}/${totalCount})${detail}`, 'warning')
+            if (!silent) {
+                const detail = data.error_message ? `，原因：${data.error_message}` : ''
+                toastStore.show(`章节部分完成: ${chapter.name} (${successCount}/${totalCount})${detail}`, 'warning')
+            }
         } else {
             chapter.statusText = '已完成'
-            toastStore.show(`章节完成: ${chapter.name}`, 'success')
+            if (!silent) {
+                toastStore.show(`章节完成: ${chapter.name}`, 'success')
+            }
         }
         chapter.progress = 100
         clearChapterTracker(data.manga_id, data.chapter_id)

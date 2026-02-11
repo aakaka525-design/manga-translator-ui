@@ -32,6 +32,7 @@ _EXPORTS = {
     "sessions_router": ("sessions", "router"),
     "v1_manga_router": ("v1_manga", "router"),
     "v1_translate_router": ("v1_translate", "router"),
+    "internal_translate_router": ("v1_translate", "internal_router"),
     "v1_scraper_router": ("v1_scraper", "router"),
     "v1_parser_router": ("v1_parser", "router"),
     "v1_settings_router": ("v1_settings", "router"),

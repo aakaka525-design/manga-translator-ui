@@ -208,6 +208,23 @@ def _run_translate_sync(
 
     # 获取全局翻译器实例（复用模型）
     translator = get_global_translator()
+    seeded_context = getattr(config, "_context_translations_seed", None)
+    previous_page_translations = None
+    previous_context_size = None
+    if isinstance(seeded_context, list) and seeded_context:
+        normalized = [str(item).strip() for item in seeded_context if item and str(item).strip()]
+        if normalized and hasattr(translator, "all_page_translations"):
+            try:
+                previous_page_translations = list(getattr(translator, "all_page_translations", []) or [])
+            except Exception:
+                previous_page_translations = []
+            translator.all_page_translations = [{str(i + 1): text} for i, text in enumerate(normalized)]
+            if hasattr(translator, "context_size"):
+                try:
+                    previous_context_size = int(getattr(translator, "context_size", 0))
+                except Exception:
+                    previous_context_size = 0
+                translator.context_size = max(len(normalized), previous_context_size or 0)
     
     # 设置取消检查回调
     if cancel_check_callback:
@@ -221,6 +238,10 @@ def _run_translate_sync(
         return result
     finally:
         try:
+            if previous_page_translations is not None and hasattr(translator, "all_page_translations"):
+                translator.all_page_translations = previous_page_translations
+            if previous_context_size is not None and hasattr(translator, "context_size"):
+                translator.context_size = previous_context_size
             end_translation_operation()
             # 清除取消回调，避免影响下一个任务
             if cancel_check_callback:

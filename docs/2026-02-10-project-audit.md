@@ -35,6 +35,7 @@
 | 翻译“成功但无译图”语义偏差（运行缺陷） | ✅ 已修复 | `/api/v1/translate/*` 收敛为“`regions_count > 0` 且 `output_changed=True` 才算成功”；并统一 `target_language` 短码映射（`zh -> CHS`） |
 | 翻译落盘失败导致“显示成功但图片不变”（运行缺陷） | ✅ 已修复 | `v1_translate` 对 JPEG 输出自动处理 RGBA->RGB，避免 `cannot write mode RGBA as JPEG` 回退；失败分支清理同 stem 历史译图，避免前端误判 translated；翻译超时改为环境变量可配置（默认 600s） |
 | Vue/API 与 Qt/CLI 链路一致性与 503 收敛（运行缺陷） | ✅ 已修复 | `v1_translate` 新增章节级 `pipeline/stage_elapsed_ms/failure_stage` 诊断字段；`single_page` 模式强制串行避免共享翻译器竞态；`web` 模式 `use_gpu` 默认对齐配置文件；渲染多边形并集改为 `_safe_union_polygons` 容错；实图复测（同一张图）CLI `54.058s`，API `48.590s`，两侧均成功产图且 API 无 fallback/503 |
+| 前端章节状态“已翻译仍显示处理中”（运行缺陷） | ✅ 已修复 | `translate` store 去除对单一 `chapter_complete` 事件的硬依赖：当 `progress` 已覆盖总页数时自动收口为完成态（success/partial/error），并防重复完成提示；补充回归测试覆盖“无 chapter_complete 也能结束”场景 |
 
 ---
 
@@ -234,6 +235,43 @@
     - Qt/CLI：`test_qt_cli_path_timed.py` → `TOTAL_translate_batch=55.96s`, `translator.device=mps`
     - 耗时比：`57.11 / 55.96 = 1.02`（满足阈值 `<= 1.3`）
 - **影响**：API 核心链路与 Qt/CLI 在设备判定和耗时表现上已对齐；“脚本路径假慢”被消除。
+
+---
+
+### 20. Vue 章节状态卡住“处理中”收敛（2026-02-11）
+
+- **状态**：✅ 已修复
+- **问题根因**：前端 `frontend/src/stores/translate.js` 仅在收到 `chapter_complete` 事件时才会将章节状态从 `isTranslating=true` 收口到完成态。SSE 短暂抖动或事件丢失时，即使页面已翻译完成，章节仍停留在“处理中”。
+- **修复内容**：
+  - `markChapterProgress` 新增自动收口逻辑：当 `completedPages >= totalPages` 时直接按 `success/partial/error` 计算最终状态并结束翻译态。
+  - `markChapterComplete` 增加幂等保护与静默完成参数，避免自动收口与后续 `chapter_complete` 双重提示。
+- **验证证据**：
+  - TDD Red：新增 `frontend/tests/translate.test.js::finalizes chapter when all page progress events are finished even without chapter_complete`，修复前失败（`isTranslating` 仍为 `true`）。
+  - TDD Green：`cd frontend && npm test -- --run tests/translate.test.js` 全通过。
+  - 前端回归：`cd frontend && npm test -- --run tests/smoke.test.js tests/manga_delete_actions.test.js` 全通过。
+- **影响**：已翻译章节在前端不再被错误卡在“处理中”，并保持对现有 SSE/接口协议的兼容。
+
+---
+
+### 21. 82 + Cloud Run 混合执行链路（2026-02-11）
+
+- **状态**：✅ 已落地（一期）
+- **目标**：前端与状态编排保留在 `82`，Cloud Run 仅承载翻译计算，保持 `/api/v1/*` 对外兼容。
+- **关键实现**：
+  - 新增翻译执行抽象 `TranslateExecutor`（`local` / `cloudrun`），章节任务由 82 逐页编排。
+  - 新增内部计算端点 `POST /internal/translate/page`（仅内部 token 调用）。
+  - 章节异常边界固定为“逐页保留成功结果，失败页按重试策略处理，最终可 `partial`”。
+  - `gemini_hq` 上下文固定透传前 3 页（`context_translations`），避免实例内会话态依赖。
+  - SSE 与章节完成事件补充 `execution_backend`、`remote_elapsed_ms`、`failure_stage` 可选诊断字段。
+- **配套交付**：
+  - Nginx 模板：`deploy/nginx/manga-translator-82.conf`
+  - systemd 模板：`deploy/systemd/manga-translator.service`
+  - Cloud Run 部署脚本：`deploy/cloudrun/deploy-compute.sh`
+  - 部署文档：`docs/deployment/2026-02-11-82-cloudrun-hybrid.md`
+- **验证证据**：
+  - 路由回归：`pytest -q tests/test_v1_routes.py`（35 passed）
+  - 全量后端：`pytest -q`（128 passed, 1 skipped）
+  - 前端回归+构建：`cd frontend && npm test -- --run && npm run build`（50 passed，build 成功）
 
 ---
 

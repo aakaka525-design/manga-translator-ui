@@ -6,6 +6,7 @@
 - API 契约目录：[`docs/api/`](api)
 - 方案计划目录：[`docs/plans/`](plans)
 - 决策记录目录：[`docs/decisions/`](decisions)
+- 部署文档目录：[`docs/deployment/`](deployment)
 
 ## 当前实施主线（2026-02-10）
 
@@ -30,3 +31,7 @@
 ## 文档维护规范
 
 - 文档风格与质量门槛：[`docs/DOC_STYLE.md`](DOC_STYLE.md)
+
+## 部署与运维
+
+- 82 + Cloud Run 混合部署：[`docs/deployment/2026-02-11-82-cloudrun-hybrid.md`](deployment/2026-02-11-82-cloudrun-hybrid.md)

@@ -1,0 +1,91 @@
+# 82 + Cloud Run 混合部署指南
+
+## 目标
+
+- 前端与状态后端部署在 `82.22.36.81`
+- Cloud Run 仅承载翻译计算接口：`POST /internal/translate/page`
+- 对外接口继续走 `82` 同源入口，不改变 `/api/v1/*` 使用方式
+
+## 架构
+
+1. 浏览器 -> Nginx (`82`)。
+2. Nginx 将 `/api` `/auth` `/admin` `/output` 反代到本机 FastAPI。
+3. FastAPI 章节任务按页调用 `TranslateExecutor`。
+4. 当 `MANGA_TRANSLATE_EXECUTION_BACKEND=cloudrun` 时，FastAPI 调 Cloud Run 内部接口并落盘到本地 `/output`。
+
+## 必要环境变量
+
+82 后端：
+
+- `MANGA_TRANSLATE_EXECUTION_BACKEND=local|cloudrun`
+- `MANGA_CLOUDRUN_EXEC_URL=https://<cloud-run-service-url>`
+- `MANGA_INTERNAL_API_TOKEN=<internal-token>`
+- `MANGA_TRANSLATE_EXECUTOR_MAX_RETRIES=2`
+- `MANGA_CLOUDRUN_TIMEOUT_SEC=120`
+
+Cloud Run 计算服务：
+
+- `MANGA_INTERNAL_API_TOKEN=<same-token>`
+- `MANGA_TRANSLATE_EXECUTION_BACKEND=local`
+
+## 章节失败边界语义
+
+- 章节逐页执行，已成功页保留。
+- 失败页按 executor 重试策略重试。
+- 超过重试上限后仅标记该页失败。
+- 章节最终状态：
+  - `success_count == 0` -> `error`
+  - `success_count > 0 && failed_count > 0` -> `partial`
+  - `failed_count == 0` -> `success`
+- 前端可继续调用 `/api/v1/translate/page` 对失败页重试。
+
+## gemini_hq 上下文策略
+
+- 固定传前 3 页译文：`context_translations`
+- 82 侧构建并传输，Cloud Run 不保留会话缓存
+
+## 指标与阈值
+
+- `cold_start_latency_p95`
+- `single_page_p95`
+- `chapter_10p_p95`
+- `sse_delay_p95`
+- `remote_503_rate`
+
+告警建议：
+
+- 连续 3 天 `cold_start_latency_p95 > 25s` 或 `single_page_p95 > 90s`，评审切 `min-instances=1`。
+- `remote_503_rate > 1%`（15 分钟）触发告警。
+
+## 传输与成本审计（一期二进制回传）
+
+- 一期固定链路：Cloud Run 返回译图二进制 -> `82` 写入 `/output`。
+- 章节维度记录项（建议写入日志或报表）：
+  - `request_bytes_total`（上传原图总字节）
+  - `response_bytes_total`（下载译图总字节）
+  - `remote_elapsed_ms_total`（Cloud Run 端总耗时）
+  - `translate_elapsed_ms_total`（章节总翻译耗时）
+  - `transport_ratio = remote_elapsed_ms_total / translate_elapsed_ms_total`
+- 评审触发建议：
+  - 若 `transport_ratio` 长期 > `0.35`，或章节网络流量长期超预算，立项二期 `GCS 直写`（Cloud Run 产图直接写对象存储，82 仅拉取 URL）。
+
+## 安全加固基线（上线前必做）
+
+- 82 主机（Linux）：
+  - 轮换 `root` 密码并禁用密码登录：`/etc/ssh/sshd_config` 设置 `PermitRootLogin no`、`PasswordAuthentication no`，仅保留密钥登录。
+  - 新建最小权限部署用户（例如 `deploy`），服务用该用户运行。
+  - 开启主机防火墙，仅放行 `22/80/443` 必需端口。
+- Cloud Run：
+  - 保持 `--no-allow-unauthenticated`，只允许受信服务账号调用。
+  - `MANGA_INTERNAL_API_TOKEN` 不写死在镜像，放 Secret Manager 注入。
+  - 82 到 Cloud Run 的调用携带 `X-Internal-Token`；token 轮换按月执行。
+- 运维审计：
+  - 记录管理员操作日志与部署变更日志。
+  - 对 `remote_503_rate`、鉴权失败率、异常重试率设置告警并保留 30 天。
+
+## 上线顺序
+
+1. 先在 `82` 本机以 `local` backend 全量回归。
+2. 部署 Cloud Run 计算服务并验证内部 token。
+3. 灰度切换 `MANGA_TRANSLATE_EXECUTION_BACKEND=cloudrun`。
+4. 观察 24h 指标与失败率，再决定是否扩容或常驻实例。

@@ -26,6 +26,8 @@
 - Project Audit: `docs/2026-02-10-project-audit.md`
 - Docs Optimization Plan: `docs/plans/2026-02-10-doc-optimization.md`
 - Docs Optimization Worklog: `docs/refactor/2026-02-10-doc-optimization-worklog.md`
+- CloudRun Hybrid Plan: `docs/plans/2026-02-11-cloudrun-hybrid-implementation.md`
+- CloudRun Hybrid Deployment Guide: `docs/deployment/2026-02-11-82-cloudrun-hybrid.md`
 
 ## 验证快照
 

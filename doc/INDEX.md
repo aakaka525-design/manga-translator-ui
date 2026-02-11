@@ -17,6 +17,7 @@
 - [`doc/SETTINGS.md`](SETTINGS.md)：参数设置
 - [`doc/DEBUGGING.md`](DEBUGGING.md)：排障方法
 - [`doc/DEVELOPMENT.md`](DEVELOPMENT.md)：开发与文档维护规范
+- [`docs/deployment/2026-02-11-82-cloudrun-hybrid.md`](../docs/deployment/2026-02-11-82-cloudrun-hybrid.md)：82 + Cloud Run 混合部署
 
 ## 工程文档入口
 

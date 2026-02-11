@@ -46,6 +46,7 @@ def _normalize_choice(value: object, default: str, choices: set[str]) -> str:
 
 CHAPTER_EXECUTION_MODE_CHOICES = {"single_page", "batch_pipeline", "auto"}
 RUNTIME_PROFILE_CHOICES = {"off", "basic"}
+TRANSLATE_EXECUTION_BACKEND_CHOICES = {"local", "cloudrun"}
 _ENV_TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
@@ -72,6 +73,11 @@ server_config = {
     'max_concurrent_tasks': 3,
     'chapter_page_concurrency': _env_positive_int('MANGA_V1_CHAPTER_PAGE_CONCURRENCY', 3),
     'cleanup_interval_requests': _env_positive_int('MANGA_V1_CLEANUP_INTERVAL_REQUESTS', 8),
+    'translate_execution_backend': _env_choice(
+        'MANGA_TRANSLATE_EXECUTION_BACKEND',
+        'local',
+        TRANSLATE_EXECUTION_BACKEND_CHOICES,
+    ),
     'chapter_execution_mode': _env_choice(
         'MANGA_V1_CHAPTER_EXECUTION_MODE',
         'auto',

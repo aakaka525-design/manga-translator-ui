@@ -36,6 +36,8 @@
 6. `POST /api/v1/translate/chapter`
 - 事件：`chapter_start -> progress -> chapter_complete`
 - 语义收敛：仅当页面存在可翻译文本区域（`regions_count > 0`）且输出有可见变化时计入成功；否则计入失败。
+- 返回可选字段：`task_id`, `execution_backend`, `accepted_at`
+- 章节失败边界：逐页执行，已成功页保留；失败页按 executor 重试策略处理，超限后仅标记该页失败；当 `success_count>0 && failed_count>0` 时章节状态为 `partial`。
 
 7. `POST /api/v1/translate/page`
 - 事件：`page_complete | page_failed`
@@ -45,6 +47,12 @@
 
 8. `GET /api/v1/translate/events`
 - SSE，`Content-Type: text/event-stream`
+- 可选事件字段：`execution_backend`, `remote_elapsed_ms`, `failure_stage`
+
+内部计算接口（仅服务间调用，非公网契约）：
+
+- `POST /internal/translate/page`
+- 用于 82 编排服务调用 Cloud Run 计算服务；请求可选 `context_translations`（固定最多 3 条）
 
 ## Scraper
 

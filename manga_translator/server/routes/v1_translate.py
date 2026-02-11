@@ -4,18 +4,22 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 import os
+import tempfile
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+import httpx
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
+from fastapi.responses import Response, StreamingResponse
 from PIL import Image, ImageChops
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.requests import Request
 
 from manga_translator.server.core.library_service import LibraryService, IMAGE_EXTENSIONS
@@ -25,6 +29,7 @@ from manga_translator.server.core.v1_event_bus import v1_event_bus
 
 
 router = APIRouter(prefix="/api/v1/translate", tags=["v1-translate"])
+internal_router = APIRouter(prefix="/internal/translate", tags=["internal-translate"])
 library_service = LibraryService()
 logger = logging.getLogger(__name__)
 
@@ -56,6 +61,13 @@ TRANSLATE_CONTEXT_TIMEOUT_SEC = _env_non_negative_int("MANGA_TRANSLATE_CONTEXT_T
 CHAPTER_PAGE_CONCURRENCY_DEFAULT = 3
 CHAPTER_EXECUTION_MODE_CHOICES = {"single_page", "batch_pipeline", "auto"}
 RUNTIME_PROFILE_CHOICES = {"off", "basic"}
+TRANSLATE_EXECUTION_BACKEND_CHOICES = {"local", "cloudrun"}
+CONTEXT_TRANSLATION_LIMIT = 3
+CLOUDRUN_EXECUTOR_TIMEOUT_SEC = _env_positive_int("MANGA_CLOUDRUN_TIMEOUT_SEC", 120)
+CLOUDRUN_EXECUTOR_RETRIES = _env_non_negative_int("MANGA_CLOUDRUN_EXECUTOR_RETRIES", 2)
+CLOUDRUN_EXECUTOR_RETRY_BACKOFFS = (1.0, 2.0, 4.0)
+CLOUDRUN_RETRYABLE_STATUS = {408, 429, 500, 502, 503, 504}
+INTERNAL_TOKEN_HEADER = "X-Internal-Token"
 
 LANG_CODE_ALIASES = {
     "ar": "ARA",
@@ -103,6 +115,12 @@ class PageTranslateRequest(BaseModel):
     image_name: str
     source_language: Optional[str] = None
     target_language: Optional[str] = None
+
+
+class InternalPageTranslateRequest(BaseModel):
+    source_language: Optional[str] = None
+    target_language: Optional[str] = None
+    context_translations: list[str] = Field(default_factory=list)
 
 
 def _natural_key(value: str) -> list[object]:
@@ -241,6 +259,58 @@ def _resolve_runtime_profile() -> str:
     return configured
 
 
+def _build_context_translations(values: list[str] | None) -> list[str]:
+    if not values:
+        return []
+    cleaned = [str(item).strip() for item in values if item and str(item).strip()]
+    if not cleaned:
+        return []
+    return cleaned[-CONTEXT_TRANSLATION_LIMIT:]
+
+
+def _resolve_translate_execution_backend() -> str:
+    configured = "local"
+    try:
+        from manga_translator.server.core.task_manager import get_server_config
+
+        configured = str(get_server_config().get("translate_execution_backend", "local")).strip().lower()
+    except Exception:  # noqa: BLE001
+        pass
+
+    env_override = os.getenv("MANGA_TRANSLATE_EXECUTION_BACKEND")
+    if env_override is not None:
+        configured = str(env_override).strip().lower()
+    if configured not in TRANSLATE_EXECUTION_BACKEND_CHOICES:
+        return "local"
+    return configured
+
+
+def _resolve_cloudrun_executor_url() -> str:
+    return str(os.getenv("MANGA_CLOUDRUN_EXEC_URL", "")).strip()
+
+
+def _resolve_internal_token() -> str:
+    return str(os.getenv("MANGA_INTERNAL_API_TOKEN", "")).strip()
+
+
+def _verify_internal_token(received: str | None) -> None:
+    required = _resolve_internal_token()
+    if not required:
+        return
+    if not received or received.strip() != required:
+        raise HTTPException(status_code=401, detail="internal token required")
+
+
+def _extract_context_text(ctx) -> str:
+    text_regions = getattr(ctx, "text_regions", None) or []
+    values: list[str] = []
+    for region in text_regions:
+        translated = str(getattr(region, "translation", "") or "").strip()
+        if translated:
+            values.append(translated)
+    return "\n".join(values).strip()
+
+
 def _resolve_chapter_page_concurrency(
     execution_mode: str | None = None,
     translator_name: str | None = None,
@@ -279,6 +349,147 @@ def _resolve_chapter_page_concurrency(
     if max_concurrent_tasks is None:
         return max(1, configured)
     return max(1, min(configured, max_concurrent_tasks))
+
+
+class TranslateExecutor:
+    backend = "local"
+
+    async def translate_page(
+        self,
+        image_path: Path,
+        output_path: Path,
+        source_language: str | None,
+        target_language: str | None,
+        *,
+        context_translations: list[str] | None = None,
+    ) -> dict:
+        raise NotImplementedError
+
+
+class LocalTranslateExecutor(TranslateExecutor):
+    backend = "local"
+
+    async def translate_page(
+        self,
+        image_path: Path,
+        output_path: Path,
+        source_language: str | None,
+        target_language: str | None,
+        *,
+        context_translations: list[str] | None = None,
+    ) -> dict:
+        try:
+            return await _translate_single_image(
+                image_path,
+                output_path,
+                source_language,
+                target_language,
+                context_translations=context_translations,
+            )
+        except TypeError as exc:
+            if "context_translations" not in str(exc):
+                raise
+            # Compatibility path for tests/mocks with legacy signature.
+            return await _translate_single_image(
+                image_path,
+                output_path,
+                source_language,
+                target_language,
+            )
+
+
+class CloudRunTranslateExecutor(TranslateExecutor):
+    backend = "cloudrun"
+
+    def __init__(self, endpoint: str, timeout_sec: int = CLOUDRUN_EXECUTOR_TIMEOUT_SEC) -> None:
+        self._endpoint = endpoint.rstrip("/")
+        self._timeout_sec = max(1, int(timeout_sec))
+
+    async def translate_page(
+        self,
+        image_path: Path,
+        output_path: Path,
+        source_language: str | None,
+        target_language: str | None,
+        *,
+        context_translations: list[str] | None = None,
+    ) -> dict:
+        payload = image_path.read_bytes()
+        context = _build_context_translations(context_translations)
+        token = _resolve_internal_token()
+        headers: dict[str, str] = {}
+        if token:
+            headers[INTERNAL_TOKEN_HEADER] = token
+
+        data = {
+            "source_language": source_language or "",
+            "target_language": target_language or "",
+            "context_translations": json.dumps(context, ensure_ascii=False),
+        }
+        files = {
+            "image": (image_path.name, payload, "application/octet-stream"),
+        }
+
+        timeout = httpx.Timeout(self._timeout_sec)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                f"{self._endpoint}/internal/translate/page",
+                data=data,
+                files=files,
+                headers=headers,
+            )
+
+        if response.status_code != 200:
+            detail_text = response.text.strip()
+            detail = f"cloudrun status={response.status_code}"
+            if detail_text:
+                detail = f"{detail}; detail={detail_text}"
+            raise RuntimeError(detail)
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(response.content)
+        stage_elapsed_raw = response.headers.get("x-stage-elapsed-ms", "{}")
+        try:
+            stage_elapsed_ms = json.loads(stage_elapsed_raw)
+            if not isinstance(stage_elapsed_ms, dict):
+                stage_elapsed_ms = {}
+        except Exception:  # noqa: BLE001
+            stage_elapsed_ms = {}
+
+        regions_count = _to_non_negative_int(response.headers.get("x-regions-count"), default=0)
+        output_changed = _image_has_visible_changes(payload, output_path)
+        fallback_used = response.headers.get("x-fallback-used", "0") == "1"
+        fallback_reason = response.headers.get("x-fallback-reason")
+        no_change_reason = response.headers.get("x-no-change-reason")
+        failure_stage = response.headers.get("x-failure-stage")
+        page_translation_text = response.headers.get("x-translation-text", "").strip()
+        remote_elapsed_ms = _to_non_negative_int(response.headers.get("x-remote-elapsed-ms"), default=0)
+        cold_start = response.headers.get("x-cold-start", "0") == "1"
+
+        return {
+            "output_path": str(output_path),
+            "regions_count": regions_count,
+            "output_changed": output_changed,
+            "no_change_reason": no_change_reason,
+            "fallback_used": fallback_used,
+            "fallback_reason": fallback_reason,
+            "stage_elapsed_ms": stage_elapsed_ms,
+            "failure_stage": failure_stage,
+            "execution_backend": "cloudrun",
+            "remote_elapsed_ms": remote_elapsed_ms,
+            "cold_start": cold_start,
+            "page_translation_text": page_translation_text,
+        }
+
+
+def _get_translate_executor(backend: str | None = None) -> TranslateExecutor:
+    backend = (backend or _resolve_translate_execution_backend()).strip().lower()
+    if backend == "cloudrun":
+        endpoint = _resolve_cloudrun_executor_url()
+        if endpoint:
+            return CloudRunTranslateExecutor(endpoint=endpoint)
+        logger.warning("cloudrun execution backend requested but MANGA_CLOUDRUN_EXEC_URL is empty; fallback to local")
+    return LocalTranslateExecutor()
 
 
 def _cleanup_translated_variants(manga_id: str, chapter_id: str, image_name: str) -> None:
@@ -359,6 +570,32 @@ def _empty_stage_timing() -> dict[str, float]:
     }
 
 
+def _executor_retry_limit() -> int:
+    return _env_non_negative_int("MANGA_TRANSLATE_EXECUTOR_MAX_RETRIES", 2)
+
+
+def _is_retryable_executor_error(exc: Exception) -> bool:
+    if isinstance(exc, httpx.TimeoutException):
+        return True
+    if isinstance(exc, httpx.TransportError):
+        return True
+    message = str(exc).lower()
+    if not message:
+        return False
+    retryable_markers = (
+        "timed out",
+        "timeout",
+        "temporarily unavailable",
+        "connection reset",
+        "connection refused",
+        "503",
+        "502",
+        "504",
+        "429",
+    )
+    return any(marker in message for marker in retryable_markers)
+
+
 async def _translate_single_image(
     image_path: Path,
     output_path: Path,
@@ -366,6 +603,7 @@ async def _translate_single_image(
     target_language: str | None,
     cleanup_reason: str | None = "single_request_complete",
     cleanup_force: bool = False,
+    context_translations: list[str] | None = None,
 ) -> dict:
     started_at = time.perf_counter()
     stage_elapsed_ms = _empty_stage_timing()
@@ -381,6 +619,10 @@ async def _translate_single_image(
         if source_language:
             config.translator.skip_lang = None
         config.translator.target_lang = _resolve_target_language(target_language)
+        if context_translations:
+            setattr(config, "_context_translations_seed", _build_context_translations(context_translations))
+        else:
+            setattr(config, "_context_translations_seed", [])
 
         fake_request = Request({"type": "http", "method": "POST", "path": "/api/v1/translate/page", "headers": []})
         context_started_at = time.perf_counter()
@@ -409,6 +651,7 @@ async def _translate_single_image(
         prepared_result.save(output_path)
         stage_elapsed_ms["render"] = (time.perf_counter() - render_started_at) * 1000.0
         regions_count = len(getattr(ctx, "text_regions", []) or [])
+        page_translation_text = _extract_context_text(ctx)
         # Fast path: if OCR detected text regions, treat output as changed.
         # This avoids expensive full-image diff on every translated page.
         output_changed = regions_count > 0
@@ -427,6 +670,9 @@ async def _translate_single_image(
             "fallback_reason": None,
             "stage_elapsed_ms": stage_elapsed_ms,
             "failure_stage": None,
+            "execution_backend": "local",
+            "remote_elapsed_ms": None,
+            "page_translation_text": page_translation_text,
         }
     except Exception as exc:  # noqa: BLE001
         # Compatibility fallback for environments where full translator deps are unavailable.
@@ -443,6 +689,9 @@ async def _translate_single_image(
             "fallback_reason": fallback_reason,
             "stage_elapsed_ms": stage_elapsed_ms,
             "failure_stage": failure_stage,
+            "execution_backend": "local",
+            "remote_elapsed_ms": None,
+            "page_translation_text": "",
         }
 
 
@@ -630,6 +879,71 @@ async def _translate_chapter_batch_pipeline(
     return outputs
 
 
+async def _translate_payload_via_temp_files(
+    payload: bytes,
+    image_name: str,
+    source_language: str | None,
+    target_language: str | None,
+    *,
+    context_translations: list[str] | None = None,
+) -> tuple[bytes, dict]:
+    suffix = Path(image_name).suffix or ".jpg"
+    with tempfile.TemporaryDirectory(prefix="mt-internal-translate-") as temp_dir:
+        temp_root = Path(temp_dir)
+        source_path = temp_root / f"source{suffix}"
+        output_path = temp_root / f"output{suffix}"
+        source_path.write_bytes(payload)
+        result = await _translate_single_image(
+            source_path,
+            output_path,
+            source_language,
+            target_language,
+            context_translations=context_translations,
+        )
+        if not output_path.exists():
+            raise RuntimeError("internal translate produced no output file")
+        return output_path.read_bytes(), result
+
+
+async def _execute_page_with_retry(
+    *,
+    executor: TranslateExecutor,
+    image_path: Path,
+    output_path: Path,
+    source_language: str | None,
+    target_language: str | None,
+    context_translations: list[str] | None = None,
+    max_retries: int | None = None,
+) -> tuple[dict | None, Exception | None, int]:
+    retries = _executor_retry_limit() if max_retries is None else max(0, int(max_retries))
+    attempts = retries + 1
+    last_error: Exception | None = None
+    executed_attempts = 0
+
+    for attempt_index in range(attempts):
+        executed_attempts = attempt_index + 1
+        try:
+            result = await executor.translate_page(
+                image_path,
+                output_path,
+                source_language,
+                target_language,
+                context_translations=context_translations,
+            )
+            stage = dict(result.get("stage_elapsed_ms") or {})
+            stage["executor_attempts"] = attempt_index + 1
+            result["stage_elapsed_ms"] = stage
+            return result, None, executed_attempts
+        except Exception as exc:  # noqa: BLE001
+            last_error = exc
+            if attempt_index >= retries or not _is_retryable_executor_error(exc):
+                break
+            backoff_idx = min(attempt_index, len(CLOUDRUN_EXECUTOR_RETRY_BACKOFFS) - 1)
+            await asyncio.sleep(CLOUDRUN_EXECUTOR_RETRY_BACKOFFS[backoff_idx])
+
+    return None, last_error, max(1, executed_attempts)
+
+
 async def _publish_page_result(
     request: ChapterTranslateRequest,
     image_path: Path,
@@ -637,8 +951,10 @@ async def _publish_page_result(
     result: dict | None,
     error: Exception | None,
     pipeline: str,
+    execution_backend: str = "local",
 ) -> bool:
     stage_elapsed = dict(result.get("stage_elapsed_ms") or {}) if result else {}
+    remote_elapsed_ms = _to_non_negative_int((result or {}).get("remote_elapsed_ms"), default=0)
     if error is not None:
         _cleanup_translated_variants(request.manga_id, request.chapter_id, image_path.name)
         await v1_event_bus.publish(
@@ -652,7 +968,9 @@ async def _publish_page_result(
                 "status": "failed",
                 "error_message": str(error),
                 "pipeline": pipeline,
+                "execution_backend": execution_backend,
                 "failure_stage": "translate",
+                "remote_elapsed_ms": remote_elapsed_ms,
                 "stage_elapsed_ms": stage_elapsed,
             }
         )
@@ -670,7 +988,9 @@ async def _publish_page_result(
                 "status": "failed",
                 "error_message": "translation returned empty result",
                 "pipeline": pipeline,
+                "execution_backend": execution_backend,
                 "failure_stage": "translate",
+                "remote_elapsed_ms": remote_elapsed_ms,
                 "stage_elapsed_ms": stage_elapsed,
             }
         )
@@ -702,7 +1022,9 @@ async def _publish_page_result(
                 "status": "failed",
                 "error_message": error_message,
                 "pipeline": pipeline,
+                "execution_backend": execution_backend,
                 "failure_stage": failure_stage,
+                "remote_elapsed_ms": remote_elapsed_ms,
                 "stage_elapsed_ms": stage_elapsed,
             }
         )
@@ -718,15 +1040,27 @@ async def _publish_page_result(
             "stage": "complete",
             "status": "completed",
             "pipeline": pipeline,
+            "execution_backend": execution_backend,
+            "remote_elapsed_ms": remote_elapsed_ms,
             "stage_elapsed_ms": stage_elapsed,
         }
     )
     return True
 
 
-async def _process_chapter_job(request: ChapterTranslateRequest) -> None:
+async def _process_chapter_job(
+    request: ChapterTranslateRequest,
+    *,
+    chapter_task_id: str | None = None,
+    accepted_at: str | None = None,
+    execution_backend: str | None = None,
+) -> None:
     chapter_started_at = time.perf_counter()
     runtime_profile = _resolve_runtime_profile()
+    backend = execution_backend or _resolve_translate_execution_backend()
+    executor = _get_translate_executor(backend)
+    if executor.backend != backend:
+        backend = executor.backend
 
     try:
         images = _chapter_images(request.manga_id, request.chapter_id)
@@ -750,17 +1084,23 @@ async def _process_chapter_job(request: ChapterTranslateRequest) -> None:
     failed = 0
     translator_name = _resolve_translator_name()
     execution_mode = _resolve_chapter_execution_mode(total, translator_name)
+    if backend == "cloudrun":
+        execution_mode = "single_page"
     page_concurrency = _resolve_chapter_page_concurrency(execution_mode, translator_name)
     runtime = _build_runtime_snapshot(execution_mode, page_concurrency, translator_name)
+    runtime["execution_backend"] = backend
 
     await v1_event_bus.publish(
         {
             "type": "chapter_start",
+            "task_id": chapter_task_id,
             "manga_id": request.manga_id,
             "chapter_id": request.chapter_id,
             "total_pages": total,
             "page_concurrency": page_concurrency,
             "pipeline": execution_mode,
+            "execution_backend": backend,
+            "accepted_at": accepted_at,
             "runtime": runtime,
         }
     )
@@ -779,6 +1119,7 @@ async def _process_chapter_job(request: ChapterTranslateRequest) -> None:
                 result,
                 error,
                 pipeline="batch_pipeline",
+                execution_backend=backend,
             )
             if page_success:
                 success += 1
@@ -786,6 +1127,8 @@ async def _process_chapter_job(request: ChapterTranslateRequest) -> None:
                 failed += 1
     else:
         semaphore = asyncio.Semaphore(page_concurrency)
+        context_lock = asyncio.Lock()
+        chapter_context_history: list[str] = []
 
         async def _run_page(image_path: Path) -> tuple[Path, str, dict | None, Exception | None]:
             task_id = str(uuid.uuid4())
@@ -803,13 +1146,30 @@ async def _process_chapter_job(request: ChapterTranslateRequest) -> None:
             )
             try:
                 async with semaphore:
-                    result = await _translate_single_image(
-                        image_path,
-                        out_path,
-                        request.source_language,
-                        request.target_language,
+                    async with context_lock:
+                        context_seed = _build_context_translations(chapter_context_history)
+                    result, error, attempts = await _execute_page_with_retry(
+                        executor=executor,
+                        image_path=image_path,
+                        output_path=out_path,
+                        source_language=request.source_language,
+                        target_language=request.target_language,
+                        context_translations=context_seed,
                     )
-                return image_path, task_id, result, None
+                    if result is not None:
+                        stage_elapsed = dict(result.get("stage_elapsed_ms") or {})
+                        stage_elapsed["executor_attempts"] = attempts
+                        result["stage_elapsed_ms"] = stage_elapsed
+                        page_text = str(result.get("page_translation_text") or "").strip()
+                        if page_text:
+                            async with context_lock:
+                                chapter_context_history.append(page_text)
+                    if result is None and error is not None:
+                        result = {
+                            "stage_elapsed_ms": {"executor_attempts": attempts},
+                            "execution_backend": backend,
+                        }
+                    return image_path, task_id, result, error
             except Exception as exc:  # noqa: BLE001
                 return image_path, task_id, None, exc
 
@@ -824,6 +1184,7 @@ async def _process_chapter_job(request: ChapterTranslateRequest) -> None:
                     result,
                     error,
                     pipeline="single_page",
+                    execution_backend=backend,
                 )
                 if page_success:
                     success += 1
@@ -866,8 +1227,11 @@ async def _process_chapter_job(request: ChapterTranslateRequest) -> None:
             "success_count": success,
             "failed_count": failed,
             "total_count": total,
+            "task_id": chapter_task_id,
             "execution_mode": execution_mode,
             "pipeline": execution_mode,
+            "execution_backend": backend,
+            "accepted_at": accepted_at,
             "runtime": runtime,
             "stage_elapsed_ms": chapter_stage_elapsed_ms,
         }
@@ -896,10 +1260,23 @@ async def translate_chapter(request: ChapterTranslateRequest, _session: Session 
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    asyncio.create_task(_process_chapter_job(request))
+    task_id = str(uuid.uuid4())
+    accepted_at = datetime.now(timezone.utc).isoformat()
+    execution_backend = _resolve_translate_execution_backend()
+    asyncio.create_task(
+        _process_chapter_job(
+            request,
+            chapter_task_id=task_id,
+            accepted_at=accepted_at,
+            execution_backend=execution_backend,
+        )
+    )
     return {
         "message": "Chapter translation started",
         "page_count": len(images),
+        "task_id": task_id,
+        "execution_backend": execution_backend,
+        "accepted_at": accepted_at,
     }
 
 
@@ -995,12 +1372,66 @@ async def translate_page(request: PageTranslateRequest, _session: Session = Depe
     return {
         "task_id": task_id,
         "status": "completed",
+        "execution_backend": "local",
         "output_path": result["output_path"],
         "translated_url": translated_url,
         "output_changed": True,
         "regions_count": result["regions_count"],
         "stage_elapsed_ms": result.get("stage_elapsed_ms") or {},
     }
+
+
+@internal_router.post("/page")
+async def internal_translate_page(
+    image: UploadFile = File(...),
+    source_language: Optional[str] = Form(None),
+    target_language: Optional[str] = Form(None),
+    context_translations: Optional[str] = Form("[]"),
+    x_internal_token: Optional[str] = Header(None, alias=INTERNAL_TOKEN_HEADER),
+):
+    _verify_internal_token(x_internal_token)
+
+    try:
+        payload = await image.read()
+        if not payload:
+            raise HTTPException(status_code=400, detail="empty image payload")
+        parsed_context = json.loads(context_translations or "[]")
+        if not isinstance(parsed_context, list):
+            parsed_context = []
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"invalid internal request: {exc}") from exc
+
+    started_at = time.perf_counter()
+    output_bytes, result = await _translate_payload_via_temp_files(
+        payload,
+        image_name=image.filename or "page.jpg",
+        source_language=source_language,
+        target_language=target_language,
+        context_translations=_build_context_translations(parsed_context),
+    )
+    elapsed_ms = int((time.perf_counter() - started_at) * 1000.0)
+
+    stage_elapsed = result.get("stage_elapsed_ms") or {}
+    stage_elapsed_text = json.dumps(stage_elapsed, ensure_ascii=False)
+    context_text = str(result.get("page_translation_text") or "").replace("\n", " ").strip()
+    if len(context_text) > 1500:
+        context_text = context_text[:1500]
+
+    headers = {
+        "x-regions-count": str(_to_non_negative_int(result.get("regions_count"), default=0)),
+        "x-output-changed": "1" if bool(result.get("output_changed")) else "0",
+        "x-fallback-used": "1" if bool(result.get("fallback_used")) else "0",
+        "x-fallback-reason": str(result.get("fallback_reason") or ""),
+        "x-no-change-reason": str(result.get("no_change_reason") or ""),
+        "x-failure-stage": str(result.get("failure_stage") or ""),
+        "x-stage-elapsed-ms": stage_elapsed_text,
+        "x-remote-elapsed-ms": str(elapsed_ms),
+        "x-cold-start": "0",
+        "x-translation-text": context_text,
+    }
+    return Response(content=output_bytes, media_type="application/octet-stream", headers=headers)
 
 
 @router.get("/events")

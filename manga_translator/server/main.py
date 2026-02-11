@@ -47,6 +47,7 @@ from manga_translator.server.routes import (
     logs_router,
     v1_manga_router,
     v1_translate_router,
+    internal_translate_router,
     v1_scraper_router,
     v1_parser_router,
     v1_settings_router,
@@ -370,6 +371,7 @@ app.include_router(config_management_router)
 app.include_router(logs_router)
 app.include_router(v1_manga_router)
 app.include_router(v1_translate_router)
+app.include_router(internal_translate_router)
 app.include_router(v1_scraper_router)
 app.include_router(v1_parser_router)
 app.include_router(v1_settings_router)

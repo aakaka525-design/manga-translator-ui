@@ -12,6 +12,7 @@
 
 - 用户文档入口：[`doc/INDEX.md`](doc/INDEX.md)
 - 工程文档入口：[`docs/INDEX.md`](docs/INDEX.md)
+- 混合云部署指南：[`docs/deployment/2026-02-11-82-cloudrun-hybrid.md`](docs/deployment/2026-02-11-82-cloudrun-hybrid.md)
 
 ## 快速开始（源码运行）
 
