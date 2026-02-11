@@ -121,3 +121,17 @@ Cloud Run 推荐资源（已实测）：
   - 生产建议固定：`GEMINI_MODEL=gemini-2.0-flash`
 - Header 编码约束（2026-02-11）：
   - Cloud Run `internal/translate/page` 响应头需保证 ASCII 安全（非拉丁字符需编码），否则会触发 `UnicodeEncodeError` 并返回 500。
+
+## Cloud Run GPU 落地状态（2026-02-11）
+
+- 当前结论：`manga-translator-2602111442` 项目 GPU 配额为 `0`，暂时无法上线 GPU revision。
+- 已执行验证：
+  - `europe-west1` 直接更新现有服务到 L4 GPU：失败（with/without zonal redundancy 均 quota denied）
+  - `us-central1` 新建 GPU 测试服务：同样失败（with/without zonal redundancy 均 quota denied）
+- 已提交 quota preference（CLI）：
+  - `run-l4-nozr-euw1` -> `NvidiaL4GpuAllocNoZonalRedundancyPerProjectRegion`
+  - `run-l4-zr-euw1` -> `NvidiaL4GpuAllocPerProjectRegion`
+  - 系统回写：`preferredValue=1`，`grantedValue=0`
+- 阻塞解除条件：
+  - 至少一个区域获得 `run.googleapis.com` 的 L4 GPU 配额（`grantedValue >= 1`）
+  - 获批后复跑 GPU 部署命令并切流。

@@ -638,3 +638,12 @@
 - 验证命令: `pytest -q tests/test_v1_routes.py -k 'internal_translate_page_requires_internal_token or internal_translate_page_encodes_non_latin_headers'`、`gcloud builds submit ... be5dcc38-...`、`gcloud run services update ... --image ...:20260211-181400-headerfix`、`gcloud run services describe manga-translator-compute --region=europe-west1`
 - 验证结果: pass（新增测试通过；Cloud Run revision `manga-translator-compute-00016-x5x` Ready；`GEMINI_MODEL=gemini-2.0-flash` 生效）
 - 提交哈希: d3b0fef
+
+## TASK-DEP-14
+- TASK-ID: TASK-DEP-14
+- 状态: blocked
+- 改动文件: `docs/deployment/2026-02-11-82-cloudrun-hybrid.md`, `docs/2026-02-10-project-audit.md`
+- 接口影响: 无 API 契约变更；执行 Cloud Run GPU 切换验证，确认当前项目 GPU 配额为 0（有/无 zonal redundancy 均不可用）
+- 验证命令: `gcloud run services update manga-translator-compute --region=europe-west1 --gpu=1 --gpu-type=nvidia-l4 ...`、`gcloud run deploy manga-translator-compute-gpu-test --region=us-central1 --gpu=1 --gpu-type=nvidia-l4 ...`、`gcloud beta quotas preferences create ... --quota-id=NvidiaL4GpuAllocNoZonalRedundancyPerProjectRegion ...`、`gcloud beta quotas preferences describe run-l4-nozr-euw1 --project=manga-translator-2602111442`、`gcloud beta quotas preferences describe run-l4-zr-euw1 --project=manga-translator-2602111442`
+- 验证结果: blocked（请求已创建但 `preferredValue=1` 均被回写为 `grantedValue=0`）
+- 提交哈希: N/A

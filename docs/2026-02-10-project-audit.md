@@ -335,6 +335,22 @@
 
 ---
 
+### 25. GPU 落地阻塞（2026-02-11）
+
+- **状态**：⚠️ 阻塞（配额未获批）
+- **执行结果**：
+  - `gcloud run services update manga-translator-compute ... --gpu=1 --gpu-type=nvidia-l4` -> 失败
+  - `gcloud run deploy manga-translator-compute-gpu-test --region=us-central1 ... --gpu=1 --gpu-type=nvidia-l4` -> 失败
+- **统一错误**：
+  - `You do not have quota for using GPUs ...`
+- **已做动作**：
+  - 使用 `gcloud beta quotas preferences create` 提交了 `europe-west1` 的 L4 quota 偏好申请（有/无 zonal redundancy 两条）。
+  - 系统立即回写 `grantedValue=0`，未授予 GPU 额度。
+- **影响**：
+  - 当前无法执行你选择的 Cloud Run GPU 生产切换；服务继续以 CPU revision 运行。
+
+---
+
 ## 修复优先级路线图（建议）
 
 | 阶段 | 任务 | 预估工时 |
