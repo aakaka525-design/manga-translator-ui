@@ -502,4 +502,4 @@
 - 接口影响: 无新增/删除 API；修复 Web/API 在不同启动方式下的 GPU 配置一致性（新增内部运行时标记 `_runtime_config_initialized`、`_runtime_config_source`），并避免 runtime 未初始化时错误覆盖 `cli.use_gpu`。
 - 验证命令: `pytest -q tests/test_v1_translate_concurrency.py tests/test_v1_routes.py && pytest -q && python -m manga_translator web --host 127.0.0.1 --port 8011 && python -m uvicorn manga_translator.server.main:app --host 127.0.0.1 --port 8012 && MT_USE_GPU=false python -m uvicorn manga_translator.server.main:app --host 127.0.0.1 --port 8013`（启动命令以后台短时启动+日志抓取方式执行）
 - 验证结果: pass（定向测试 `33 passed`；全量后端 `118 passed, 1 skipped`；启动日志分别为 `use_gpu=True, source=run_server`、`use_gpu=True, source=startup_auto`、`use_gpu=False, source=startup_auto`）
-- 提交哈希: N/A
+- 提交哈希: 1eeae1d
