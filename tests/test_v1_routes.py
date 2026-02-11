@@ -476,6 +476,51 @@ def test_prepare_translator_params_keeps_config_gpu_when_runtime_not_initialized
     request_extraction.prepare_translator_params(config, workflow="normal")
     assert config.cli.use_gpu is True
 
+
+def test_run_translate_sync_ensures_runtime_before_get_global_translator(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    config = SimpleNamespace()
+    pil_image = Image.new("RGB", (4, 4), color=(255, 255, 255))
+
+    state = {"ensured": 0}
+
+    def _fake_ensure():
+        state["ensured"] += 1
+        task_manager.server_config["_runtime_config_initialized"] = True
+        task_manager.server_config["use_gpu"] = True
+
+    class _DummyTranslator:
+        def set_cancel_check_callback(self, _cb):
+            return None
+
+        async def translate(self, _image, _config):
+            return "ok"
+
+    def _fake_get_global_translator():
+        assert task_manager.server_config["_runtime_config_initialized"] is True
+        return _DummyTranslator()
+
+    monkeypatch.setitem(task_manager.server_config, "_runtime_config_initialized", False)
+    monkeypatch.setattr(task_manager, "_ensure_runtime_for_translator", _fake_ensure, raising=False)
+    monkeypatch.setattr(task_manager, "get_global_translator", _fake_get_global_translator)
+    monkeypatch.setattr(task_manager, "begin_translation_operation", lambda: None)
+    monkeypatch.setattr(task_manager, "end_translation_operation", lambda: None)
+    monkeypatch.setattr(task_manager, "cleanup_after_request", lambda **_kwargs: None)
+    monkeypatch.setattr(task_manager, "update_task_thread_id", lambda *_args, **_kwargs: None)
+
+    result = request_extraction._run_translate_sync(
+        pil_image,
+        config,
+        task_id=None,
+        cancel_check_callback=None,
+        cleanup_reason=None,
+        cleanup_force=False,
+    )
+
+    assert result == "ok"
+    assert state["ensured"] == 1
+
 @pytest.mark.anyio
 async def test_translate_single_image_converts_rgba_result_for_jpeg_output(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path

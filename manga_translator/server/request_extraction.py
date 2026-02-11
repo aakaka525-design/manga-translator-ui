@@ -193,6 +193,7 @@ def _run_translate_sync(
     import threading
 #     import gc
     from manga_translator.server.core.task_manager import (
+        _ensure_runtime_for_translator,
         begin_translation_operation,
         end_translation_operation,
         get_global_translator,
@@ -203,6 +204,8 @@ def _run_translate_sync(
     if task_id:
         update_task_thread_id(task_id, threading.current_thread().ident)
     
+    _ensure_runtime_for_translator()
+
     # 获取全局翻译器实例（复用模型）
     translator = get_global_translator()
     
@@ -258,6 +261,7 @@ def _run_translate_batch_sync(
     import threading
 #     import gc
     from manga_translator.server.core.task_manager import (
+        _ensure_runtime_for_translator,
         begin_translation_operation,
         end_translation_operation,
         get_global_translator,
@@ -268,6 +272,8 @@ def _run_translate_batch_sync(
     if task_id:
         update_task_thread_id(task_id, threading.current_thread().ident)
     
+    _ensure_runtime_for_translator()
+
     # 获取全局翻译器实例（复用模型）
     translator = get_global_translator()
     

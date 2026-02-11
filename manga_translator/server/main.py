@@ -448,47 +448,29 @@ def init_translator(use_gpu=False, verbose=False):
 
 
 def _resolve_runtime_use_gpu(explicit: bool | None) -> bool:
-    """Resolve runtime GPU flag with precedence: explicit > env > config > False."""
-    if explicit is not None:
-        return bool(explicit)
-
-    env_value = os.getenv("MT_USE_GPU")
-    if env_value is not None:
-        return str(env_value).strip().lower() in {"1", "true", "yes", "on"}
-
-    try:
-        default_config = config_manager.load_default_config()
-        return bool(getattr(getattr(default_config, "cli", None), "use_gpu", False))
-    except Exception:
-        return False
+    """Compatibility wrapper around task_manager runtime GPU resolver."""
+    return task_manager._resolve_runtime_use_gpu(explicit)
 
 
 def _ensure_runtime_server_config(explicit: bool | None = None) -> bool:
     """Ensure runtime config is initialized for direct uvicorn startup paths."""
-    if bool(task_manager.server_config.get("_runtime_config_initialized", False)):
-        return bool(task_manager.server_config.get("use_gpu", False))
-
-    resolved_use_gpu = _resolve_runtime_use_gpu(explicit)
-    task_manager.server_config["use_gpu"] = bool(resolved_use_gpu)
-    task_manager.server_config["_runtime_config_initialized"] = True
-    task_manager.server_config["_runtime_config_source"] = "startup_auto"
-    logger.info(
-        "Runtime config auto-initialized: use_gpu=%s source=%s",
-        task_manager.server_config["use_gpu"],
-        task_manager.server_config["_runtime_config_source"],
+    return task_manager._ensure_runtime_for_translator(
+        explicit,
+        source="startup_auto",
+        force=False,
     )
-    return bool(task_manager.server_config["use_gpu"])
 
 def run_server(args):
     """启动 Web API 服务器（纯API模式，不带界面）"""
     import uvicorn
     
-    resolved_use_gpu = _resolve_runtime_use_gpu(getattr(args, 'use_gpu', None))
+    resolved_use_gpu = task_manager._ensure_runtime_for_translator(
+        getattr(args, 'use_gpu', None),
+        source="run_server",
+        force=True,
+    )
 
     # 设置服务器配置（在 prepare 之前）
-    task_manager.server_config['use_gpu'] = bool(resolved_use_gpu)
-    task_manager.server_config['_runtime_config_initialized'] = True
-    task_manager.server_config['_runtime_config_source'] = "run_server"
     task_manager.server_config['verbose'] = getattr(args, 'verbose', False)
     task_manager.server_config['models_ttl'] = getattr(args, 'models_ttl', 0)
     task_manager.server_config['retry_attempts'] = getattr(args, 'retry_attempts', None)

@@ -216,6 +216,27 @@
 
 ---
 
+### 19. API 核心链路慢路径收敛（2026-02-11）
+
+- **状态**：✅ 已修复
+- **问题根因**：`get_ctx/_run_translate_sync` 直调路径在 runtime 未初始化时，`get_global_translator()` 可能使用默认 `use_gpu=False`，导致翻译器回落 CPU，表现为 API 路径显著慢于 Qt/CLI（可达 220s+）。
+- **修复内容**：
+  - `task_manager` 新增 lazy runtime 初始化兜底：`_resolve_runtime_use_gpu()` + `_ensure_runtime_for_translator()`。
+  - `get_global_translator()` 在构建翻译器前自动执行 lazy init（`source=lazy_translator_init`）。
+  - `request_extraction._run_translate_sync/_run_translate_batch_sync` 在获取全局翻译器前显式确保 runtime 已初始化。
+  - `main.py` 的 runtime 解析改为复用 `task_manager` 统一逻辑，避免分散实现漂移。
+  - 诊断脚本（`test_vue_api_path.py`、`test_vue_api_path_timed.py`、`test_deep_diagnosis.py`）统一先做 runtime 初始化，并输出 `runtime source/use_gpu/translator.device`。
+- **验证证据**：
+  - 定向回归：`pytest -q tests/test_runtime_gpu_lazy_init.py tests/test_v1_translate_concurrency.py tests/test_v1_routes.py` → `36 passed`
+  - 全量回归：`pytest -q` → `121 passed, 1 skipped`
+  - 实图对照（同一张 `chapter-1/001.jpg`）：
+    - API：`test_vue_api_path_timed.py` → `TOTAL_get_ctx=57.11s`, `translator.device=mps`
+    - Qt/CLI：`test_qt_cli_path_timed.py` → `TOTAL_translate_batch=55.96s`, `translator.device=mps`
+    - 耗时比：`57.11 / 55.96 = 1.02`（满足阈值 `<= 1.3`）
+- **影响**：API 核心链路与 Qt/CLI 在设备判定和耗时表现上已对齐；“脚本路径假慢”被消除。
+
+---
+
 ## 修复优先级路线图（建议）
 
 | 阶段 | 任务 | 预估工时 |

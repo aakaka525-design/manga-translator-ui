@@ -46,6 +46,7 @@ def _normalize_choice(value: object, default: str, choices: set[str]) -> str:
 
 CHAPTER_EXECUTION_MODE_CHOICES = {"single_page", "batch_pipeline", "auto"}
 RUNTIME_PROFILE_CHOICES = {"off", "basic"}
+_ENV_TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
 # 翻译线程池（根据 max_concurrent_tasks 动态创建）
@@ -90,6 +91,50 @@ _cleanup_counter_lock = threading.Lock()
 # 翻译执行中的任务计数（用于避免在途任务期间的共享状态清理）
 _inflight_translation_ops = 0
 _inflight_ops_lock = threading.Lock()
+
+
+def _resolve_runtime_use_gpu(explicit: bool | None) -> bool:
+    """Resolve runtime GPU flag with precedence: explicit > env > config > False."""
+    if explicit is not None:
+        return bool(explicit)
+
+    env_value = os.getenv("MT_USE_GPU")
+    if env_value is not None:
+        return str(env_value).strip().lower() in _ENV_TRUE_VALUES
+
+    try:
+        from manga_translator.server.core import config_manager
+
+        default_config = config_manager.load_default_config()
+        return bool(getattr(getattr(default_config, "cli", None), "use_gpu", False))
+    except Exception:
+        return False
+
+
+def _ensure_runtime_for_translator(
+    explicit: bool | None = None,
+    *,
+    source: str = "lazy_translator_init",
+    force: bool = False,
+) -> bool:
+    """
+    Ensure runtime config is initialized before creating translator instances.
+
+    This protects direct function/script paths that bypass FastAPI startup hooks.
+    """
+    if not force and bool(server_config.get("_runtime_config_initialized", False)):
+        return bool(server_config.get("use_gpu", False))
+
+    resolved_use_gpu = _resolve_runtime_use_gpu(explicit)
+    server_config["use_gpu"] = bool(resolved_use_gpu)
+    server_config["_runtime_config_initialized"] = True
+    server_config["_runtime_config_source"] = source or "unknown"
+    logger.info(
+        "Runtime config initialized for translator: use_gpu=%s source=%s",
+        server_config["use_gpu"],
+        server_config["_runtime_config_source"],
+    )
+    return bool(server_config["use_gpu"])
 
 
 def begin_translation_operation() -> None:
@@ -432,6 +477,9 @@ def get_global_translator(params: dict = None):
     global _global_translator, _translator_params_hash
     
     from manga_translator import MangaTranslator
+
+    # Ensure runtime config is ready even for direct script paths without startup hooks.
+    _ensure_runtime_for_translator()
     
     # 如果没有传入参数，使用服务器配置
     if params is None:

@@ -138,3 +138,41 @@ def test_ensure_runtime_server_config_prefers_env_over_default_config(
     assert task_manager.server_config["use_gpu"] is False
     assert task_manager.server_config["_runtime_config_initialized"] is True
     assert task_manager.server_config["_runtime_config_source"] == "startup_auto"
+
+
+def test_run_server_uses_task_manager_runtime_initializer(monkeypatch: pytest.MonkeyPatch):
+    args = SimpleNamespace(
+        host="127.0.0.1",
+        port=8125,
+        use_gpu=None,
+        verbose=False,
+        models_ttl=0,
+        retry_attempts=None,
+        start_instance=False,
+        nonce=None,
+    )
+
+    captured: dict[str, object] = {}
+
+    def _fake_ensure_runtime(explicit, *, source, force):
+        captured["explicit"] = explicit
+        captured["source"] = source
+        captured["force"] = force
+        task_manager.server_config["use_gpu"] = True
+        task_manager.server_config["_runtime_config_initialized"] = True
+        task_manager.server_config["_runtime_config_source"] = source
+        return True
+
+    server_main.nonce = "test-nonce"
+    monkeypatch.setattr(task_manager, "_ensure_runtime_for_translator", _fake_ensure_runtime)
+    monkeypatch.setattr(server_main.config_manager, "admin_settings", {})
+    monkeypatch.setattr(server_main, "prepare", lambda _args: None)
+
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: None)
+
+    server_main.run_server(args)
+
+    assert captured == {"explicit": None, "source": "run_server", "force": True}
+    assert task_manager.server_config["_runtime_config_source"] == "run_server"
