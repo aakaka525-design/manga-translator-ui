@@ -529,7 +529,7 @@
 - 接口影响: 无 API 变更；新增 82 生产入口模板（Nginx 反代 `/api` `/auth` `/admin` `/output` + SSE，systemd 常驻服务模板）
 - 验证命令: `rg -n "location /api/|location /auth/|location /admin/|location /output/|translate/events|ExecStart=|MANGA_TRANSLATE_EXECUTION_BACKEND" deploy/nginx/manga-translator-82.conf deploy/systemd/manga-translator.service`
 - 验证结果: pass
-- 提交哈希: N/A
+- 提交哈希: e364550
 
 ## TASK-DEP-02
 - TASK-ID: TASK-DEP-02
@@ -538,7 +538,7 @@
 - 接口影响: `POST /api/v1/translate/chapter` 新增可选返回 `task_id/execution_backend/accepted_at`；章节执行改为 executor 编排并固定“逐页成功保留、失败页重试后独立失败、章节可 partial”
 - 验证命令: `pytest -q tests/test_v1_routes.py -k "translate_chapter_returns_execution_metadata or translate_chapter_partial_keeps_successful_pages"`
 - 验证结果: pass
-- 提交哈希: N/A
+- 提交哈希: e364550
 
 ## TASK-DEP-03
 - TASK-ID: TASK-DEP-03
@@ -547,7 +547,7 @@
 - 接口影响: 新增内部端点 `POST /internal/translate/page`（内部 token 鉴权）；Cloud Run 计算执行器落地
 - 验证命令: `pytest -q tests/test_v1_routes.py -k "internal_translate_page_requires_internal_token"`
 - 验证结果: pass
-- 提交哈希: N/A
+- 提交哈希: e364550
 
 ## TASK-DEP-04
 - TASK-ID: TASK-DEP-04
@@ -556,7 +556,7 @@
 - 接口影响: HQ 上下文透传固定为前 3 页 `context_translations`，无实例内会话态依赖
 - 验证命令: `pytest -q tests/test_v1_routes.py -k "build_context_translations_uses_latest_three"`
 - 验证结果: pass
-- 提交哈希: N/A
+- 提交哈希: e364550
 
 ## TASK-DEP-05
 - TASK-ID: TASK-DEP-05
@@ -565,7 +565,7 @@
 - 接口影响: 章节/SSE 事件补充可选诊断字段 `execution_backend`、`remote_elapsed_ms`、`failure_stage`、`pipeline`，用于远端计算可观测
 - 验证命令: `rg -n "execution_backend|remote_elapsed_ms|failure_stage|pipeline|accepted_at|task_id|/internal/translate/page" manga_translator/server/routes/v1_translate.py docs/api/2026-02-10-v1-api-contract.md`
 - 验证结果: pass
-- 提交哈希: N/A
+- 提交哈希: e364550
 
 ## TASK-DEP-06
 - TASK-ID: TASK-DEP-06
@@ -574,7 +574,7 @@
 - 接口影响: 无 API 变更；补充一期二进制回传的流量/耗时审计项与二期 GCS 直写立项阈值
 - 验证命令: `rg -n "传输与成本审计|request_bytes_total|response_bytes_total|transport_ratio" docs/deployment/2026-02-11-82-cloudrun-hybrid.md`
 - 验证结果: pass
-- 提交哈希: N/A
+- 提交哈希: e364550
 
 ## TASK-DEP-07
 - TASK-ID: TASK-DEP-07
@@ -583,4 +583,4 @@
 - 接口影响: 无 API 变更；新增 82 主机与 Cloud Run 安全加固基线（禁 root 远程、密钥登录、内部 token + Secret Manager）
 - 验证命令: `rg -n "安全加固基线|PermitRootLogin no|PasswordAuthentication no|Secret Manager|X-Internal-Token" docs/deployment/2026-02-11-82-cloudrun-hybrid.md`
 - 验证结果: pass
-- 提交哈希: N/A
+- 提交哈希: e364550
