@@ -29,6 +29,13 @@ Cloud Run 计算服务（compute-only，不加载 scraper）：
 - `MANGA_TRANSLATE_EXECUTION_BACKEND=local`
 - `MANGA_CLOUDRUN_COMPUTE_ONLY=1`
 
+Cloud Run 推荐资源（已实测）：
+
+- `memory=4Gi`（`2Gi` 在真实翻译请求下会触发 OOM）
+- `cpu=2`
+- `concurrency=1`
+- `maxScale=2`（按配额与峰值再调）
+
 ## 章节失败边界语义
 
 - 章节逐页执行，已成功页保留。
@@ -90,3 +97,16 @@ Cloud Run 计算服务（compute-only，不加载 scraper）：
 2. 部署 Cloud Run 计算服务并验证内部 token。
 3. 灰度切换 `MANGA_TRANSLATE_EXECUTION_BACKEND=cloudrun`。
 4. 观察 24h 指标与失败率，再决定是否扩容或常驻实例。
+
+## 2026-02-11 实操记录（最新）
+
+- Cloud Run 区域：`europe-west1`
+- 计算服务：`manga-translator-compute`
+- 当前稳定 revision：`manga-translator-compute-00011-wqp`
+- 服务 URL：`https://manga-translator-compute-177058129447.europe-west1.run.app`
+- 82 systemd 已固定：
+  - `MANGA_TRANSLATE_EXECUTION_BACKEND=cloudrun`
+  - `MANGA_CLOUDRUN_EXEC_URL=https://manga-translator-compute-177058129447.europe-west1.run.app`
+- 实测结果（82 -> Cloud Run `POST /internal/translate/page`）：
+  - `2Gi` 内存时：返回 `500`，Cloud Run 日志报 `Memory limit exceeded`
+  - 升级到 `4Gi` 后：返回 `200`，可产出输出二进制（同链路可用）

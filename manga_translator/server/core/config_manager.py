@@ -18,6 +18,7 @@ from manga_translator.utils import BASE_PATH
 ADMIN_CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', 'admin_config.json')
 # 默认配置文件：优先使用 examples/config.json（相对于项目根目录）
 SERVER_CONFIG_PATH = os.path.join(BASE_PATH, 'examples', 'config.json')
+SERVER_CONFIG_FALLBACK_PATH = os.path.join(BASE_PATH, 'examples', 'config-example.json')
 
 # 文件目录路径
 FONTS_DIR = os.path.join(BASE_PATH, 'fonts')
@@ -230,17 +231,28 @@ def save_admin_settings(settings: dict) -> bool:
 
 def load_default_config_dict() -> dict:
     """加载默认配置文件，返回字典格式（包含Qt UI的完整配置）"""
-    if os.path.exists(SERVER_CONFIG_PATH):
+    env_path = os.environ.get("MANGA_SERVER_CONFIG_PATH")
+    candidates = []
+    if env_path:
+        candidates.append(env_path)
+    candidates.extend([SERVER_CONFIG_PATH, SERVER_CONFIG_FALLBACK_PATH])
+
+    for path in candidates:
+        if not path:
+            continue
+        if not os.path.exists(path):
+            continue
         try:
-            with open(SERVER_CONFIG_PATH, 'r', encoding='utf-8') as f:
+            with open(path, 'r', encoding='utf-8') as f:
                 config_dict = json.load(f)
+            print(f"[INFO] Loaded default config from: {path}")
             return config_dict
         except Exception as e:
-            print(f"[WARNING] Failed to load default config from {SERVER_CONFIG_PATH}: {e}")
+            print(f"[WARNING] Failed to load default config from {path}: {e}")
             return {}
-    else:
-        print(f"[WARNING] Default config file not found: {SERVER_CONFIG_PATH}")
-        return {}
+
+    print(f"[WARNING] Default config file not found. Tried: {candidates}")
+    return {}
 
 
 def load_default_config() -> Config:

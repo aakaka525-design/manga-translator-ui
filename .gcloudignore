@@ -1,0 +1,14 @@
+# Cloud Build upload filters.
+# Start from .gitignore, then re-include runtime files that are ignored there.
+
+.gcloudignore
+.git
+
+#!include:.gitignore
+
+# Keep source upload small for Cloud Build.
+frontend/node_modules/
+
+# Runtime modules required by cloudrun_compute_main import path.
+!manga_translator/utils/panel/lib/
+!manga_translator/utils/panel/lib/**

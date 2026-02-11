@@ -294,6 +294,27 @@
 
 ---
 
+### 23. Cloud Run 计算服务稳定性补丁（2026-02-11）
+
+- **状态**：✅ 已修复
+- **问题 1（启动失败）**：
+  - 现象：新 revision 启动即崩溃，日志报 `ModuleNotFoundError: manga_translator.utils.panel.lib`
+  - 根因：Cloud Build 上传源受 `.gitignore` 影响，`lib/` 被误排除
+  - 修复：新增仓库级 `.gcloudignore`，显式 `re-include` `manga_translator/utils/panel/lib/**`
+- **问题 2（翻译 500）**：
+  - 现象：`82 -> Cloud Run /internal/translate/page` 实图请求约 60s 后返回 `500`
+  - 根因：Cloud Run 资源不足，日志显示 `Memory limit of 2048 MiB exceeded`
+  - 修复：`manga-translator-compute` 升级为 `memory=4Gi`、`cpu=2`、`concurrency=1`
+- **配置一致性补丁**：
+  - `config_manager.load_default_config_dict()` 增加回退：`examples/config.json` 不存在时自动读 `examples/config-example.json`
+  - 支持 `MANGA_SERVER_CONFIG_PATH` 环境变量覆盖默认配置路径
+- **验证证据**：
+  - revision：`manga-translator-compute-00011-wqp` `Ready=True`
+  - `GET /`：`200 {"status":"ok"}`
+  - `82` 主机实测 `POST /internal/translate/page`：`HTTP 200`，输出二进制生成
+
+---
+
 ## 修复优先级路线图（建议）
 
 | 阶段 | 任务 | 预估工时 |
