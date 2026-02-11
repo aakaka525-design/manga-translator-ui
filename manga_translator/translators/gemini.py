@@ -64,7 +64,7 @@ class GeminiTranslator(CommonTranslator):
         
         self.api_key = os.getenv('GEMINI_API_KEY', GEMINI_API_KEY)
         self.base_url = os.getenv('GEMINI_API_BASE', 'https://generativelanguage.googleapis.com')
-        self.model_name = os.getenv('GEMINI_MODEL', "gemini-1.5-flash")
+        self.model_name = os.getenv('GEMINI_MODEL', "gemini-2.0-flash")
         self.max_tokens = None  # 不限制，使用模型默认最大值
         self.temperature = 0.1
         self._MAX_REQUESTS_PER_MINUTE = 0  # 默认无限制

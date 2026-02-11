@@ -616,7 +616,16 @@
 - TASK-ID: TASK-DEP-11
 - 状态: completed
 - 改动文件: `docs/deployment/2026-02-11-82-cloudrun-hybrid.md`, `docs/2026-02-10-project-audit.md`, `/etc/systemd/system/manga-translator.service`（82 远端）
-- 接口影响: 无外部 API 契约变更；Cloud Run 资源从 `2Gi` 升级到 `4Gi` 解决实图翻译 OOM 500；82 云执行地址固定到新服务域名
+- 接口影响: 无外部 API 契约变更；Cloud Run 资源从 `2Gi` 升级到 `4Gi` 完成首轮 OOM 收敛与链路连通验证；82 云执行地址固定到新服务域名
 - 验证命令: `gcloud run services update manga-translator-compute --region=europe-west1 --memory=4Gi --cpu=2 --concurrency=1`、`curl https://manga-translator-compute-177058129447.europe-west1.run.app/`、`curl -F image=@... https://.../internal/translate/page`（82 远端）
-- 验证结果: pass（revision `manga-translator-compute-00011-wqp` Ready；`GET /` 200；82->Cloud Run 实图请求 `HTTP 200`）
+- 验证结果: pass（revision `manga-translator-compute-00011-wqp` Ready；`GET /` 200；82->Cloud Run 小图请求 `HTTP 200`）
 - 提交哈希: f5dfabe
+
+## TASK-DEP-12
+- TASK-ID: TASK-DEP-12
+- 状态: completed
+- 改动文件: `manga_translator/translators/gemini.py`, `manga_translator/translators/gemini_hq.py`, `manga_translator/translators/keys.py`, `manga_translator/translators/common.py`, `docs/deployment/2026-02-11-82-cloudrun-hybrid.md`, `docs/2026-02-10-project-audit.md`
+- 接口影响: 无外部 API 契约变更；修复默认 Gemini 模型失效（`404 model not found`）并将 Cloud Run 计算实例规格升级到 `8Gi/4CPU/900s` 以收敛实图 OOM/503
+- 验证命令: `gcloud run services update manga-translator-compute --region=europe-west1 --update-env-vars GEMINI_MODEL=gemini-2.0-flash`、`gcloud run services update manga-translator-compute --region=europe-west1 --memory=8Gi --cpu=4 --concurrency=1 --timeout=900`、`gcloud logging read ... revision=manga-translator-compute-00014-5qf`
+- 验证结果: pass（revision `manga-translator-compute-00014-5qf` Ready；`GET /` 200；OOM 告警消失）
+- 提交哈希: N/A

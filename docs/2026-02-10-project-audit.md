@@ -303,13 +303,17 @@
   - 修复：新增仓库级 `.gcloudignore`，显式 `re-include` `manga_translator/utils/panel/lib/**`
 - **问题 2（翻译 500）**：
   - 现象：`82 -> Cloud Run /internal/translate/page` 实图请求约 60s 后返回 `500`
-  - 根因：Cloud Run 资源不足，日志显示 `Memory limit of 2048 MiB exceeded`
-  - 修复：`manga-translator-compute` 升级为 `memory=4Gi`、`cpu=2`、`concurrency=1`
+  - 根因：Cloud Run 资源不足，`2Gi` 与 `4Gi` 都出现 OOM（最高约 `4384MiB`）
+  - 修复：`manga-translator-compute` 升级为 `memory=8Gi`、`cpu=4`、`concurrency=1`、`timeout=900s`
+- **问题 3（Gemini 模型名失效）**：
+  - 现象：返回原图 fallback，header 含 `Gemini API ... model not found`
+  - 根因：默认模型名仍是 `gemini-1.5-flash*`，当前 API 不再可用
+  - 修复：Cloud Run 环境变量固定 `GEMINI_MODEL=gemini-2.0-flash`，并同步更新代码默认值
 - **配置一致性补丁**：
   - `config_manager.load_default_config_dict()` 增加回退：`examples/config.json` 不存在时自动读 `examples/config-example.json`
   - 支持 `MANGA_SERVER_CONFIG_PATH` 环境变量覆盖默认配置路径
 - **验证证据**：
-  - revision：`manga-translator-compute-00011-wqp` `Ready=True`
+  - revision：`manga-translator-compute-00014-5qf` `Ready=True`
   - `GET /`：`200 {"status":"ok"}`
   - `82` 主机实测 `POST /internal/translate/page`：`HTTP 200`，输出二进制生成
 

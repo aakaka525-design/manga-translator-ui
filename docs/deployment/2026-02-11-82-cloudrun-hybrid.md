@@ -31,9 +31,10 @@ Cloud Run 计算服务（compute-only，不加载 scraper）：
 
 Cloud Run 推荐资源（已实测）：
 
-- `memory=4Gi`（`2Gi` 在真实翻译请求下会触发 OOM）
-- `cpu=2`
+- `memory=8Gi`（`2Gi` 与 `4Gi` 在真实漫画页都出现 OOM）
+- `cpu=4`
 - `concurrency=1`
+- `timeout=900s`（单页重型推理+远端模型调用需要更长超时窗口）
 - `maxScale=2`（按配额与峰值再调）
 
 ## 章节失败边界语义
@@ -109,4 +110,8 @@ Cloud Run 推荐资源（已实测）：
   - `MANGA_CLOUDRUN_EXEC_URL=https://manga-translator-compute-177058129447.europe-west1.run.app`
 - 实测结果（82 -> Cloud Run `POST /internal/translate/page`）：
   - `2Gi` 内存时：返回 `500`，Cloud Run 日志报 `Memory limit exceeded`
-  - 升级到 `4Gi` 后：返回 `200`，可产出输出二进制（同链路可用）
+  - `4Gi` 内存时：真实漫画页仍可能 OOM（日志峰值约 `4384MiB`）
+  - 升级到 `8Gi/4CPU/900s` 后：链路稳定，无 OOM 告警
+- Gemini 模型约束（2026-02-11）：
+  - 旧默认 `gemini-1.5-flash*` 在当前 Gemini API 上会返回 `404 model not found`
+  - 生产建议固定：`GEMINI_MODEL=gemini-2.0-flash`
