@@ -20,13 +20,14 @@
 - `MANGA_TRANSLATE_EXECUTION_BACKEND=local|cloudrun`
 - `MANGA_CLOUDRUN_EXEC_URL=https://<cloud-run-service-url>`
 - `MANGA_INTERNAL_API_TOKEN=<internal-token>`
-- `MANGA_TRANSLATE_EXECUTOR_MAX_RETRIES=2`
+- `MANGA_CLOUDRUN_EXECUTOR_RETRIES=2`
 - `MANGA_CLOUDRUN_TIMEOUT_SEC=120`
 
-Cloud Run 计算服务：
+Cloud Run 计算服务（compute-only，不加载 scraper）：
 
 - `MANGA_INTERNAL_API_TOKEN=<same-token>`
 - `MANGA_TRANSLATE_EXECUTION_BACKEND=local`
+- `MANGA_CLOUDRUN_COMPUTE_ONLY=1`
 
 ## 章节失败边界语义
 

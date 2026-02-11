@@ -593,3 +593,12 @@
 - 验证命令: `curl -I http://82.22.36.81/`、`curl http://82.22.36.81/auth/status`、`curl http://82.22.36.81/api/v1/manga`、`systemctl status manga-translator.service nginx`
 - 验证结果: pass（`/` 200；`/signin` 200；`/auth/status` 200；未登录 `/api/v1/manga` 401；`manga-translator.service` 与 `nginx` active）
 - 提交哈希: N/A
+
+## TASK-DEP-09
+- TASK-ID: TASK-DEP-09
+- 状态: completed
+- 改动文件: `manga_translator/server/cloudrun_compute_main.py`, `packaging/Dockerfile`, `/etc/systemd/system/manga-translator.service`（82 远端）
+- 接口影响: 无外部 API 契约变更；Cloud Run 改为 compute-only 启动（仅 `/internal/translate/*` + `/` 健康），显式排除 scraper 模块加载
+- 验证命令: `gcloud auth list --filter=status:ACTIVE`、`gcloud run services describe manga-translator-compute --region europe-west1`、`curl https://manga-translator-compute-olzq5mxmza-ew.a.run.app/`、`systemctl status manga-translator.service`（82）
+- 验证结果: pass（active account=`juniya1314@gmail.com`；Cloud Run revision `manga-translator-compute-00004-wq6` Ready=True；82 服务已切换 `MANGA_TRANSLATE_EXECUTION_BACKEND=cloudrun`）
+- 提交哈希: N/A

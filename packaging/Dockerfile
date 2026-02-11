@@ -89,12 +89,16 @@ RUN if [ "$BUILD_TYPE" = "gpu" ]; then \
         pip install --no-cache-dir -r /tmp/requirements_cpu_no_pydensecrf.txt; \
     fi
 
+# 爬虫依赖在某些 requirements 变体中可能缺失，镜像内强制补齐
+RUN pip install --no-cache-dir beautifulsoup4
+
 # 创建必要的目录（不覆盖已存在的目录）
 RUN mkdir -p /app/result /app/models /app/logs
 
 # 设置环境变量
 ENV PYTHONUNBUFFERED=1
 ENV MANGA_TRANSLATOR_WEB_SERVER=true
+ENV MANGA_CLOUDRUN_COMPUTE_ONLY=0
 
 # 暴露端口
 EXPOSE 8000
@@ -103,5 +107,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/ || exit 1
 
-# 启动命令
-CMD ["python", "-m", "manga_translator", "web", "--host", "0.0.0.0", "--port", "8000"]
+# 启动命令（Cloud Run 计算服务可切换为 compute-only 入口）
+CMD ["/bin/sh", "-c", "if [ \"${MANGA_CLOUDRUN_COMPUTE_ONLY:-0}\" = \"1\" ]; then exec uvicorn manga_translator.server.cloudrun_compute_main:app --host 0.0.0.0 --port ${PORT:-8000}; else exec python -m manga_translator web --host 0.0.0.0 --port ${PORT:-8000}; fi"]
