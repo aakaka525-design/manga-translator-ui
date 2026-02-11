@@ -610,7 +610,7 @@
 - 接口影响: 无外部 API 契约变更；修复 Cloud Build 源上传遗漏模块导致 Cloud Run 启动失败；补齐默认配置回退与配置路径覆盖能力
 - 验证命令: `pytest -q tests/test_runtime_gpu_lazy_init.py tests/test_v1_translate_concurrency.py`、`gcloud beta builds log --stream 57767ad8-aadd-4b58-807c-c52173924869`
 - 验证结果: pass（测试 `10 passed`；镜像 `20260211-164747-gcloudignore-fix` 构建并推送成功）
-- 提交哈希: N/A
+- 提交哈希: f5dfabe
 
 ## TASK-DEP-11
 - TASK-ID: TASK-DEP-11
@@ -619,4 +619,4 @@
 - 接口影响: 无外部 API 契约变更；Cloud Run 资源从 `2Gi` 升级到 `4Gi` 解决实图翻译 OOM 500；82 云执行地址固定到新服务域名
 - 验证命令: `gcloud run services update manga-translator-compute --region=europe-west1 --memory=4Gi --cpu=2 --concurrency=1`、`curl https://manga-translator-compute-177058129447.europe-west1.run.app/`、`curl -F image=@... https://.../internal/translate/page`（82 远端）
 - 验证结果: pass（revision `manga-translator-compute-00011-wqp` Ready；`GET /` 200；82->Cloud Run 实图请求 `HTTP 200`）
-- 提交哈希: N/A
+- 提交哈希: f5dfabe
