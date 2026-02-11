@@ -275,6 +275,25 @@
 
 ---
 
+### 22. 82 生产部署实测（2026-02-11）
+
+- **状态**：✅ 82 前后端同机部署已上线；⏳ Cloud Run 计算服务待 GCP 项目参数与 `gcloud` 登录态
+- **实操结果**：
+  - 服务器环境：Ubuntu 24，已安装 `python3-venv`、`nginx`、Node `v20.20.0`
+  - 代码来源：`aakaka525-design/manga-translator-ui`，部署提交 `73012f0`
+  - 服务状态：`manga-translator.service` active，`nginx` active
+  - 外部访问：
+    - `GET /` -> `200`
+    - `GET /signin` -> `200`
+    - `GET /auth/status` -> `200`（`need_setup=true`）
+    - `GET /api/v1/manga`（未登录）-> `401`（鉴权符合预期）
+- **现场修复**：
+  - 依赖补齐：`beautifulsoup4`（修复 `ModuleNotFoundError: bs4`）
+  - 路径权限：`/opt/dict -> /opt/manga-translator/dict`（修复 `PermissionError: /opt/dict`）
+  - 端口冲突：停止旧容器 `manhua-translator-web-1` / `manhua-translator-api-1`，释放 `80/8000` 给 systemd+nginx
+
+---
+
 ## 修复优先级路线图（建议）
 
 | 阶段 | 任务 | 预估工时 |

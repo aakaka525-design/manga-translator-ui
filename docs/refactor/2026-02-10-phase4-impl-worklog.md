@@ -584,3 +584,12 @@
 - 验证命令: `rg -n "安全加固基线|PermitRootLogin no|PasswordAuthentication no|Secret Manager|X-Internal-Token" docs/deployment/2026-02-11-82-cloudrun-hybrid.md`
 - 验证结果: pass
 - 提交哈希: e364550
+
+## TASK-DEP-08
+- TASK-ID: TASK-DEP-08
+- 状态: completed（82 已上线，Cloud Run 待项目参数）
+- 改动文件: 无仓库代码改动（远端实操：`82.22.36.81` 部署）
+- 接口影响: 无 API 契约变更；`/`、`/signin`、`/auth/status`、`/api/v1/manga` 在 82 入口可用
+- 验证命令: `curl -I http://82.22.36.81/`、`curl http://82.22.36.81/auth/status`、`curl http://82.22.36.81/api/v1/manga`、`systemctl status manga-translator.service nginx`
+- 验证结果: pass（`/` 200；`/signin` 200；`/auth/status` 200；未登录 `/api/v1/manga` 401；`manga-translator.service` 与 `nginx` active）
+- 提交哈希: N/A
