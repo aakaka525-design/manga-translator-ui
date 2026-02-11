@@ -228,7 +228,7 @@
   - 诊断脚本（`test_vue_api_path.py`、`test_vue_api_path_timed.py`、`test_deep_diagnosis.py`）统一先做 runtime 初始化，并输出 `runtime source/use_gpu/translator.device`。
 - **验证证据**：
   - 定向回归：`pytest -q tests/test_runtime_gpu_lazy_init.py tests/test_v1_translate_concurrency.py tests/test_v1_routes.py` → `36 passed`
-  - 全量回归：`pytest -q` → `121 passed, 1 skipped`
+  - 全量回归：`pytest -q` → `122 passed, 1 skipped`
   - 实图对照（同一张 `chapter-1/001.jpg`）：
     - API：`test_vue_api_path_timed.py` → `TOTAL_get_ctx=57.11s`, `translator.device=mps`
     - Qt/CLI：`test_qt_cli_path_timed.py` → `TOTAL_translate_batch=55.96s`, `translator.device=mps`

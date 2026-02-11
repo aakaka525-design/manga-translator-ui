@@ -510,5 +510,5 @@
 - 改动文件: `manga_translator/server/core/task_manager.py`, `manga_translator/server/main.py`, `manga_translator/server/request_extraction.py`, `tests/test_runtime_gpu_lazy_init.py`, `tests/test_v1_routes.py`, `test_vue_api_path.py`, `test_vue_api_path_timed.py`, `test_deep_diagnosis.py`, `docs/2026-02-10-project-audit.md`, `docs/refactor/2026-02-10-phase4-impl-worklog.md`
 - 接口影响: 无新增/删除 API；内部 runtime 初始化策略增强为 lazy + startup 双兜底，确保 API 核心直调链路不因未初始化回落 CPU
 - 验证命令: `pytest -q tests/test_runtime_gpu_lazy_init.py tests/test_v1_translate_concurrency.py tests/test_v1_routes.py && pytest -q && /usr/bin/time -p python test_vue_api_path_timed.py --runs 1 --image manga_translator/server/data/raw/isekai-dragondick-knight-commander/chapter-1/001.jpg --output result/test_vue_api_timed_001_phasefix.jpg && /usr/bin/time -p python test_qt_cli_path_timed.py --runs 1 --image manga_translator/server/data/raw/isekai-dragondick-knight-commander/chapter-1/001.jpg --output result/test_qt_cli_timed_001_phasefix.jpg`
-- 验证结果: pass（`36 passed`；全量 `121 passed, 1 skipped`；实图 API `TOTAL_get_ctx=57.11s, device=mps`；Qt/CLI `TOTAL_translate_batch=55.96s, device=mps`；耗时比 `1.02 <= 1.3`；两侧均成功产图）
-- 提交哈希: N/A
+- 验证结果: pass（`37 passed`；全量 `122 passed, 1 skipped`；实图 API `TOTAL_get_ctx=57.11s, device=mps`；Qt/CLI `TOTAL_translate_batch=55.96s, device=mps`；耗时比 `1.02 <= 1.3`；两侧均成功产图）
+- 提交哈希: eb887c3
