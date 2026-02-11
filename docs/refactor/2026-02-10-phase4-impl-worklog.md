@@ -646,4 +646,4 @@
 - 接口影响: 无 API 契约变更；执行 Cloud Run GPU 切换验证，确认当前项目 GPU 配额为 0（有/无 zonal redundancy 均不可用）
 - 验证命令: `gcloud run services update manga-translator-compute --region=europe-west1 --gpu=1 --gpu-type=nvidia-l4 ...`、`gcloud run deploy manga-translator-compute-gpu-test --region=us-central1 --gpu=1 --gpu-type=nvidia-l4 ...`、`gcloud beta quotas preferences create ... --quota-id=NvidiaL4GpuAllocNoZonalRedundancyPerProjectRegion ...`、`gcloud beta quotas preferences create ... --quota-id=NvidiaRtxPro6000GpuAllocNoZonalRedundancyPerProjectRegion ...`、`gcloud beta quotas preferences describe run-l4-nozr-uscentral1 --project=manga-translator-2602111442`、`gcloud beta quotas preferences describe run-rtx-nozr-uscentral1 --project=manga-translator-2602111442`
 - 验证结果: blocked（L4/RTX 跨区域申请均 `preferredValue=1` 但 `grantedValue=0`）
-- 提交哈希: N/A
+- 提交哈希: a75927b
