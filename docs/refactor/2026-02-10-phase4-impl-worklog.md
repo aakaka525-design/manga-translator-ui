@@ -151,7 +151,7 @@
 - 接口影响: parser async 路由通过 `asyncio.to_thread` 执行阻塞抓取，避免直接阻塞事件循环
 - 验证命令: `pytest -q tests/test_v1_scraper_phase4.py -k 'thread_offload'`
 - 验证结果: pass
-- 提交哈希: N/A
+- 提交哈希: 808e00a
 
 ## FIX-005
 - TASK-ID: FIX-005
