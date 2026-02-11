@@ -12,3 +12,9 @@ frontend/node_modules/
 # Runtime modules required by cloudrun_compute_main import path.
 !manga_translator/utils/panel/lib/
 !manga_translator/utils/panel/lib/**
+
+# Runtime assets required by rendering/translation.
+!dict/
+!dict/**
+!fonts/
+!fonts/**

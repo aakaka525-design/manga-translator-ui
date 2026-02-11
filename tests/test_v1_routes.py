@@ -783,6 +783,40 @@ def test_internal_translate_page_requires_internal_token(monkeypatch: pytest.Mon
         assert response.status_code == 401
 
 
+def test_internal_translate_page_encodes_non_latin_headers(monkeypatch: pytest.MonkeyPatch, patch_services):
+    monkeypatch.setenv("MANGA_INTERNAL_API_TOKEN", "secret-token")
+
+    async def _fake_translate_payload(*args, **kwargs):
+        _ = (args, kwargs)
+        return b"translated-image", {
+            "regions_count": 1,
+            "output_changed": True,
+            "fallback_used": True,
+            "fallback_reason": "最后一次错误: 未知错误",
+            "no_change_reason": "fallback_copy",
+            "failure_stage": "context",
+            "stage_elapsed_ms": {"total": 12.5},
+            "page_translation_text": "你好，世界",
+        }
+
+    monkeypatch.setattr(v1_translate, "_translate_payload_via_temp_files", _fake_translate_payload)
+
+    app = FastAPI()
+    app.include_router(v1_translate.internal_router)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/internal/translate/page",
+            headers={"X-Internal-Token": "secret-token"},
+            files={"image": ("001.jpg", b"raw-image", "image/jpeg")},
+        )
+
+    assert response.status_code == 200
+    assert response.content == b"translated-image"
+    assert v1_translate._decode_header_value(response.headers.get("x-fallback-reason")) == "最后一次错误: 未知错误"
+    assert v1_translate._decode_header_value(response.headers.get("x-translation-text")) == "你好，世界"
+
+
 def test_build_context_translations_uses_latest_three():
     values = ["page-1", "page-2", "", None, "page-3", "page-4", "page-5"]
     assert v1_translate._build_context_translations(values) == ["page-3", "page-4", "page-5"]

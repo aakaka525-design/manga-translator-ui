@@ -319,6 +319,22 @@
 
 ---
 
+### 24. Cloud Run 复测收敛（2026-02-11 晚）
+
+- **状态**：⚠️ 部分完成（稳定性修复完成，性能仍需架构决策）
+- **已完成修复**：
+  - `.gcloudignore` 显式放行 `dict/**`、`fonts/**`、`manga_translator/utils/panel/lib/**`，修复运行时资源缺失。
+  - `internal/translate/page` 响应头增加 ASCII 安全编码，修复 `UnicodeEncodeError` 导致的 500。
+  - Gemini 默认模型改为 `gemini-2.0-flash`（代码默认值 + Cloud Run 环境变量一致）。
+  - Cloud Run 更新到 revision `manga-translator-compute-00016-x5x`（8Gi/4CPU/900s）。
+- **当前瓶颈**：
+  - 实图单页在 CPU Cloud Run 路径耗时极长（> 420s 客户端超时），说明“计算云化但无 GPU”仍不满足目标时延。
+- **结论**：
+  - 稳定性类报错（模块缺失、模型 404、Header 编码 500）已定位并修复。
+  - 性能问题已收敛到基础算力约束，下一步需在“Cloud Run GPU 常驻”与“继续 82 本机计算”之间做成本/时延取舍。
+
+---
+
 ## 修复优先级路线图（建议）
 
 | 阶段 | 任务 | 预估工时 |

@@ -36,6 +36,10 @@ Cloud Run 推荐资源（已实测）：
 - `concurrency=1`
 - `timeout=900s`（单页重型推理+远端模型调用需要更长超时窗口）
 - `maxScale=2`（按配额与峰值再调）
+- 镜像打包必须包含：
+  - `dict/**`（HQ prompt 与系统提示词）
+  - `fonts/**`（渲染字体）
+  - `manga_translator/utils/panel/lib/**`（运行时依赖模块）
 
 ## 章节失败边界语义
 
@@ -115,3 +119,5 @@ Cloud Run 推荐资源（已实测）：
 - Gemini 模型约束（2026-02-11）：
   - 旧默认 `gemini-1.5-flash*` 在当前 Gemini API 上会返回 `404 model not found`
   - 生产建议固定：`GEMINI_MODEL=gemini-2.0-flash`
+- Header 编码约束（2026-02-11）：
+  - Cloud Run `internal/translate/page` 响应头需保证 ASCII 安全（非拉丁字符需编码），否则会触发 `UnicodeEncodeError` 并返回 500。

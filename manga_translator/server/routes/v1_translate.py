@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
@@ -197,6 +197,23 @@ def _to_non_negative_int(value: object, default: int = 0) -> int:
     except (TypeError, ValueError):
         return default
     return parsed if parsed >= 0 else default
+
+
+def _encode_header_value(value: object, limit: int = 2000) -> str:
+    """Encode arbitrary text into ASCII-safe header payload."""
+    text = str(value or "").replace("\r", " ").replace("\n", " ").strip()
+    if len(text) > limit:
+        text = text[:limit]
+    return quote(text, safe="-_.~")
+
+
+def _decode_header_value(value: object | None) -> str:
+    if value is None:
+        return ""
+    try:
+        return unquote(str(value))
+    except Exception:  # noqa: BLE001
+        return str(value)
 
 
 def _normalize_execution_mode(value: object, default: str = "auto") -> str:
@@ -448,7 +465,7 @@ class CloudRunTranslateExecutor(TranslateExecutor):
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(response.content)
-        stage_elapsed_raw = response.headers.get("x-stage-elapsed-ms", "{}")
+        stage_elapsed_raw = _decode_header_value(response.headers.get("x-stage-elapsed-ms", "{}"))
         try:
             stage_elapsed_ms = json.loads(stage_elapsed_raw)
             if not isinstance(stage_elapsed_ms, dict):
@@ -459,10 +476,10 @@ class CloudRunTranslateExecutor(TranslateExecutor):
         regions_count = _to_non_negative_int(response.headers.get("x-regions-count"), default=0)
         output_changed = _image_has_visible_changes(payload, output_path)
         fallback_used = response.headers.get("x-fallback-used", "0") == "1"
-        fallback_reason = response.headers.get("x-fallback-reason")
-        no_change_reason = response.headers.get("x-no-change-reason")
-        failure_stage = response.headers.get("x-failure-stage")
-        page_translation_text = response.headers.get("x-translation-text", "").strip()
+        fallback_reason = _decode_header_value(response.headers.get("x-fallback-reason")) or None
+        no_change_reason = _decode_header_value(response.headers.get("x-no-change-reason")) or None
+        failure_stage = _decode_header_value(response.headers.get("x-failure-stage")) or None
+        page_translation_text = _decode_header_value(response.headers.get("x-translation-text", "")).strip()
         remote_elapsed_ms = _to_non_negative_int(response.headers.get("x-remote-elapsed-ms"), default=0)
         cold_start = response.headers.get("x-cold-start", "0") == "1"
 
@@ -1423,13 +1440,13 @@ async def internal_translate_page(
         "x-regions-count": str(_to_non_negative_int(result.get("regions_count"), default=0)),
         "x-output-changed": "1" if bool(result.get("output_changed")) else "0",
         "x-fallback-used": "1" if bool(result.get("fallback_used")) else "0",
-        "x-fallback-reason": str(result.get("fallback_reason") or ""),
-        "x-no-change-reason": str(result.get("no_change_reason") or ""),
-        "x-failure-stage": str(result.get("failure_stage") or ""),
-        "x-stage-elapsed-ms": stage_elapsed_text,
+        "x-fallback-reason": _encode_header_value(result.get("fallback_reason") or ""),
+        "x-no-change-reason": _encode_header_value(result.get("no_change_reason") or ""),
+        "x-failure-stage": _encode_header_value(result.get("failure_stage") or ""),
+        "x-stage-elapsed-ms": _encode_header_value(stage_elapsed_text),
         "x-remote-elapsed-ms": str(elapsed_ms),
         "x-cold-start": "0",
-        "x-translation-text": context_text,
+        "x-translation-text": _encode_header_value(context_text),
     }
     return Response(content=output_bytes, media_type="application/octet-stream", headers=headers)
 
