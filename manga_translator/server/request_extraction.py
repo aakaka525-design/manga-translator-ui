@@ -325,7 +325,12 @@ def prepare_translator_params(config: Config, workflow: str = "normal") -> dict:
             try:
                 from manga_translator.server.core.task_manager import get_server_config
 
-                config.cli.use_gpu = bool(get_server_config().get('use_gpu', bool(config.cli.use_gpu)))
+                server_cfg = get_server_config()
+                if bool(server_cfg.get('_runtime_config_initialized', False)):
+                    config.cli.use_gpu = bool(server_cfg.get('use_gpu', bool(config.cli.use_gpu)))
+                else:
+                    # Runtime config not initialized yet: keep config file value.
+                    config.cli.use_gpu = bool(config.cli.use_gpu)
             except Exception:  # noqa: BLE001
                 config.cli.use_gpu = bool(config.cli.use_gpu)
         if hasattr(config.cli, 'attempts'):

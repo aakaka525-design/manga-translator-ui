@@ -62,6 +62,8 @@ _translator_params_hash = None  # 记录当前翻译器的参数哈希，用于�
 # 全局服务器配置（从启动参数设置）
 server_config = {
     'use_gpu': False,
+    '_runtime_config_initialized': False,
+    '_runtime_config_source': 'unknown',
     'verbose': False,
     'models_ttl': 0,
     'retry_attempts': None,

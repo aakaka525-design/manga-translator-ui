@@ -445,7 +445,33 @@ def test_prepare_translator_params_aligns_use_gpu_with_server_config(monkeypatch
 
     monkeypatch.setattr(
         "manga_translator.server.core.task_manager.get_server_config",
-        lambda: {"use_gpu": True},
+        lambda: {"use_gpu": True, "_runtime_config_initialized": True},
+    )
+    request_extraction.prepare_translator_params(config, workflow="normal")
+    assert config.cli.use_gpu is True
+
+
+def test_prepare_translator_params_keeps_config_gpu_when_runtime_not_initialized(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    config = SimpleNamespace(
+        cli=SimpleNamespace(
+            load_text=False,
+            template=False,
+            generate_and_export=False,
+            upscale_only=False,
+            colorize_only=False,
+            inpaint_only=False,
+            replace_translation=False,
+            use_gpu=True,
+            attempts=3,
+        ),
+        render=SimpleNamespace(font_path=None, enable_template_alignment=False),
+    )
+
+    monkeypatch.setattr(
+        "manga_translator.server.core.task_manager.get_server_config",
+        lambda: {"use_gpu": False, "_runtime_config_initialized": False},
     )
     request_extraction.prepare_translator_params(config, workflow="normal")
     assert config.cli.use_gpu is True

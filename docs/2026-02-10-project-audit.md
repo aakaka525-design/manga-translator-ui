@@ -200,6 +200,22 @@
 
 ---
 
+### 18. Web/API GPU 启动路径一致性（2026-02-11）
+
+- **状态**：✅ 已修复
+- **问题**：仅通过 `python -m manga_translator web` 走 `run_server()` 时会显式写入 `server_config.use_gpu`；直接 `uvicorn manga_translator.server.main:app` 启动可能落回默认 `False`。
+- **修复**：
+  - 新增运行时解析函数 `_resolve_runtime_use_gpu()`（优先级：CLI 显式 > `MT_USE_GPU` > `examples/config.json` > `False`）。
+  - 新增 startup 兜底 `_ensure_runtime_server_config()`，覆盖直接 `uvicorn` 启动路径。
+  - `prepare_translator_params()` 仅在 runtime 配置已初始化时覆盖 `cli.use_gpu`，未初始化保留配置文件值。
+- **验证证据**：
+  - `python -m manga_translator web ...` 日志：`运行时配置: use_gpu=True, source=run_server`
+  - `uvicorn manga_translator.server.main:app ...` 日志：`运行时配置: use_gpu=True, source=startup_auto`
+  - `MT_USE_GPU=false uvicorn ...` 日志：`运行时配置: use_gpu=False, source=startup_auto`
+- **影响**：不同启动方式下翻译链路 GPU 选择一致，避免诊断脚本/服务部署出现“同配置却走 CPU 慢路径”的偏差。
+
+---
+
 ## 修复优先级路线图（建议）
 
 | 阶段 | 任务 | 预估工时 |

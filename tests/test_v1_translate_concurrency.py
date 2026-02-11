@@ -56,4 +56,85 @@ def test_run_server_defaults_to_config_gpu_when_cli_flag_unspecified(monkeypatch
     server_main.run_server(args)
 
     assert task_manager.server_config["use_gpu"] is True
+    assert task_manager.server_config["_runtime_config_initialized"] is True
+    assert task_manager.server_config["_runtime_config_source"] == "run_server"
 
+
+def test_run_server_explicit_flag_overrides_env_and_config(monkeypatch: pytest.MonkeyPatch):
+    class _CliConfig:
+        use_gpu = True
+
+    class _Config:
+        cli = _CliConfig()
+
+    args = SimpleNamespace(
+        host="127.0.0.1",
+        port=8124,
+        use_gpu=False,
+        verbose=False,
+        models_ttl=0,
+        retry_attempts=None,
+        start_instance=False,
+        nonce=None,
+    )
+
+    server_main.nonce = "test-nonce"
+    monkeypatch.setenv("MT_USE_GPU", "true")
+    monkeypatch.setattr(server_main.config_manager, "load_default_config", lambda: _Config())
+    monkeypatch.setattr(server_main.config_manager, "admin_settings", {})
+    monkeypatch.setattr(server_main, "prepare", lambda _args: None)
+
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: None)
+
+    server_main.run_server(args)
+
+    assert task_manager.server_config["use_gpu"] is False
+    assert task_manager.server_config["_runtime_config_source"] == "run_server"
+
+
+def test_ensure_runtime_server_config_initializes_from_default_config(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class _CliConfig:
+        use_gpu = True
+
+    class _Config:
+        cli = _CliConfig()
+
+    monkeypatch.delenv("MT_USE_GPU", raising=False)
+    monkeypatch.setattr(server_main.config_manager, "load_default_config", lambda: _Config())
+    monkeypatch.setitem(task_manager.server_config, "use_gpu", False)
+    monkeypatch.setitem(task_manager.server_config, "_runtime_config_initialized", False)
+    monkeypatch.setitem(task_manager.server_config, "_runtime_config_source", "unknown")
+
+    resolved = server_main._ensure_runtime_server_config()
+
+    assert resolved is True
+    assert task_manager.server_config["use_gpu"] is True
+    assert task_manager.server_config["_runtime_config_initialized"] is True
+    assert task_manager.server_config["_runtime_config_source"] == "startup_auto"
+
+
+def test_ensure_runtime_server_config_prefers_env_over_default_config(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class _CliConfig:
+        use_gpu = True
+
+    class _Config:
+        cli = _CliConfig()
+
+    monkeypatch.setenv("MT_USE_GPU", "false")
+    monkeypatch.setattr(server_main.config_manager, "load_default_config", lambda: _Config())
+    monkeypatch.setitem(task_manager.server_config, "use_gpu", True)
+    monkeypatch.setitem(task_manager.server_config, "_runtime_config_initialized", False)
+    monkeypatch.setitem(task_manager.server_config, "_runtime_config_source", "unknown")
+
+    resolved = server_main._ensure_runtime_server_config()
+
+    assert resolved is False
+    assert task_manager.server_config["use_gpu"] is False
+    assert task_manager.server_config["_runtime_config_initialized"] is True
+    assert task_manager.server_config["_runtime_config_source"] == "startup_auto"

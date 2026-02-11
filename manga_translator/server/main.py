@@ -95,6 +95,13 @@ _system_initializer = None
 async def startup_event():
     """Initialize services on server startup"""
     global _account_service, _session_service, _permission_service, _audit_service, _system_initializer
+
+    from manga_translator.server.core.logging_manager import add_log
+
+    resolved_use_gpu = _ensure_runtime_server_config()
+    runtime_source = task_manager.server_config.get("_runtime_config_source", "unknown")
+    logger.info("Runtime config ready: use_gpu=%s source=%s", resolved_use_gpu, runtime_source)
+    add_log(f"运行时配置: use_gpu={resolved_use_gpu}, source={runtime_source}", "INFO")
     
     from manga_translator.server.core import (
         AccountService,
@@ -104,7 +111,6 @@ async def startup_event():
         init_middleware_services,
         init_system
     )
-    from manga_translator.server.core.logging_manager import add_log
     from manga_translator.server.routes.translation_auth import init_translation_auth
     
     # 添加启动日志
@@ -440,20 +446,49 @@ def init_translator(use_gpu=False, verbose=False):
     # 目前翻译器在首次请求时才会初始化
     pass
 
+
+def _resolve_runtime_use_gpu(explicit: bool | None) -> bool:
+    """Resolve runtime GPU flag with precedence: explicit > env > config > False."""
+    if explicit is not None:
+        return bool(explicit)
+
+    env_value = os.getenv("MT_USE_GPU")
+    if env_value is not None:
+        return str(env_value).strip().lower() in {"1", "true", "yes", "on"}
+
+    try:
+        default_config = config_manager.load_default_config()
+        return bool(getattr(getattr(default_config, "cli", None), "use_gpu", False))
+    except Exception:
+        return False
+
+
+def _ensure_runtime_server_config(explicit: bool | None = None) -> bool:
+    """Ensure runtime config is initialized for direct uvicorn startup paths."""
+    if bool(task_manager.server_config.get("_runtime_config_initialized", False)):
+        return bool(task_manager.server_config.get("use_gpu", False))
+
+    resolved_use_gpu = _resolve_runtime_use_gpu(explicit)
+    task_manager.server_config["use_gpu"] = bool(resolved_use_gpu)
+    task_manager.server_config["_runtime_config_initialized"] = True
+    task_manager.server_config["_runtime_config_source"] = "startup_auto"
+    logger.info(
+        "Runtime config auto-initialized: use_gpu=%s source=%s",
+        task_manager.server_config["use_gpu"],
+        task_manager.server_config["_runtime_config_source"],
+    )
+    return bool(task_manager.server_config["use_gpu"])
+
 def run_server(args):
     """启动 Web API 服务器（纯API模式，不带界面）"""
     import uvicorn
     
-    resolved_use_gpu = getattr(args, 'use_gpu', None)
-    if resolved_use_gpu is None:
-        try:
-            default_config = config_manager.load_default_config()
-            resolved_use_gpu = bool(getattr(getattr(default_config, 'cli', None), 'use_gpu', False))
-        except Exception:
-            resolved_use_gpu = False
+    resolved_use_gpu = _resolve_runtime_use_gpu(getattr(args, 'use_gpu', None))
 
     # 设置服务器配置（在 prepare 之前）
     task_manager.server_config['use_gpu'] = bool(resolved_use_gpu)
+    task_manager.server_config['_runtime_config_initialized'] = True
+    task_manager.server_config['_runtime_config_source'] = "run_server"
     task_manager.server_config['verbose'] = getattr(args, 'verbose', False)
     task_manager.server_config['models_ttl'] = getattr(args, 'models_ttl', 0)
     task_manager.server_config['retry_attempts'] = getattr(args, 'retry_attempts', None)

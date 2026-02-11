@@ -494,3 +494,12 @@
 - 验证命令: `python - <<'PY' (同一输入图分别跑 CLI 核心 translate_batch 与 API 核心 _translate_single_image，记录 elapsed/output/md5/nonzero diff) PY`
 - 验证结果: pass（CLI `54.058s`，API `48.590s`；两侧均产出图片；API `fallback_used=false`、`output_changed=true`；输出路径：`/tmp/mt_repro3/cli_001.jpg`、`/tmp/mt_repro3/api_001.jpg`）
 - 提交哈希: N/A
+
+## BUGFIX-TRANSLATE-019
+- TASK-ID: BUGFIX-TRANSLATE-019
+- 状态: completed
+- 改动文件: `manga_translator/server/main.py`, `manga_translator/server/core/task_manager.py`, `manga_translator/server/request_extraction.py`, `tests/test_v1_translate_concurrency.py`, `tests/test_v1_routes.py`, `docs/2026-02-10-project-audit.md`, `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: 无新增/删除 API；修复 Web/API 在不同启动方式下的 GPU 配置一致性（新增内部运行时标记 `_runtime_config_initialized`、`_runtime_config_source`），并避免 runtime 未初始化时错误覆盖 `cli.use_gpu`。
+- 验证命令: `pytest -q tests/test_v1_translate_concurrency.py tests/test_v1_routes.py && pytest -q && python -m manga_translator web --host 127.0.0.1 --port 8011 && python -m uvicorn manga_translator.server.main:app --host 127.0.0.1 --port 8012 && MT_USE_GPU=false python -m uvicorn manga_translator.server.main:app --host 127.0.0.1 --port 8013`（启动命令以后台短时启动+日志抓取方式执行）
+- 验证结果: pass（定向测试 `33 passed`；全量后端 `118 passed, 1 skipped`；启动日志分别为 `use_gpu=True, source=run_server`、`use_gpu=True, source=startup_auto`、`use_gpu=False, source=startup_auto`）
+- 提交哈希: N/A
