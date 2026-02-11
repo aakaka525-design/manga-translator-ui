@@ -628,4 +628,4 @@
 - 接口影响: 无外部 API 契约变更；修复默认 Gemini 模型失效（`404 model not found`）并将 Cloud Run 计算实例规格升级到 `8Gi/4CPU/900s` 以收敛实图 OOM/503
 - 验证命令: `gcloud run services update manga-translator-compute --region=europe-west1 --update-env-vars GEMINI_MODEL=gemini-2.0-flash`、`gcloud run services update manga-translator-compute --region=europe-west1 --memory=8Gi --cpu=4 --concurrency=1 --timeout=900`、`gcloud logging read ... revision=manga-translator-compute-00014-5qf`
 - 验证结果: pass（revision `manga-translator-compute-00014-5qf` Ready；`GET /` 200；OOM 告警消失）
-- 提交哈希: N/A
+- 提交哈希: 83c7669
