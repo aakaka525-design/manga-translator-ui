@@ -637,4 +637,4 @@
 - 接口影响: 无端点增删；`POST /internal/translate/page` 响应头改为 ASCII 安全编码（非拉丁文本编码后传输）并在 CloudRun executor 侧解码，修复 Unicode header 导致的 500
 - 验证命令: `pytest -q tests/test_v1_routes.py -k 'internal_translate_page_requires_internal_token or internal_translate_page_encodes_non_latin_headers'`、`gcloud builds submit ... be5dcc38-...`、`gcloud run services update ... --image ...:20260211-181400-headerfix`、`gcloud run services describe manga-translator-compute --region=europe-west1`
 - 验证结果: pass（新增测试通过；Cloud Run revision `manga-translator-compute-00016-x5x` Ready；`GEMINI_MODEL=gemini-2.0-flash` 生效）
-- 提交哈希: N/A
+- 提交哈希: d3b0fef
