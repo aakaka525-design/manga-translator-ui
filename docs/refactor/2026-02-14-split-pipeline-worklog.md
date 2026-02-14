@@ -148,4 +148,4 @@
 - 接口影响: 无
 - 验证命令: `git push personal main`、`git push origin main`
 - 验证结果: pass（按当前远端策略以 `personal/main` 为交付主路径；`origin/main` 403 记录为历史外部权限事件，不再作为阻塞）
-- 提交哈希: f8c9f35
+- 提交哈希: 8871508
