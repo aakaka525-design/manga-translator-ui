@@ -148,4 +148,4 @@
 - 接口影响: 无
 - 验证命令: `git push personal main`、`git push origin main`
 - 验证结果: partial（`personal/main` 推送成功；`origin/main` 于 2026-02-14 20:39:53 CST 返回 403：`Permission to hgmzhn/manga-translator-ui.git denied to aakaka525-design`）
-- 提交哈希: 待回填（push audit note commit）
+- 提交哈希: f8c9f35
