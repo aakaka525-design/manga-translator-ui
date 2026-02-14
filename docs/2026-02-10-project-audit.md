@@ -528,4 +528,4 @@
 - **收敛结论**：
   - 原“split 分支已实现但 main 未收口”问题已解除（`main` 已 merge）。
   - 原待办“前端降级提示 + 灰度证据”已补齐，可进入稳定维护态。
-  - 联调环境灰度复测作为后续补强项，单独追踪于 `TASK-SPLIT-009`（不与本地小样本实测混写）。
+  - 联调环境灰度复测已完成并关闭：`TASK-SPLIT-009 completed`（PPIO endpoint 的 detect/render/cache miss/split/unified 联调均通过）。

@@ -113,12 +113,12 @@
 ## TASK-SPLIT-009
 
 - TASK-ID: TASK-SPLIT-009
-- 状态: pending
-- 改动文件: N/A
+- 状态: completed
+- 改动文件: `test_split_pipeline_integration.py`（联调验证脚本执行）
 - 接口影响: 无
 - 验证命令: 联调环境灰度复测（82 + 远端计算服务）单图与10页章节
-- 验证结果: 待执行（本任务是上线前补强验证，不阻塞 TASK-SPLIT-008 完成定义）
-- 提交哈希: N/A
+- 验证结果: pass（PPIO endpoint 联调通过：Worker ready HTTP 200；`/detect` 通过且 `regions=16`/`region_index` 连续；`/render` 通过且 `x-pipeline-mode=split`；`CACHE_MISS` 返回 404；split 管线通过（约 21.5s）与 unified 基线通过（约 35.8s））
+- 提交哈希: 待回填（TASK-SPLIT-009 closeout commit）
 
 ## TASK-DOC-002
 

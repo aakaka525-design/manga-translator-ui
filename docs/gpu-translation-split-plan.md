@@ -533,4 +533,4 @@ assert success_count + failed_count == total_count   # 完整性: 每页必须�
   - `CH10_FILE_COUNT 10`
   - `CH10_ASSERT_SUM_OK True`
   - `CH10_ASSERT_ALL_SUCCESS True`
-- 联调环境复测不在本段闭环，独立追踪任务：`TASK-SPLIT-009`。
+- 联调环境复测已完成并关闭：`TASK-SPLIT-009`（PPIO endpoint 联调通过）。
