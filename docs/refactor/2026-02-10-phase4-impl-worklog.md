@@ -1268,3 +1268,12 @@
 - 验证命令: `curl -s -o /tmp/main1_smoke_{1..3}.bin -D /tmp/main1_smoke_{1..3}.h -X POST https://manga-translator-compute-fp6zarze5a-ew.a.run.app/internal/translate/page ...`（连续 3 次）
 - 验证结果: partial（3/3 `HTTP 200`，但 3/3 `x-fallback-used=1`，原因均为 `Gemini API key leaked`；10 页章节验收阻塞于新 key 轮换）
 - 提交哈希: N/A
+
+## TASK-SEC-01
+- TASK-ID: TASK-SEC-01
+- 状态: completed
+- 改动文件: `test_cloudrun_benchmark.py`, `test_split_pipeline_integration.py`, `deploy/cloudrun/deploy-compute.sh`, `docs/deployment/2026-02-14-deployment-registry.md`, `tests/test_split_ops_hardening.py`
+- 接口影响: 无 API 契约变化；仅修复诊断脚本安全与可移植性、Cloud Run 部署密钥注入方式、pytest 误收集风险
+- 验证命令: `pytest -q tests/test_split_ops_hardening.py`、`pytest --collect-only -q test_cloudrun_benchmark.py test_split_pipeline_integration.py test_qt_cli_path_timed.py`
+- 验证结果: pass（5 个防回归用例通过；三份诊断脚本不再被 pytest 收集测试用例）
+- 提交哈希: N/A
