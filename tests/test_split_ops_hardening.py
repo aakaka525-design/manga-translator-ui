@@ -45,3 +45,9 @@ def test_deployment_registry_doc_matches_secret_injection_strategy():
     registry_doc = _read("docs/deployment/2026-02-14-deployment-registry.md")
     assert "缺少 `GEMINI_API_KEY` 注入" not in registry_doc
     assert "Secret Manager" in registry_doc
+
+
+def test_readme_does_not_include_machine_bound_paths():
+    readme = _read("README.md")
+    assert "/Users/" not in readme
+    assert "C:\\Users\\" not in readme

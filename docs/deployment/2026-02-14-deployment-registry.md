@@ -79,11 +79,11 @@
 
 ## 密钥管理
 
-| 密钥 | 存储位置 | 建议 |
-|------|---------|------|
-| `MANGA_INTERNAL_API_TOKEN` | Cloud Run env var / 82 systemd env | 建议迁移到 Secret Manager |
-| `GEMINI_API_KEY` | Cloud Run env var / 82 `.env` | 建议迁移到 Secret Manager |
-| `PPIO_KEY` | 82 `.env` | 仅本地使用 |
+| 密钥 | 当前存储位置 | 备注 |
+|------|----------------|------|
+| `MANGA_INTERNAL_API_TOKEN` | Cloud Run service env / 82 systemd env | 82 与 Cloud Run 需保持同值；建议后续迁移 Cloud Run Secret Manager + 82 本机密文配置 |
+| `GEMINI_API_KEY` | Cloud Run Secret Manager（`--set-secrets`） / 82 `.env` | Cloud Run 禁止明文 env 注入；轮换时仅更新 Secret 版本 |
+| `PPIO_KEY` | 82 `.env` | 仅 82 本地使用，不注入 Cloud Run |
 
 ---
 
@@ -91,6 +91,6 @@
 
 | 脚本 | 用途 | 注意事项 |
 |------|------|---------|
-| `deploy/cloudrun/deploy-compute.sh` | Cloud Run GPU 部署 | 使用 `--set-secrets GEMINI_API_KEY=<secret>:<version>` 注入密钥 |
+| `deploy/cloudrun/deploy-compute.sh` | Cloud Run GPU 部署 | 使用 `--set-secrets GEMINI_API_KEY=<secret>:<version>`；必填 `GEMINI_API_KEY_SECRET`、可选 `GEMINI_API_KEY_SECRET_VERSION` |
 | `deploy/systemd/manga-translator.service` | 82 服务器 systemd 模板 | token/URL 为空，需手动填写 |
 | `deploy/nginx/manga-translator-82.conf` | 82 Nginx 反代模板 | 已包含 `/data/` 反代块 |

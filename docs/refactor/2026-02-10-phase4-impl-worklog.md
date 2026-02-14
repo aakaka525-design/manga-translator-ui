@@ -1277,3 +1277,12 @@
 - 验证命令: `pytest -q tests/test_split_ops_hardening.py`、`pytest --collect-only -q test_cloudrun_benchmark.py test_split_pipeline_integration.py test_qt_cli_path_timed.py`
 - 验证结果: pass（5 个防回归用例通过；三份诊断脚本不再被 pytest 收集测试用例）
 - 提交哈希: N/A
+
+## TASK-DIAG-01
+- TASK-ID: TASK-DIAG-01
+- 状态: completed
+- 改动文件: `.gitignore`, `docs/deployment/2026-02-14-deployment-registry.md`, `docs/INDEX.md`, `scripts/diagnostics/*`, `test_*.py` wrappers, `tests/test_split_ops_hardening.py`, `tests/test_diagnostics_scripts.py`
+- 接口影响: 无 API 契约变化；仅收敛文档口径、诊断脚本目录、pytest 语义隔离、脚本可移植性与仓库噪声治理
+- 验证命令: `pytest -q tests/test_diagnostics_scripts.py tests/test_split_ops_hardening.py`、`pytest --collect-only -q test_cloudrun_benchmark.py test_split_pipeline_integration.py test_qt_cli_path_timed.py`、`git check-ignore -v packaging/Dockerfile.test report/jscpd-report.json`
+- 验证结果: pass（诊断脚本防回归通过，root wrapper 不再被 pytest 收集，噪声文件命中忽略策略）
+- 提交哈希: N/A

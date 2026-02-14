@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Compatibility wrapper for scripts/diagnostics/cloudrun_benchmark.py."""
+"""Compatibility wrapper for scripts/diagnostics/qt_cli_path_timed.py."""
 
 from pathlib import Path
 import runpy
@@ -13,7 +13,7 @@ def main() -> int:
         Path(__file__).resolve().parent
         / "scripts"
         / "diagnostics"
-        / "cloudrun_benchmark.py"
+        / "qt_cli_path_timed.py"
     )
     runpy.run_path(str(target), run_name="__main__")
     return 0

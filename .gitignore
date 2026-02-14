@@ -234,7 +234,11 @@ manga_translator/server/data/
 MangaJaNaiConverterGui/
 
 # Scripts directory (脚本目录)
-scripts/
+# Keep historical local scripts ignored by default, but track curated diagnostics and runtime checks.
+scripts/*
+!scripts/diagnostics/
+!scripts/diagnostics/**
+scripts/diagnostics/__pycache__/
 
 # CatieCli directory (克隆的外部仓库)
 CatieCli/
@@ -255,3 +259,10 @@ CLAUDE.md
 # Cherry Studio (外部项目)
 cherry-studio-main/
 .worktrees/
+
+# perf artifacts (images kept local only)
+docs/perf/artifacts/
+
+# Local diagnostics/build noise
+packaging/Dockerfile.test
+report/jscpd-report.json
