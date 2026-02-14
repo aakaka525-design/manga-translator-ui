@@ -18,7 +18,7 @@
 - 接口影响: 无
 - 验证命令: `git worktree list && git -C /Users/xa/Desktop/projiect/worktrees/manga-translator-ui_split-20260214 branch --show-current`
 - 验证结果: pass（新工作树已创建，分支 `codex/split-pipeline-20260214`）
-- 提交哈希: N/A
+- 提交哈希: 09b9383
 
 ## TASK-DOC-001
 
@@ -28,7 +28,7 @@
 - 接口影响: 文档新增 internal split pipeline 契约说明
 - 验证命令: `ls docs/plans docs/refactor docs/api`
 - 验证结果: pass
-- 提交哈希: N/A
+- 提交哈希: 09b9383
 
 ## TASK-SPLIT-001
 
@@ -38,7 +38,7 @@
 - 接口影响: 新增 CtxCache 组件（`put/get/pop` + reason 语义）
 - 验证命令: `pytest -q tests/test_split_pipeline.py::test_ctx_cache_reason_codes`
 - 验证结果: pass
-- 提交哈希: N/A
+- 提交哈希: 09b9383
 
 ## TASK-SPLIT-002
 
@@ -48,7 +48,7 @@
 - 接口影响: 新增 `POST /internal/translate/detect`，返回 `task_id/ttl/image_hash/regions/from_lang/elapsed_ms`
 - 验证命令: `pytest -q tests/test_split_pipeline.py::test_internal_detect_returns_region_index`
 - 验证结果: pass
-- 提交哈希: N/A
+- 提交哈希: 09b9383
 
 ## TASK-SPLIT-003
 
@@ -58,7 +58,7 @@
 - 接口影响: 新增 `POST /internal/translate/render`，实现 `401 -> 503 -> 404 -> 410 -> 422 -> 400` 状态机
 - 验证命令: `pytest -q tests/test_split_pipeline.py::test_internal_render_state_machine`
 - 验证结果: pass
-- 提交哈希: N/A
+- 提交哈希: 09b9383
 
 ## TASK-SPLIT-004
 
@@ -68,7 +68,7 @@
 - 接口影响: CloudRun executor 新增 split 协调链路（detect -> local phase2 -> render）并对 cache 状态自动降级 unified
 - 验证命令: `pytest -q tests/test_split_pipeline.py::test_cloudrun_split_falls_back_to_unified_on_cache_state`
 - 验证结果: pass
-- 提交哈希: N/A
+- 提交哈希: 09b9383
 
 ## TASK-SPLIT-005
 
@@ -78,7 +78,7 @@
 - 接口影响: 新增 `translate_pipeline_mode=unified|split`（默认 unified）并支持 `MANGA_TRANSLATE_PIPELINE_MODE`
 - 验证命令: `pytest -q tests/test_v1_translate_concurrency.py tests/test_v1_routes.py`
 - 验证结果: pass
-- 提交哈希: N/A
+- 提交哈希: 09b9383
 
 ## TASK-SPLIT-006
 
@@ -88,7 +88,7 @@
 - 接口影响: 页级事件补充 `pipeline_mode`（含 `fallback_to_unified`），保持 `success/partial/error` 章节语义不变
 - 验证命令: `pytest -q tests/test_v1_translate_pipeline.py tests/test_v1_routes.py`
 - 验证结果: pass
-- 提交哈希: N/A
+- 提交哈希: 09b9383
 
 ## TASK-SPLIT-007
 
@@ -98,7 +98,7 @@
 - 接口影响: 新增 split pipeline 自动化回归（region_index、状态机、串行 gate、cache fallback）
 - 验证命令: `pytest -q tests/test_split_pipeline.py tests/test_v1_translate_pipeline.py tests/test_v1_translate_concurrency.py tests/test_v1_routes.py`
 - 验证结果: pass（57 passed）
-- 提交哈希: N/A
+- 提交哈希: 09b9383
 
 ## TASK-SPLIT-008
 
@@ -118,7 +118,7 @@
 - 接口影响: 文档补充 split 落地与回归证据
 - 验证命令: `rg -n "split|internal/translate/detect|internal/translate/render|fallback_to_unified" docs/gpu-translation-split-plan.md docs/2026-02-10-project-audit.md docs/refactor/2026-02-14-split-pipeline-worklog.md`
 - 验证结果: pass
-- 提交哈希: N/A
+- 提交哈希: 09b9383
 
 ## TASK-GIT-001
 
