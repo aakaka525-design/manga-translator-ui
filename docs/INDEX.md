@@ -16,6 +16,8 @@
 - Phase4 评估：[`docs/plans/2026-02-10-phase4-priority-evaluation.md`](plans/2026-02-10-phase4-priority-evaluation.md)
 - Phase4 S1 实施：[`docs/plans/2026-02-10-phase4-s1-implementation.md`](plans/2026-02-10-phase4-s1-implementation.md)
 - 文档全仓库优化：[`docs/plans/2026-02-10-doc-optimization.md`](plans/2026-02-10-doc-optimization.md)
+- Split Pipeline 基线方案：[`docs/gpu-translation-split-plan.md`](gpu-translation-split-plan.md)
+- Split Pipeline 实施计划：[`docs/plans/2026-02-14-gpu-translation-split-implementation.md`](plans/2026-02-14-gpu-translation-split-implementation.md)
 
 ## API Contract（Single Source of Truth）
 
@@ -23,6 +25,7 @@
 - Scraper Phase2：[`docs/api/2026-02-10-v1-scraper-phase2-contract.md`](api/2026-02-10-v1-scraper-phase2-contract.md)
 - Scraper Phase3：[`docs/api/2026-02-10-v1-scraper-phase3-contract.md`](api/2026-02-10-v1-scraper-phase3-contract.md)
 - Scraper Phase4 S1：[`docs/api/2026-02-10-v1-scraper-phase4-s1-contract.md`](api/2026-02-10-v1-scraper-phase4-s1-contract.md)
+- Split Pipeline Internal Contract：[`docs/api/2026-02-14-internal-split-pipeline-contract.md`](api/2026-02-14-internal-split-pipeline-contract.md)
 
 ## 决策记录
 

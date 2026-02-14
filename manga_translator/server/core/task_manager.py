@@ -47,6 +47,7 @@ def _normalize_choice(value: object, default: str, choices: set[str]) -> str:
 CHAPTER_EXECUTION_MODE_CHOICES = {"single_page", "batch_pipeline", "auto"}
 RUNTIME_PROFILE_CHOICES = {"off", "basic"}
 TRANSLATE_EXECUTION_BACKEND_CHOICES = {"local", "cloudrun"}
+TRANSLATE_PIPELINE_MODE_CHOICES = {"unified", "split"}
 _ENV_TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
@@ -77,6 +78,11 @@ server_config = {
         'MANGA_TRANSLATE_EXECUTION_BACKEND',
         'local',
         TRANSLATE_EXECUTION_BACKEND_CHOICES,
+    ),
+    'translate_pipeline_mode': _env_choice(
+        'MANGA_TRANSLATE_PIPELINE_MODE',
+        'unified',
+        TRANSLATE_PIPELINE_MODE_CHOICES,
     ),
     'chapter_execution_mode': _env_choice(
         'MANGA_V1_CHAPTER_EXECUTION_MODE',
@@ -401,6 +407,17 @@ def update_server_config(config: dict):
         server_config['runtime_profile'] = parsed
         if old_value != parsed:
             logger.info(f"运行时性能日志级别已更新: {old_value} -> {parsed}")
+
+    if 'translate_pipeline_mode' in config:
+        old_value = server_config.get('translate_pipeline_mode', 'unified')
+        parsed = _normalize_choice(
+            config.get('translate_pipeline_mode'),
+            old_value,
+            TRANSLATE_PIPELINE_MODE_CHOICES,
+        )
+        server_config['translate_pipeline_mode'] = parsed
+        if old_value != parsed:
+            logger.info(f"翻译执行管线模式已更新: {old_value} -> {parsed}")
     
     for key in ['use_gpu', 'verbose', 'models_ttl', 'retry_attempts', 'admin_password']:
         if key in config:

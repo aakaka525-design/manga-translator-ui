@@ -28,6 +28,10 @@
 - Docs Optimization Worklog: `docs/refactor/2026-02-10-doc-optimization-worklog.md`
 - CloudRun Hybrid Plan: `docs/plans/2026-02-11-cloudrun-hybrid-implementation.md`
 - CloudRun Hybrid Deployment Guide: `docs/deployment/2026-02-11-82-cloudrun-hybrid.md`
+- Split Pipeline Baseline Plan: `docs/gpu-translation-split-plan.md`
+- Split Pipeline Implementation Plan: `docs/plans/2026-02-14-gpu-translation-split-implementation.md`
+- Split Pipeline Worklog: `docs/refactor/2026-02-14-split-pipeline-worklog.md`
+- Split Pipeline API Contract: `docs/api/2026-02-14-internal-split-pipeline-contract.md`
 
 ## 验证快照
 

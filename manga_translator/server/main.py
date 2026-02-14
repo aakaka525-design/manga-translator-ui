@@ -520,6 +520,8 @@ def run_server(args):
         task_manager.server_config['chapter_page_concurrency'] = config_manager.admin_settings['chapter_page_concurrency']
     if config_manager.admin_settings.get('cleanup_interval_requests'):
         task_manager.server_config['cleanup_interval_requests'] = config_manager.admin_settings['cleanup_interval_requests']
+    if config_manager.admin_settings.get('translate_pipeline_mode'):
+        task_manager.server_config['translate_pipeline_mode'] = config_manager.admin_settings['translate_pipeline_mode']
     if config_manager.admin_settings.get('chapter_execution_mode'):
         task_manager.server_config['chapter_execution_mode'] = config_manager.admin_settings['chapter_execution_mode']
     if config_manager.admin_settings.get('runtime_profile'):
@@ -533,6 +535,7 @@ def run_server(args):
         f"max_concurrent_tasks={task_manager.server_config['max_concurrent_tasks']}, "
         f"chapter_page_concurrency={task_manager.server_config['chapter_page_concurrency']}, "
         f"cleanup_interval_requests={task_manager.server_config['cleanup_interval_requests']}, "
+        f"translate_pipeline_mode={task_manager.server_config['translate_pipeline_mode']}, "
         f"chapter_execution_mode={task_manager.server_config['chapter_execution_mode']}, "
         f"runtime_profile={task_manager.server_config['runtime_profile']}"
     )
