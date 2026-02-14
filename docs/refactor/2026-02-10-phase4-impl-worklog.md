@@ -1150,4 +1150,4 @@
 - 接口影响: 无 API 变更；仅文档收口：`TASK-SPLIT-009` 由 pending 转为 completed，联调证据与主计划/审计一致。
 - 验证命令: `rg -n "TASK-SPLIT-009|pending|completed|联调环境|split pipeline" docs/refactor/2026-02-14-split-pipeline-worklog.md docs/gpu-translation-split-plan.md docs/2026-02-10-project-audit.md`
 - 验证结果: pass（`TASK-SPLIT-009` 单条记录并 completed，联调通过结论已同步）
-- 提交哈希: 待回填（TASK-SPLIT-009 closeout commit）
+- 提交哈希: f878f97
