@@ -10,7 +10,7 @@
 - 已落地：`translate_pipeline_mode=unified|split`（默认 unified，支持环境变量覆盖）。
 - 已落地：`/render` 错误状态机 `401 -> 503 -> 404 -> 410 -> 422 -> 400`。
 - 已落地：前端降级提示（`pipeline_mode=fallback_to_unified`）Toast 告警。
-- 已完成：小样本灰度证据（1 图 split/unified 一致；10 页章节 `success_count=10`、`failed_count=0`、文件数=10）。
+- 已完成：本地小样本灰度证据（1 图 split/unified 一致；10 页章节 `success_count=10`、`failed_count=0`、文件数=10）。
 
 ---
 
@@ -520,7 +520,7 @@ assert success_count + failed_count == total_count   # 完整性: 每页必须�
 - [x] 10 页章节基准: success_count + failed_count == total_count, 且 success_count == total_count
 - [x] 前端 Toast 标记降级页
 
-### 2026-02-14 灰度证据
+### 2026-02-14 本地小样本实测证据
 
 - 单页一致性（1 图）：
   - `GRAY_SINGLE_PAGE_UNIFIED_EXISTS True`
@@ -533,3 +533,4 @@ assert success_count + failed_count == total_count   # 完整性: 每页必须�
   - `CH10_FILE_COUNT 10`
   - `CH10_ASSERT_SUM_OK True`
   - `CH10_ASSERT_ALL_SUCCESS True`
+- 联调环境复测不在本段闭环，独立追踪任务：`TASK-SPLIT-009`。

@@ -103,11 +103,21 @@
 ## TASK-SPLIT-008
 
 - TASK-ID: TASK-SPLIT-008
+- 状态: completed
+- 改动文件: 无（本地灰度验证执行）
+- 接口影响: 无
+- 验证命令: 小样本实图（单图 + 10页章节）
+- 验证结果: 本地小样本灰度实测完成（1图 + 10页）：`GRAY_SINGLE_PAGE_BYTES_EQUAL=True`；`CH10_TOTAL=10`、`CH10_SUCCESS=10`、`CH10_FAILED=0`、`CH10_FILE_COUNT=10`
+- 提交哈希: ac9d1ba
+
+## TASK-SPLIT-009
+
+- TASK-ID: TASK-SPLIT-009
 - 状态: pending
 - 改动文件: N/A
 - 接口影响: 无
-- 验证命令: 小样本实图（单图 + 10页章节）
-- 验证结果: 待在联调环境执行
+- 验证命令: 联调环境灰度复测（82 + 远端计算服务）单图与10页章节
+- 验证结果: 待执行（本任务是上线前补强验证，不阻塞 TASK-SPLIT-008 完成定义）
 - 提交哈希: N/A
 
 ## TASK-DOC-002
