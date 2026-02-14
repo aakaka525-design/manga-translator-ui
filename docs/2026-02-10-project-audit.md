@@ -496,3 +496,22 @@
 | **第二周** | CI 添加自动化测试步骤、核心服务补充单元测试 | 3-5 天 |
 | **第三周** | 统一鉴权系统迁移、旧端点添加速率限制或废弃 | 3-5 天 |
 | **后续** | 拆分 God Class、精化异常捕获、前端 API 层统一 | 5-10 天 |
+
+---
+
+### 20. Split Pipeline 落地（2026-02-14）
+
+- **状态**：✅ 已完成核心实现（联调实图待执行）
+- **目标**：将 CloudRun 计算链路从 unified 单端点扩展为 split（detect -> local translate -> render），并保留 unified 自动回退。
+- **已落地能力**：
+  - 新增内部端点：`POST /internal/translate/detect`、`POST /internal/translate/render`
+  - 新增 `CtxCache`（`OK/CACHE_MISS/TASK_EXPIRED/IMAGE_HASH_MISMATCH`）
+  - `/render` 状态机：`401 -> 503 -> 404 -> 410 -> 422 -> 400`
+  - CloudRun executor 支持 `translate_pipeline_mode=unified|split`
+  - split 模式遇 `CACHE_MISS/TASK_EXPIRED/IMAGE_HASH_MISMATCH` 自动降级 `/internal/translate/page`
+  - 页级事件 `pipeline` 已支持 `fallback_to_unified`
+- **验证证据**：
+  - `pytest -q tests/test_split_pipeline.py` -> pass
+  - `pytest -q tests/test_v1_translate_pipeline.py tests/test_v1_translate_concurrency.py tests/test_v1_routes.py tests/test_split_pipeline.py` -> pass（57 passed）
+- **风险/待办**：
+  - `TASK-SPLIT-008` 小样本实图（1 图 + 10 页）仍需在联调环境执行，作为灰度放量前置门禁。

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
 import logging
@@ -12,7 +13,8 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from types import SimpleNamespace
+from typing import Any, Optional
 from urllib.parse import quote, unquote
 
 import httpx
@@ -25,6 +27,7 @@ from starlette.requests import Request
 from manga_translator.server.core.library_service import LibraryService, IMAGE_EXTENSIONS
 from manga_translator.server.core.middleware import require_auth
 from manga_translator.server.core.models import Session
+from manga_translator.server.core.ctx_cache import CtxCache
 from manga_translator.server.core.v1_event_bus import v1_event_bus
 
 
@@ -33,6 +36,7 @@ internal_router = APIRouter(prefix="/internal/translate", tags=["internal-transl
 library_service = LibraryService()
 logger = logging.getLogger(__name__)
 _CLOUDRUN_SERIAL_GATE: asyncio.Lock | None = None
+_SPLIT_TRANSLATE_GATE: asyncio.Semaphore | None = None
 
 
 def _env_positive_int(name: str, default: int) -> int:
@@ -77,12 +81,19 @@ def _env_float_series(name: str, default: tuple[float, ...]) -> tuple[float, ...
     return tuple(values)
 
 
+_SPLIT_CTX_CACHE = CtxCache(
+    max_size=_env_positive_int("MANGA_SPLIT_CTX_CACHE_MAX_SIZE", 24),
+    default_ttl=_env_positive_int("MANGA_SPLIT_CTX_CACHE_TTL_SEC", 300),
+)
+
+
 # CLI-compatible default: no hard timeout unless explicitly configured.
 TRANSLATE_CONTEXT_TIMEOUT_SEC = _env_non_negative_int("MANGA_TRANSLATE_CONTEXT_TIMEOUT_SEC", 0)
 CHAPTER_PAGE_CONCURRENCY_DEFAULT = 3
 CHAPTER_EXECUTION_MODE_CHOICES = {"single_page", "batch_pipeline", "auto"}
 RUNTIME_PROFILE_CHOICES = {"off", "basic"}
 TRANSLATE_EXECUTION_BACKEND_CHOICES = {"local", "cloudrun"}
+TRANSLATE_PIPELINE_MODE_CHOICES = {"unified", "split"}
 CONTEXT_TRANSLATION_LIMIT = 3
 CLOUDRUN_EXECUTOR_TIMEOUT_SEC = _env_positive_int("MANGA_CLOUDRUN_TIMEOUT_SEC", 120)
 CLOUDRUN_EXECUTOR_RETRIES = _env_non_negative_int("MANGA_CLOUDRUN_EXECUTOR_RETRIES", 2)
@@ -148,6 +159,23 @@ class InternalPageTranslateRequest(BaseModel):
     source_language: Optional[str] = None
     target_language: Optional[str] = None
     context_translations: list[str] = Field(default_factory=list)
+
+
+class InternalRenderRegion(BaseModel):
+    region_index: int
+    translation: str = ""
+
+
+class InternalRenderRequest(BaseModel):
+    task_id: str
+    image_hash: str
+    translated_regions: list[InternalRenderRegion] = Field(default_factory=list)
+    primary_model: Optional[str] = None
+    fallback_model: Optional[str] = None
+    selected_model: Optional[str] = None
+    fallback_used: Optional[bool] = None
+    fallback_reason: Optional[str] = None
+    translation_text: Optional[str] = None
 
 
 class CloudRunExecutionError(RuntimeError):
@@ -344,6 +372,49 @@ def _resolve_translate_execution_backend() -> str:
     return configured
 
 
+def _resolve_translate_pipeline_mode() -> str:
+    configured = "unified"
+    try:
+        from manga_translator.server.core.task_manager import get_server_config
+
+        configured = str(get_server_config().get("translate_pipeline_mode", "unified")).strip().lower()
+    except Exception:  # noqa: BLE001
+        pass
+
+    env_override = os.getenv("MANGA_TRANSLATE_PIPELINE_MODE")
+    if env_override is not None:
+        configured = str(env_override).strip().lower()
+    if configured not in TRANSLATE_PIPELINE_MODE_CHOICES:
+        return "unified"
+    return configured
+
+
+def _split_translate_semaphore() -> asyncio.Semaphore:
+    global _SPLIT_TRANSLATE_GATE
+    if _SPLIT_TRANSLATE_GATE is None:
+        _SPLIT_TRANSLATE_GATE = asyncio.Semaphore(1)
+    return _SPLIT_TRANSLATE_GATE
+
+
+def _hash_payload(payload: bytes) -> str:
+    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
+
+
+def _extract_region_text(region: dict[str, Any]) -> str:
+    text = str(region.get("text") or "").strip()
+    if text:
+        return text
+    texts = region.get("texts")
+    if isinstance(texts, list):
+        cleaned = [str(item).strip() for item in texts if str(item).strip()]
+        return "\n".join(cleaned).strip()
+    return ""
+
+
+def _is_split_cache_fallback_error(exc: CloudRunExecutionError) -> bool:
+    return exc.status_code in {404, 410, 422}
+
+
 def _resolve_cloudrun_executor_url() -> str:
     return str(os.getenv("MANGA_CLOUDRUN_EXEC_URL", "")).strip()
 
@@ -469,6 +540,297 @@ def _resolve_chapter_page_concurrency(
     return max(1, min(configured, max_concurrent_tasks))
 
 
+def _run_split_detect_sync(
+    payload: bytes,
+    image_name: str,
+    source_language: str | None,
+    target_language: str | None,
+) -> dict[str, Any]:
+    from manga_translator.server.core.config_manager import load_default_config
+    from manga_translator.server.core.task_manager import (
+        _ensure_runtime_for_translator,
+        begin_translation_operation,
+        end_translation_operation,
+        get_global_translator,
+    )
+    from manga_translator.server.request_extraction import (
+        _drain_pending_tasks,
+        _get_translation_event_loop,
+        prepare_translator_params,
+    )
+
+    _ensure_runtime_for_translator()
+    config = load_default_config()
+    config.translator.attempts = _resolve_translate_attempts(config)
+    if source_language:
+        config.translator.skip_lang = None
+    config.translator.target_lang = _resolve_target_language(target_language)
+    prepare_translator_params(config, "normal")
+
+    pil_image = Image.open(io.BytesIO(payload))
+    pil_image.load()
+    translator = get_global_translator()
+    loop = _get_translation_event_loop()
+    started_at = time.perf_counter()
+    begin_translation_operation()
+    try:
+        ctx = loop.run_until_complete(translator._translate_until_translation(pil_image, config))
+        total_ms = (time.perf_counter() - started_at) * 1000.0
+        regions = list(getattr(ctx, "text_regions", []) or [])
+        return {
+            "ctx": ctx,
+            "config": config,
+            "image_name": image_name,
+            "from_lang": str(getattr(ctx, "from_lang", "") or ""),
+            "regions": regions,
+            "elapsed_ms": {
+                "detect": round(total_ms, 3),
+                "ocr": 0.0,
+                "total": round(total_ms, 3),
+            },
+        }
+    finally:
+        end_translation_operation()
+        _drain_pending_tasks(loop)
+
+
+def _run_split_translate_sync(
+    texts: list[str],
+    source_language: str | None,
+    target_language: str | None,
+    from_lang: str | None,
+    context_translations: list[str] | None,
+    model_name: str,
+) -> list[str]:
+    from manga_translator.server.core.config_manager import load_default_config
+    from manga_translator.server.core.task_manager import (
+        _ensure_runtime_for_translator,
+        begin_translation_operation,
+        end_translation_operation,
+        get_global_translator,
+    )
+    from manga_translator.server.request_extraction import (
+        _drain_pending_tasks,
+        _get_translation_event_loop,
+        prepare_translator_params,
+    )
+
+    _ensure_runtime_for_translator()
+    config = load_default_config()
+    config.translator.attempts = _resolve_translate_attempts(config)
+    if source_language:
+        config.translator.skip_lang = None
+    config.translator.target_lang = _resolve_target_language(target_language)
+    if hasattr(config, "translator"):
+        config.translator.user_api_model = model_name
+    prepare_translator_params(config, "normal")
+
+    translator = get_global_translator()
+    loop = _get_translation_event_loop()
+    begin_translation_operation()
+
+    previous_page_translations = None
+    previous_context_size = None
+    seeded_context = _build_context_translations(context_translations or [])
+    if seeded_context and hasattr(translator, "all_page_translations"):
+        try:
+            previous_page_translations = list(getattr(translator, "all_page_translations", []) or [])
+        except Exception:  # noqa: BLE001
+            previous_page_translations = []
+        translator.all_page_translations = [{str(i + 1): text} for i, text in enumerate(seeded_context)]
+        if hasattr(translator, "context_size"):
+            try:
+                previous_context_size = int(getattr(translator, "context_size", 0))
+            except Exception:  # noqa: BLE001
+                previous_context_size = 0
+            translator.context_size = max(len(seeded_context), previous_context_size or 0)
+
+    pseudo_ctx = SimpleNamespace(from_lang=str(from_lang or "auto"), text_regions=[])
+    try:
+        translated = loop.run_until_complete(translator._batch_translate_texts(texts, config, pseudo_ctx))
+        return [str(item or "") for item in translated]
+    finally:
+        if previous_page_translations is not None and hasattr(translator, "all_page_translations"):
+            translator.all_page_translations = previous_page_translations
+        if previous_context_size is not None and hasattr(translator, "context_size"):
+            translator.context_size = previous_context_size
+        end_translation_operation()
+        _drain_pending_tasks(loop)
+
+
+def _run_split_render_sync(
+    cache_payload: dict[str, Any],
+    translated_regions: list[dict[str, Any]],
+) -> tuple[bytes, dict[str, Any]]:
+    from manga_translator.server.core.task_manager import (
+        _ensure_runtime_for_translator,
+        begin_translation_operation,
+        cleanup_context,
+        end_translation_operation,
+        get_global_translator,
+    )
+    from manga_translator.server.request_extraction import _drain_pending_tasks, _get_translation_event_loop
+
+    _ensure_runtime_for_translator()
+    ctx = cache_payload["ctx"]
+    config = cache_payload["config"]
+    image_name = str(cache_payload.get("image_name") or "page.jpg")
+    text_regions = list(getattr(ctx, "text_regions", []) or [])
+    for item in translated_regions:
+        idx = int(item.get("region_index", -1))
+        if idx < 0 or idx >= len(text_regions):
+            raise ValueError("RENDER_INPUT_INVALID")
+        text_regions[idx].translation = str(item.get("translation") or "")
+
+    translator = get_global_translator()
+    loop = _get_translation_event_loop()
+    started_at = time.perf_counter()
+    begin_translation_operation()
+    try:
+        ctx = loop.run_until_complete(translator._complete_translation_pipeline(ctx, config))
+        if not getattr(ctx, "result", None):
+            raise RuntimeError("render produced no output image")
+        suffix = Path(image_name).suffix.lower() or ".jpg"
+        format_map = {".jpg": "JPEG", ".jpeg": "JPEG", ".png": "PNG", ".webp": "WEBP"}
+        target_path = Path(f"/tmp/out{suffix}")
+        prepared = _prepare_output_image(ctx.result, target_path)
+        output = io.BytesIO()
+        prepared.save(output, format=format_map.get(suffix, "PNG"))
+        render_ms = (time.perf_counter() - started_at) * 1000.0
+        stage_elapsed = {
+            "render": round(render_ms, 3),
+            "total": round(render_ms, 3),
+        }
+        return output.getvalue(), {
+            "regions_count": len(text_regions),
+            "stage_elapsed_ms": stage_elapsed,
+            "page_translation_text": _extract_context_text(ctx),
+        }
+    finally:
+        end_translation_operation()
+        _drain_pending_tasks(loop)
+        cleanup_context(ctx)
+
+
+async def _split_detect_payload(
+    payload: bytes,
+    image_name: str,
+    source_language: str | None,
+    target_language: str | None,
+) -> dict[str, Any]:
+    from manga_translator.server.core.task_manager import run_in_translator_thread
+
+    raw = await run_in_translator_thread(
+        _run_split_detect_sync,
+        payload,
+        image_name,
+        source_language,
+        target_language,
+    )
+    task_id = str(uuid.uuid4())
+    image_hash = _hash_payload(payload)
+    ttl_seconds = _SPLIT_CTX_CACHE.put(task_id, image_hash, raw)
+
+    serialized_regions: list[dict[str, Any]] = []
+    for idx, region in enumerate(raw.get("regions") or []):
+        if hasattr(region, "to_dict"):
+            item = dict(region.to_dict() or {})
+        elif isinstance(region, dict):
+            item = dict(region)
+        else:
+            item = {}
+        item["region_index"] = idx
+        serialized_regions.append(item)
+
+    return {
+        "task_id": task_id,
+        "ttl_seconds": ttl_seconds,
+        "image_hash": image_hash,
+        "regions_count": len(serialized_regions),
+        "regions": serialized_regions,
+        "from_lang": str(raw.get("from_lang") or ""),
+        "elapsed_ms": raw.get("elapsed_ms") or {"detect": 0.0, "ocr": 0.0, "total": 0.0},
+    }
+
+
+async def _split_render_payload(
+    cache_payload: dict[str, Any],
+    translated_regions: list[dict[str, Any]],
+) -> tuple[bytes, dict[str, Any]]:
+    from manga_translator.server.core.task_manager import run_in_translator_thread
+
+    return await run_in_translator_thread(_run_split_render_sync, cache_payload, translated_regions)
+
+
+async def _split_translate_texts_impl(
+    texts: list[str],
+    source_language: str | None,
+    target_language: str | None,
+    from_lang: str | None,
+    context_translations: list[str] | None,
+    model_name: str,
+) -> list[str]:
+    from manga_translator.server.core.task_manager import run_in_translator_thread
+
+    return await run_in_translator_thread(
+        _run_split_translate_sync,
+        texts,
+        source_language,
+        target_language,
+        from_lang,
+        context_translations or [],
+        model_name,
+    )
+
+
+async def _translate_texts_for_split(
+    texts: list[str],
+    source_language: str | None,
+    target_language: str | None,
+    from_lang: str | None,
+    context_translations: list[str] | None,
+    primary_model: str | None = None,
+    fallback_model: str | None = None,
+) -> dict[str, Any]:
+    resolved_primary = _resolve_gemini_primary_model(primary_model)
+    resolved_fallback = _resolve_gemini_fallback_model(fallback_model)
+    selected_model = resolved_primary
+    model_fallback_reason: str | None = None
+
+    async with _split_translate_semaphore():
+        try:
+            translated = await _split_translate_texts_impl(
+                texts,
+                source_language,
+                target_language,
+                from_lang,
+                context_translations,
+                resolved_primary,
+            )
+        except Exception as primary_exc:  # noqa: BLE001
+            primary_reason = str(primary_exc).strip() or primary_exc.__class__.__name__
+            if resolved_fallback == resolved_primary:
+                raise
+            selected_model = resolved_fallback
+            model_fallback_reason = primary_reason
+            translated = await _split_translate_texts_impl(
+                texts,
+                source_language,
+                target_language,
+                from_lang,
+                context_translations,
+                resolved_fallback,
+            )
+
+    return {
+        "translations": translated,
+        "primary_model": resolved_primary,
+        "fallback_model": resolved_fallback,
+        "selected_model": selected_model,
+        "model_fallback_reason": model_fallback_reason,
+    }
+
+
 class TranslateExecutor:
     backend = "local"
 
@@ -519,9 +881,16 @@ class LocalTranslateExecutor(TranslateExecutor):
 class CloudRunTranslateExecutor(TranslateExecutor):
     backend = "cloudrun"
 
-    def __init__(self, endpoint: str, timeout_sec: int = CLOUDRUN_EXECUTOR_TIMEOUT_SEC) -> None:
+    def __init__(
+        self,
+        endpoint: str,
+        timeout_sec: int = CLOUDRUN_EXECUTOR_TIMEOUT_SEC,
+        pipeline_mode: str | None = None,
+    ) -> None:
         self._endpoint = endpoint.rstrip("/")
         self._timeout_sec = max(1, int(timeout_sec))
+        resolved_mode = str(pipeline_mode or _resolve_translate_pipeline_mode()).strip().lower()
+        self._pipeline_mode = resolved_mode if resolved_mode in TRANSLATE_PIPELINE_MODE_CHOICES else "unified"
 
     async def translate_page(
         self,
@@ -531,6 +900,45 @@ class CloudRunTranslateExecutor(TranslateExecutor):
         target_language: str | None,
         *,
         context_translations: list[str] | None = None,
+    ) -> dict:
+        if self._pipeline_mode == "split":
+            try:
+                return await self._translate_via_split_pipeline(
+                    image_path=image_path,
+                    output_path=output_path,
+                    source_language=source_language,
+                    target_language=target_language,
+                    context_translations=context_translations,
+                )
+            except CloudRunExecutionError as exc:
+                if _is_split_cache_fallback_error(exc):
+                    fallback = await self._translate_via_unified_pipeline(
+                        image_path=image_path,
+                        output_path=output_path,
+                        source_language=source_language,
+                        target_language=target_language,
+                        context_translations=context_translations,
+                    )
+                    fallback["pipeline_mode"] = "fallback_to_unified"
+                    return fallback
+                raise
+
+        return await self._translate_via_unified_pipeline(
+            image_path=image_path,
+            output_path=output_path,
+            source_language=source_language,
+            target_language=target_language,
+            context_translations=context_translations,
+        )
+
+    async def _translate_via_unified_pipeline(
+        self,
+        *,
+        image_path: Path,
+        output_path: Path,
+        source_language: str | None,
+        target_language: str | None,
+        context_translations: list[str] | None,
     ) -> dict:
         payload = image_path.read_bytes()
         context = _build_context_translations(context_translations)
@@ -625,6 +1033,167 @@ class CloudRunTranslateExecutor(TranslateExecutor):
             "fallback_model": resolved_fallback_model,
             "selected_model": selected_model,
             "model_fallback_reason": model_fallback_reason,
+            "pipeline_mode": "unified",
+        }
+
+    async def _translate_via_split_pipeline(
+        self,
+        *,
+        image_path: Path,
+        output_path: Path,
+        source_language: str | None,
+        target_language: str | None,
+        context_translations: list[str] | None,
+    ) -> dict:
+        payload = image_path.read_bytes()
+        token = _resolve_internal_token()
+        headers: dict[str, str] = {
+            "Accept-Encoding": "gzip, deflate",
+        }
+        if token:
+            headers[INTERNAL_TOKEN_HEADER] = token
+
+        timeout = httpx.Timeout(self._timeout_sec)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            detect_response = await client.post(
+                f"{self._endpoint}/internal/translate/detect",
+                headers=headers,
+                files={"image": (image_path.name, payload, "application/octet-stream")},
+                data={
+                    "source_language": source_language or "",
+                    "target_language": target_language or "",
+                },
+            )
+
+            if detect_response.status_code != 200:
+                detail_text = detect_response.text.strip()
+                detail = f"cloudrun detect status={detect_response.status_code}"
+                if detail_text:
+                    detail = f"{detail}; detail={detail_text}"
+                raise CloudRunExecutionError(
+                    status_code=detect_response.status_code,
+                    message=detail,
+                    failure_stage="detect",
+                    retryable=detect_response.status_code in CLOUDRUN_RETRYABLE_STATUS,
+                )
+
+            detect_payload = detect_response.json()
+            regions = list(detect_payload.get("regions") or [])
+            if not regions:
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_bytes(payload)
+                return {
+                    "output_path": str(output_path),
+                    "regions_count": 0,
+                    "output_changed": False,
+                    "no_change_reason": "no_text_regions_detected",
+                    "fallback_used": False,
+                    "fallback_reason": None,
+                    "stage_elapsed_ms": {"total": 0.0},
+                    "failure_stage": "detect",
+                    "execution_backend": "cloudrun",
+                    "remote_elapsed_ms": 0,
+                    "cold_start": False,
+                    "page_translation_text": "",
+                    "primary_model": _resolve_gemini_primary_model(),
+                    "fallback_model": _resolve_gemini_fallback_model(),
+                    "selected_model": _resolve_gemini_primary_model(),
+                    "model_fallback_reason": None,
+                    "pipeline_mode": "split",
+                }
+
+            texts = [_extract_region_text(region) for region in regions]
+            translated = await _translate_texts_for_split(
+                texts=texts,
+                source_language=source_language,
+                target_language=target_language,
+                from_lang=str(detect_payload.get("from_lang") or ""),
+                context_translations=context_translations or [],
+            )
+            translated_regions = []
+            for index, region in enumerate(regions):
+                region_index = int(region.get("region_index", index))
+                translated_text = ""
+                if index < len(translated["translations"]):
+                    translated_text = str(translated["translations"][index] or "")
+                translated_regions.append(
+                    {
+                        "region_index": region_index,
+                        "translation": translated_text,
+                    }
+                )
+
+            render_response = await client.post(
+                f"{self._endpoint}/internal/translate/render",
+                headers=headers,
+                json={
+                    "task_id": str(detect_payload.get("task_id") or ""),
+                    "image_hash": str(detect_payload.get("image_hash") or ""),
+                    "translated_regions": translated_regions,
+                    "primary_model": translated.get("primary_model"),
+                    "fallback_model": translated.get("fallback_model"),
+                    "selected_model": translated.get("selected_model"),
+                    "fallback_reason": translated.get("model_fallback_reason"),
+                    "translation_text": "\n".join(translated.get("translations") or []),
+                },
+            )
+
+        if render_response.status_code != 200:
+            detail_text = render_response.text.strip()
+            detail = f"cloudrun render status={render_response.status_code}"
+            if detail_text:
+                detail = f"{detail}; detail={detail_text}"
+            raise CloudRunExecutionError(
+                status_code=render_response.status_code,
+                message=detail,
+                failure_stage="render",
+                retryable=render_response.status_code in {503, 504},
+            )
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(render_response.content)
+        stage_elapsed_raw = _decode_header_value(render_response.headers.get("x-stage-elapsed-ms", "{}"))
+        try:
+            stage_elapsed_ms = json.loads(stage_elapsed_raw)
+            if not isinstance(stage_elapsed_ms, dict):
+                stage_elapsed_ms = {}
+        except Exception:  # noqa: BLE001
+            stage_elapsed_ms = {}
+
+        regions_count = _to_non_negative_int(render_response.headers.get("x-regions-count"), default=0)
+        output_changed = _image_has_visible_changes(payload, output_path)
+        page_translation_text = _decode_header_value(render_response.headers.get("x-translation-text", "")).strip()
+        selected_model = _decode_header_value(render_response.headers.get("x-selected-model")) or str(
+            translated.get("selected_model") or ""
+        )
+        resolved_primary_model = _decode_header_value(render_response.headers.get("x-primary-model")) or str(
+            translated.get("primary_model") or ""
+        )
+        resolved_fallback_model = _decode_header_value(render_response.headers.get("x-fallback-model")) or str(
+            translated.get("fallback_model") or ""
+        )
+        model_fallback_reason = _decode_header_value(render_response.headers.get("x-model-fallback-reason")) or str(
+            translated.get("model_fallback_reason") or ""
+        )
+        remote_elapsed_ms = _to_non_negative_int(render_response.headers.get("x-remote-elapsed-ms"), default=0)
+        return {
+            "output_path": str(output_path),
+            "regions_count": regions_count,
+            "output_changed": output_changed,
+            "no_change_reason": None if output_changed else "output_matches_source",
+            "fallback_used": False,
+            "fallback_reason": None,
+            "stage_elapsed_ms": stage_elapsed_ms,
+            "failure_stage": None,
+            "execution_backend": "cloudrun",
+            "remote_elapsed_ms": remote_elapsed_ms,
+            "cold_start": False,
+            "page_translation_text": page_translation_text,
+            "primary_model": resolved_primary_model,
+            "fallback_model": resolved_fallback_model,
+            "selected_model": selected_model,
+            "model_fallback_reason": model_fallback_reason or None,
+            "pipeline_mode": "split",
         }
 
 
@@ -633,7 +1202,10 @@ def _get_translate_executor(backend: str | None = None) -> TranslateExecutor:
     if backend == "cloudrun":
         endpoint = _resolve_cloudrun_executor_url()
         if endpoint:
-            return CloudRunTranslateExecutor(endpoint=endpoint)
+            return CloudRunTranslateExecutor(
+                endpoint=endpoint,
+                pipeline_mode=_resolve_translate_pipeline_mode(),
+            )
         logger.warning("cloudrun execution backend requested but MANGA_CLOUDRUN_EXEC_URL is empty; fallback to local")
     return LocalTranslateExecutor()
 
@@ -900,6 +1472,7 @@ def _build_runtime_snapshot(execution_mode: str, page_concurrency: int, translat
     return {
         "use_gpu": use_gpu,
         "execution_mode": execution_mode,
+        "pipeline_mode": _resolve_translate_pipeline_mode(),
         "page_concurrency": page_concurrency,
         "translator": translator_name or "unknown",
         "primary_model": primary_model,
@@ -1208,6 +1781,7 @@ async def _publish_page_result(
     execution_backend: str = "local",
 ) -> bool:
     stage_elapsed = dict(result.get("stage_elapsed_ms") or {}) if result else {}
+    page_pipeline = str((result or {}).get("pipeline_mode") or pipeline)
     remote_elapsed_ms = _to_non_negative_int((result or {}).get("remote_elapsed_ms"), default=0)
     primary_model = str((result or {}).get("primary_model") or "")
     fallback_model = str((result or {}).get("fallback_model") or "")
@@ -1246,7 +1820,7 @@ async def _publish_page_result(
                 "stage": "failed",
                 "status": "failed",
                 "error_message": error_message,
-                "pipeline": pipeline,
+                "pipeline": page_pipeline,
                 "execution_backend": execution_backend,
                 "failure_stage": failure_stage,
                 "remote_elapsed_ms": remote_elapsed_ms,
@@ -1269,7 +1843,7 @@ async def _publish_page_result(
                 "stage": "failed",
                 "status": "failed",
                 "error_message": "translation returned empty result",
-                "pipeline": pipeline,
+                "pipeline": page_pipeline,
                 "execution_backend": execution_backend,
                 "failure_stage": "translate",
                 "remote_elapsed_ms": remote_elapsed_ms,
@@ -1321,7 +1895,7 @@ async def _publish_page_result(
                 "stage": "failed",
                 "status": "failed",
                 "error_message": error_message,
-                "pipeline": pipeline,
+                "pipeline": page_pipeline,
                 "execution_backend": execution_backend,
                 "failure_stage": failure_stage,
                 "remote_elapsed_ms": remote_elapsed_ms,
@@ -1342,7 +1916,7 @@ async def _publish_page_result(
             "image_name": image_path.name,
             "stage": "complete",
             "status": "completed",
-            "pipeline": pipeline,
+            "pipeline": page_pipeline,
             "execution_backend": execution_backend,
             "remote_elapsed_ms": remote_elapsed_ms,
             "stage_elapsed_ms": stage_elapsed,
@@ -1696,6 +2270,108 @@ async def translate_page(request: PageTranslateRequest, _session: Session = Depe
     }
 
 
+@internal_router.post("/detect")
+async def internal_translate_detect(
+    image: UploadFile = File(...),
+    source_language: Optional[str] = Form(None),
+    target_language: Optional[str] = Form(None),
+    x_internal_token: Optional[str] = Header(None, alias=INTERNAL_TOKEN_HEADER),
+):
+    _verify_internal_token(x_internal_token)
+    _ensure_internal_compute_ready()
+    try:
+        payload = await image.read()
+        if not payload:
+            raise HTTPException(status_code=400, detail="INVALID_IMAGE")
+        result = await _split_detect_payload(
+            payload=payload,
+            image_name=image.filename or "page.jpg",
+            source_language=source_language,
+            target_language=target_language,
+        )
+        if not isinstance(result.get("regions"), list):
+            result["regions"] = []
+        for index, region in enumerate(result["regions"]):
+            if not isinstance(region, dict):
+                region = {}
+                result["regions"][index] = region
+            region["region_index"] = index
+        result["regions_count"] = len(result["regions"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"INVALID_IMAGE: {exc}") from exc
+
+
+@internal_router.post("/render")
+async def internal_translate_render(
+    request: InternalRenderRequest,
+    x_internal_token: Optional[str] = Header(None, alias=INTERNAL_TOKEN_HEADER),
+):
+    _verify_internal_token(x_internal_token)
+    _ensure_internal_compute_ready()
+
+    cache_payload, reason = _SPLIT_CTX_CACHE.get(request.task_id, request.image_hash)
+    if reason == "CACHE_MISS":
+        raise HTTPException(status_code=404, detail="CACHE_MISS")
+    if reason == "TASK_EXPIRED":
+        raise HTTPException(status_code=410, detail="TASK_EXPIRED")
+    if reason == "IMAGE_HASH_MISMATCH":
+        raise HTTPException(status_code=422, detail="IMAGE_HASH_MISMATCH")
+
+    ctx_obj = (cache_payload or {}).get("ctx") if isinstance(cache_payload, dict) else None
+    text_regions = list(getattr(ctx_obj, "text_regions", []) or [])
+    translated_regions_payload: list[dict[str, Any]] = []
+    for item in request.translated_regions:
+        region_index = int(item.region_index)
+        if region_index < 0 or region_index >= len(text_regions):
+            raise HTTPException(status_code=400, detail="RENDER_INPUT_INVALID")
+        translated_regions_payload.append(
+            {
+                "region_index": region_index,
+                "translation": str(item.translation or ""),
+            }
+        )
+
+    started_at = time.perf_counter()
+    try:
+        output_bytes, render_result = await _split_render_payload(cache_payload, translated_regions_payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="RENDER_INPUT_INVALID") from exc
+    finally:
+        _SPLIT_CTX_CACHE.pop(request.task_id)
+
+    elapsed_ms = int((time.perf_counter() - started_at) * 1000.0)
+    stage_elapsed = render_result.get("stage_elapsed_ms") or {}
+    stage_elapsed_text = json.dumps(stage_elapsed, ensure_ascii=False)
+    translation_text = str(request.translation_text or render_result.get("page_translation_text") or "").strip()
+    if len(translation_text) > 1500:
+        translation_text = translation_text[:1500]
+    primary_model = _resolve_gemini_primary_model(request.primary_model)
+    fallback_model = _resolve_gemini_fallback_model(request.fallback_model)
+    selected_model = request.selected_model or primary_model
+
+    headers = {
+        "x-regions-count": str(_to_non_negative_int(render_result.get("regions_count"), default=0)),
+        "x-output-changed": "1",
+        "x-fallback-used": "1" if bool(request.fallback_used) else "0",
+        "x-fallback-reason": _encode_header_value(request.fallback_reason or ""),
+        "x-no-change-reason": "",
+        "x-failure-stage": "",
+        "x-stage-elapsed-ms": _encode_header_value(stage_elapsed_text),
+        "x-remote-elapsed-ms": str(elapsed_ms),
+        "x-cold-start": "0",
+        "x-translation-text": _encode_header_value(translation_text),
+        "x-primary-model": str(primary_model),
+        "x-fallback-model": str(fallback_model),
+        "x-selected-model": str(selected_model),
+        "x-model-fallback-reason": _encode_header_value(request.fallback_reason or ""),
+        "x-pipeline-mode": "split",
+    }
+    return Response(content=output_bytes, media_type="application/octet-stream", headers=headers)
+
+
 @internal_router.post("/page")
 async def internal_translate_page(
     image: UploadFile = File(...),
@@ -1754,6 +2430,7 @@ async def internal_translate_page(
         "x-fallback-model": str(result.get("fallback_model") or ""),
         "x-selected-model": str(result.get("selected_model") or ""),
         "x-model-fallback-reason": _encode_header_value(result.get("model_fallback_reason") or ""),
+        "x-pipeline-mode": "unified",
     }
     return Response(content=output_bytes, media_type="application/octet-stream", headers=headers)
 

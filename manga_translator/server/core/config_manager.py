@@ -99,6 +99,7 @@ DEFAULT_ADMIN_SETTINGS = {
     },
     'chapter_page_concurrency': 3,
     'cleanup_interval_requests': 8,
+    'translate_pipeline_mode': 'unified',
     'chapter_execution_mode': 'auto',
     'runtime_profile': 'basic',
     'user_access': {
@@ -440,6 +441,7 @@ def reload_admin_settings_if_changed() -> bool:
             old_concurrent = admin_settings.get('max_concurrent_tasks', 3)
             old_chapter_page_concurrency = admin_settings.get('chapter_page_concurrency', 3)
             old_cleanup_interval = admin_settings.get('cleanup_interval_requests', 8)
+            old_pipeline_mode = admin_settings.get('translate_pipeline_mode', 'unified')
             old_execution_mode = admin_settings.get('chapter_execution_mode', 'auto')
             old_runtime_profile = admin_settings.get('runtime_profile', 'basic')
             
@@ -450,6 +452,7 @@ def reload_admin_settings_if_changed() -> bool:
             new_concurrent = admin_settings.get('max_concurrent_tasks', 3)
             new_chapter_page_concurrency = admin_settings.get('chapter_page_concurrency', 3)
             new_cleanup_interval = admin_settings.get('cleanup_interval_requests', 8)
+            new_pipeline_mode = admin_settings.get('translate_pipeline_mode', 'unified')
             new_execution_mode = admin_settings.get('chapter_execution_mode', 'auto')
             new_runtime_profile = admin_settings.get('runtime_profile', 'basic')
             
@@ -458,6 +461,7 @@ def reload_admin_settings_if_changed() -> bool:
                 old_concurrent != new_concurrent
                 or old_chapter_page_concurrency != new_chapter_page_concurrency
                 or old_cleanup_interval != new_cleanup_interval
+                or old_pipeline_mode != new_pipeline_mode
                 or old_execution_mode != new_execution_mode
                 or old_runtime_profile != new_runtime_profile
             ):
@@ -467,6 +471,7 @@ def reload_admin_settings_if_changed() -> bool:
                         'max_concurrent_tasks': new_concurrent,
                         'chapter_page_concurrency': new_chapter_page_concurrency,
                         'cleanup_interval_requests': new_cleanup_interval,
+                        'translate_pipeline_mode': new_pipeline_mode,
                         'chapter_execution_mode': new_execution_mode,
                         'runtime_profile': new_runtime_profile,
                     }
@@ -479,6 +484,10 @@ def reload_admin_settings_if_changed() -> bool:
                 print(
                     "[INFO] 配置热加载: cleanup_interval_requests "
                     f"{old_cleanup_interval} -> {new_cleanup_interval}"
+                )
+                print(
+                    "[INFO] 配置热加载: translate_pipeline_mode "
+                    f"{old_pipeline_mode} -> {new_pipeline_mode}"
                 )
                 print(
                     "[INFO] 配置热加载: chapter_execution_mode "
