@@ -139,3 +139,13 @@
 - 验证命令: `git status --short && git log --oneline -n 10 && git push -u personal codex/split-pipeline-20260214`
 - 验证结果: pass（分支已推送到 personal 远端）
 - 提交哈希: 09b9383, 8e90eab
+
+## TASK-MERGE-CLOSE-004
+
+- TASK-ID: TASK-MERGE-CLOSE-004
+- 状态: partial
+- 改动文件: 无（远端推送验证）
+- 接口影响: 无
+- 验证命令: `git push personal main`、`git push origin main`
+- 验证结果: partial（`personal/main` 推送成功；`origin/main` 于 2026-02-14 20:39:53 CST 返回 403：`Permission to hgmzhn/manga-translator-ui.git denied to aakaka525-design`）
+- 提交哈希: 待回填（push audit note commit）
