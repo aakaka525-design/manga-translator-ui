@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { useMangaStore } from "@/stores/manga";
 import { useTranslateStore } from "@/stores/translate";
+import { useToastStore } from "@/stores/toast";
 
 class MockEventSource {
   constructor(url) {
@@ -185,5 +186,62 @@ describe("translate store", () => {
     expect(chapter.translated_count).toBe(2);
     expect(chapter.progress).toBe(67);
     expect(chapter.statusText).toContain("部分完成");
+  });
+
+  it("shows downgrade toast when page pipeline falls back to unified", () => {
+    const mangaStore = useMangaStore();
+    mangaStore.currentManga = { id: "m1" };
+    mangaStore.chapters = [
+      {
+        id: "c1",
+        page_count: 1,
+        isTranslating: false,
+        has_translated: false,
+        translated_count: 0,
+      },
+    ];
+
+    const toastStore = useToastStore();
+    const toastSpy = vi.spyOn(toastStore, "show");
+    const translateStore = useTranslateStore();
+    translateStore.initSSE();
+
+    MockEventSource.instance.onmessage({
+      data: JSON.stringify({
+        type: "chapter_start",
+        manga_id: "m1",
+        chapter_id: "c1",
+        total_pages: 1,
+      }),
+    });
+
+    MockEventSource.instance.onmessage({
+      data: JSON.stringify({
+        type: "progress",
+        manga_id: "m1",
+        chapter_id: "c1",
+        task_id: "task-1",
+        stage: "complete",
+        status: "completed",
+        pipeline: "fallback_to_unified",
+      }),
+    });
+
+    MockEventSource.instance.onmessage({
+      data: JSON.stringify({
+        type: "chapter_complete",
+        manga_id: "m1",
+        chapter_id: "c1",
+        success_count: 1,
+        failed_count: 0,
+        total_count: 1,
+        status: "success",
+      }),
+    });
+
+    expect(toastSpy).toHaveBeenCalledWith(
+      expect.stringContaining("自动降级"),
+      "warning",
+    );
   });
 });

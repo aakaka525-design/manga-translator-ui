@@ -501,7 +501,7 @@
 
 ### 20. Split Pipeline 落地（2026-02-14）
 
-- **状态**：✅ 已完成核心实现（联调实图待执行）
+- **状态**：✅ 已完成并收口到 `main`
 - **目标**：将 CloudRun 计算链路从 unified 单端点扩展为 split（detect -> local translate -> render），并保留 unified 自动回退。
 - **已落地能力**：
   - 新增内部端点：`POST /internal/translate/detect`、`POST /internal/translate/render`
@@ -513,5 +513,18 @@
 - **验证证据**：
   - `pytest -q tests/test_split_pipeline.py` -> pass
   - `pytest -q tests/test_v1_translate_pipeline.py tests/test_v1_translate_concurrency.py tests/test_v1_routes.py tests/test_split_pipeline.py` -> pass（57 passed）
-- **风险/待办**：
-  - `TASK-SPLIT-008` 小样本实图（1 图 + 10 页）仍需在联调环境执行，作为灰度放量前置门禁。
+  - `cd frontend && npm test -- --run tests/translate.test.js` -> pass（覆盖 `fallback_to_unified` Toast）
+  - 单页灰度（1 图）：
+    - `GRAY_SINGLE_PAGE_UNIFIED_EXISTS True`
+    - `GRAY_SINGLE_PAGE_SPLIT_EXISTS True`
+    - `GRAY_SINGLE_PAGE_BYTES_EQUAL True`
+  - 10 页章节灰度：
+    - `CH10_TOTAL 10`
+    - `CH10_SUCCESS 10`
+    - `CH10_FAILED 0`
+    - `CH10_FILE_COUNT 10`
+    - `CH10_ASSERT_SUM_OK True`
+    - `CH10_ASSERT_ALL_SUCCESS True`
+- **收敛结论**：
+  - 原“split 分支已实现但 main 未收口”问题已解除（`main` 已 merge）。
+  - 原待办“前端降级提示 + 灰度证据”已补齐，可进入稳定维护态。

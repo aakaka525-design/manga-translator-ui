@@ -1106,3 +1106,39 @@
 - 验证命令: `rg -n 'gemini-2\\.0-flash|GEMINI_MODEL|GEMINI_FALLBACK_MODEL' docs/2026-02-13-ppio-deployment-report.md docs/2026-02-10-project-audit.md docs/deployment/2026-02-11-82-cloudrun-hybrid.md`
 - 验证结果: pass
 - 提交哈希: N/A
+
+## SPLIT-MAIN-001
+- TASK-ID: SPLIT-MAIN-001
+- 状态: completed
+- 改动文件: `manga_translator/server/core/ctx_cache.py`, `manga_translator/server/routes/v1_translate.py`, `tests/test_split_pipeline.py`（由 `codex/split-pipeline-20260214` 合并入 `main`）
+- 接口影响: 非破坏性新增内部端点 `POST /internal/translate/detect`、`POST /internal/translate/render`；`/api/v1/*` 与 `/admin/*` 契约保持兼容。
+- 验证命令: `git log --oneline -n 5`、`ls -l manga_translator/server/core/ctx_cache.py manga_translator/server/routes/v1_translate.py tests/test_split_pipeline.py`
+- 验证结果: pass（merge commit `f6dccf1` 在 `main`，关键文件存在）
+- 提交哈希: `f6dccf1`
+
+## SPLIT-MAIN-002
+- TASK-ID: SPLIT-MAIN-002
+- 状态: completed
+- 改动文件: `frontend/src/stores/translate.js`, `frontend/tests/translate.test.js`
+- 接口影响: 无 API 变更；新增前端降级提示语义：当页级 `pipeline=fallback_to_unified` 时显示 Toast“章节已自动降级 unified 管线”。
+- 验证命令: `cd frontend && npm test -- --run tests/translate.test.js`
+- 验证结果: pass（新增 `fallback_to_unified` 用例通过）
+- 提交哈希: N/A
+
+## SPLIT-MAIN-003
+- TASK-ID: SPLIT-MAIN-003
+- 状态: completed
+- 改动文件: 无（灰度验证执行）
+- 接口影响: 无 API 变更；验证 split/unified 语义一致与章节计数一致。
+- 验证命令: `python - <<'PY' ... GRAY_SINGLE_PAGE_* ... PY`、`python - <<'PY' ... CH10_* ... PY`
+- 验证结果: pass（`GRAY_SINGLE_PAGE_BYTES_EQUAL=True`；`CH10_TOTAL=10`、`CH10_SUCCESS=10`、`CH10_FAILED=0`、`CH10_FILE_COUNT=10`）
+- 提交哈希: N/A
+
+## SPLIT-MAIN-004
+- TASK-ID: SPLIT-MAIN-004
+- 状态: completed
+- 改动文件: `docs/gpu-translation-split-plan.md`, `docs/2026-02-10-project-audit.md`, `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: 无 API 变更；文档更新为“split 已并入 main，前端降级提示与灰度证据已闭环”。
+- 验证命令: `rg -n 'SPLIT-MAIN|GRAY_SINGLE_PAGE|CH10_TOTAL|fallback_to_unified' docs/gpu-translation-split-plan.md docs/2026-02-10-project-audit.md docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 验证结果: pass
+- 提交哈希: N/A

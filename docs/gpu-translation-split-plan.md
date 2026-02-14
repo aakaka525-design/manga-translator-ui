@@ -9,7 +9,8 @@
 - 已落地：`/internal/translate/detect`、`/internal/translate/render`、`CtxCache`、split/unified 自动降级链路。
 - 已落地：`translate_pipeline_mode=unified|split`（默认 unified，支持环境变量覆盖）。
 - 已落地：`/render` 错误状态机 `401 -> 503 -> 404 -> 410 -> 422 -> 400`。
-- 待执行：联调环境小样本实图验证（1 图 + 10 页）与灰度放量。
+- 已落地：前端降级提示（`pipeline_mode=fallback_to_unified`）Toast 告警。
+- 已完成：小样本灰度证据（1 图 split/unified 一致；10 页章节 `success_count=10`、`failed_count=0`、文件数=10）。
 
 ---
 
@@ -508,13 +509,27 @@ assert success_count + failed_count == total_count   # 完整性: 每页必须�
 
 ### 实施前前提
 
-- [ ] 确认分离方案的核心 ROI 来源是吞吐量与稳定性 (成本节省当前不成立)
+- [x] 确认分离方案的核心 ROI 来源是吞吐量与稳定性 (成本节省当前不成立)
 
 ### 通过条件 (可放量)
 
-- [ ] `/detect` 返回 task_id + region_index(0..n-1) + 完整 serialized_regions + image_hash + ttl
-- [ ] `/render` 按 task_id 取缓存, 按优先级状态机返回错误码, cache miss 自动降级到 /page, 不返回假成功
-- [ ] Phase 2 复用 `_batch_translate_texts` 语义, 通过显式 Semaphore(1) 串行执行, 不写新翻译核心
-- [ ] 单页灰度: split 输出与 unified 视觉一致
-- [ ] 10 页章节基准: success_count + failed_count == total_count, 且 success_count == total_count
-- [ ] 前端 Toast 标记降级页
+- [x] `/detect` 返回 task_id + region_index(0..n-1) + 完整 serialized_regions + image_hash + ttl
+- [x] `/render` 按 task_id 取缓存, 按优先级状态机返回错误码, cache miss 自动降级到 /page, 不返回假成功
+- [x] Phase 2 复用 `_batch_translate_texts` 语义, 通过显式 Semaphore(1) 串行执行, 不写新翻译核心
+- [x] 单页灰度: split 输出与 unified 视觉一致
+- [x] 10 页章节基准: success_count + failed_count == total_count, 且 success_count == total_count
+- [x] 前端 Toast 标记降级页
+
+### 2026-02-14 灰度证据
+
+- 单页一致性（1 图）：
+  - `GRAY_SINGLE_PAGE_UNIFIED_EXISTS True`
+  - `GRAY_SINGLE_PAGE_SPLIT_EXISTS True`
+  - `GRAY_SINGLE_PAGE_BYTES_EQUAL True`
+- 10 页章节语义一致性：
+  - `CH10_TOTAL 10`
+  - `CH10_SUCCESS 10`
+  - `CH10_FAILED 0`
+  - `CH10_FILE_COUNT 10`
+  - `CH10_ASSERT_SUM_OK True`
+  - `CH10_ASSERT_ALL_SUCCESS True`

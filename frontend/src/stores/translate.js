@@ -34,14 +34,14 @@ export const useTranslateStore = defineStore('translate', () => {
 
     function resetChapterTracker(mangaId, chapterId) {
         const key = chapterKey(mangaId, chapterId)
-        chapterTrackers.set(key, { finalTaskIds: new Set() })
+        chapterTrackers.set(key, { finalTaskIds: new Set(), sawFallbackToUnified: false })
         return chapterTrackers.get(key)
     }
 
     function getChapterTracker(mangaId, chapterId) {
         const key = chapterKey(mangaId, chapterId)
         if (!chapterTrackers.has(key)) {
-            chapterTrackers.set(key, { finalTaskIds: new Set() })
+            chapterTrackers.set(key, { finalTaskIds: new Set(), sawFallbackToUnified: false })
         }
         return chapterTrackers.get(key)
     }
@@ -109,6 +109,8 @@ export const useTranslateStore = defineStore('translate', () => {
         chapter.failedPages = 0
         chapter.currentStage = 'init'
         chapter.statusText = `进行中 · ${stageLabel('init')}`
+        chapter.splitFallbackUsed = false
+        chapter.splitFallbackNotified = false
         resetChapterTracker(data.manga_id, data.chapter_id)
     }
 
@@ -124,6 +126,9 @@ export const useTranslateStore = defineStore('translate', () => {
         }
 
         const tracker = getChapterTracker(data.manga_id, data.chapter_id)
+        if (data.pipeline === 'fallback_to_unified') {
+            tracker.sawFallbackToUnified = true
+        }
         const taskId = data.task_id ? String(data.task_id) : ''
         const isFinalStage = chapter.currentStage === 'complete' || chapter.currentStage === 'failed'
         const isFinalStatus = data.status === 'completed' || data.status === 'failed'
@@ -178,6 +183,13 @@ export const useTranslateStore = defineStore('translate', () => {
         if (!chapter) return
         if (!chapter.isTranslating && Number(chapter.progress || 0) >= 100) return
 
+        const tracker = getChapterTracker(data.manga_id, data.chapter_id)
+        const fallbackUsed = Boolean(
+            chapter.splitFallbackUsed
+            || tracker.sawFallbackToUnified
+            || data.pipeline === 'fallback_to_unified'
+        )
+
         const successCount = data.success_count !== undefined ? data.success_count : 0
         const totalCount = data.total_count !== undefined ? data.total_count : chapter.page_count
         const failedCount = data.failed_count !== undefined
@@ -195,6 +207,7 @@ export const useTranslateStore = defineStore('translate', () => {
         chapter.completedPages = successCount + failedCount
         chapter.failedPages = failedCount
         chapter.currentStage = finalStatus === 'error' ? 'failed' : 'complete'
+        chapter.splitFallbackUsed = fallbackUsed
 
         if (finalStatus === 'error') {
             chapter.statusText = data.error_message ? `失败: ${data.error_message}` : '失败'
@@ -218,6 +231,11 @@ export const useTranslateStore = defineStore('translate', () => {
             chapter.progress = Math.round((successCount / totalCount) * 100)
         } else {
             chapter.progress = finalStatus === 'error' ? 0 : 100
+        }
+        if (fallbackUsed && !chapter.splitFallbackNotified) {
+            const chapterLabel = chapter.name || chapter.id || `${data.manga_id}/${data.chapter_id}`
+            toastStore.show(`章节已自动降级 unified 管线: ${chapterLabel}`, 'warning')
+            chapter.splitFallbackNotified = true
         }
         clearChapterTracker(data.manga_id, data.chapter_id)
     }
