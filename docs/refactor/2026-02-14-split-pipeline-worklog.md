@@ -118,14 +118,14 @@
 - 接口影响: 文档补充 split 落地与回归证据
 - 验证命令: `rg -n "split|internal/translate/detect|internal/translate/render|fallback_to_unified" docs/gpu-translation-split-plan.md docs/2026-02-10-project-audit.md docs/refactor/2026-02-14-split-pipeline-worklog.md`
 - 验证结果: pass
-- 提交哈希: 09b9383
+- 提交哈希: 8e90eab
 
 ## TASK-GIT-001
 
 - TASK-ID: TASK-GIT-001
-- 状态: pending
+- 状态: completed
 - 改动文件: 待提交文件集合
 - 接口影响: 无
-- 验证命令: `git status --short && git log --oneline -n 10`
-- 验证结果: pending
-- 提交哈希: N/A
+- 验证命令: `git status --short && git log --oneline -n 10 && git push -u personal codex/split-pipeline-20260214`
+- 验证结果: pass（分支已推送到 personal 远端）
+- 提交哈希: 09b9383, 8e90eab
