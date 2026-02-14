@@ -647,3 +647,462 @@
 - 验证命令: `gcloud run services update manga-translator-compute --region=europe-west1 --gpu=1 --gpu-type=nvidia-l4 ...`、`gcloud run deploy manga-translator-compute-gpu-test --region=us-central1 --gpu=1 --gpu-type=nvidia-l4 ...`、`gcloud beta quotas preferences create ... --quota-id=NvidiaL4GpuAllocNoZonalRedundancyPerProjectRegion ...`、`gcloud beta quotas preferences create ... --quota-id=NvidiaRtxPro6000GpuAllocNoZonalRedundancyPerProjectRegion ...`、`gcloud beta quotas preferences describe run-l4-nozr-uscentral1 --project=manga-translator-2602111442`、`gcloud beta quotas preferences describe run-rtx-nozr-uscentral1 --project=manga-translator-2602111442`
 - 验证结果: blocked（L4/RTX 跨区域申请均 `preferredValue=1` 但 `grantedValue=0`）
 - 提交哈希: a75927b
+
+## TASK-DEP-15
+- TASK-ID: TASK-DEP-15
+- 状态: blocked
+- 改动文件: `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: 无 API 契约变更；在“计费已开启”前提下重新执行 Cloud Run GPU 部署复测，结果仍受 GPU quota=0 阻断
+- 验证命令: `gcloud billing projects describe manga-translator-2602111442 --format='value(billingEnabled,billingAccountName)'`、`gcloud run services update manga-translator-compute --region=europe-west1 --gpu=1 --gpu-type=nvidia-l4 --no-gpu-zonal-redundancy ...`、`gcloud run services update manga-translator-compute --region=europe-west1 --gpu=1 --gpu-type=nvidia-l4 --gpu-zonal-redundancy ...`、`gcloud run deploy manga-translator-compute-gpu-test --region=us-central1 --gpu=1 --gpu-type=nvidia-l4 --no-gpu-zonal-redundancy ...`、`gcloud beta quotas preferences describe run-l4-nozr-euw1 --project=manga-translator-2602111442`
+- 验证结果: blocked（`billingEnabled=True`，但部署报错“no quota for GPUs with/without zonal redundancy”；`grantedValue=0`）
+- 提交哈希: N/A
+
+## TASK-DEP-16
+- TASK-ID: TASK-DEP-16
+- 状态: completed（GPU blocked, CPU deployed）
+- 改动文件: `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: 无 API 契约变更；切换到项目 `onyx-hangout-468807-a4` 完成镜像构建与 Cloud Run 计算服务上线（CPU），GPU 仍受配额阻断
+- 验证命令: `gcloud config set project onyx-hangout-468807-a4`、`gcloud billing projects describe onyx-hangout-468807-a4`、`gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com secretmanager.googleapis.com`、`gcloud builds submit . --project=onyx-hangout-468807-a4 --config=/tmp/cloudbuild-manga-translator.yaml --substitutions=_IMAGE=gcr.io/onyx-hangout-468807-a4/manga-translator-compute:20260211-200919`、`gcloud run deploy manga-translator-compute --project=onyx-hangout-468807-a4 --image=gcr.io/onyx-hangout-468807-a4/manga-translator-compute:20260211-200919 --region=europe-west1 --gpu=1 ...`、`gcloud beta quotas preferences describe run-l4-nozr-uscentral1 --project=onyx-hangout-468807-a4`、`gcloud run deploy manga-translator-compute --project=onyx-hangout-468807-a4 --image=... --region=europe-west1 --cpu=4 --memory=8Gi --set-env-vars=MANGA_CLOUDRUN_COMPUTE_ONLY=1 --allow-unauthenticated`、`curl https://manga-translator-compute-814352053861.europe-west1.run.app/`
+- 验证结果: pass（Cloud Build `fc0ebc62-04a6-45d3-a0f5-e17009b828d8` 成功；GPU 部署仍报 quota=0；CPU revision `manga-translator-compute-00001-t64` Ready；健康检查返回 `{\"status\":\"ok\"}`）
+- 提交哈希: N/A
+
+## TASK-DEP-17
+- TASK-ID: TASK-DEP-17
+- 状态: completed
+- 改动文件: `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: 无 API 契约变更；Cloud Run 计费模式从“基于请求（CPU throttling）”切换为“基于实例（CPU always allocated）”
+- 验证命令: `gcloud run services update manga-translator-compute --project=onyx-hangout-468807-a4 --region=europe-west1 --no-cpu-throttling`、`gcloud run services describe manga-translator-compute --project=onyx-hangout-468807-a4 --region=europe-west1 --format='yaml(status.latestReadyRevisionName,spec.template.metadata.annotations)'`、`curl https://manga-translator-compute-814352053861.europe-west1.run.app/`
+- 验证结果: pass（revision `manga-translator-compute-00002-qxr`；注解 `run.googleapis.com/cpu-throttling: 'false'`；健康检查 `{\"status\":\"ok\"}`）
+- 提交哈希: N/A
+
+## TASK-DEP-18
+- TASK-ID: TASK-DEP-18
+- 状态: in_progress（GPU revision created but not Ready）
+- 改动文件: `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: 无 API 契约变更；按 L4 前置要求完成服务参数收敛（`CPU=4`、`Memory=16Gi`、`instance-based billing`、`maxScale=1`），并发起 GPU 挂载验证
+- 验证命令: `gcloud beta run services update manga-translator-compute --project=onyx-hangout-468807-a4 --region=europe-west1 --max=1`、`gcloud run revisions delete manga-translator-compute-00001-t64 ... && gcloud run revisions delete manga-translator-compute-00002-qxr ...`、`gcloud run services update manga-translator-compute --project=onyx-hangout-468807-a4 --region=europe-west1 --memory=16Gi`、`gcloud beta run services update manga-translator-compute --project=onyx-hangout-468807-a4 --region=europe-west1 --max=1 --gpu=1 --gpu-type=nvidia-l4 --no-gpu-zonal-redundancy --cpu=4 --memory=16Gi --no-cpu-throttling --startup-probe=initialDelaySeconds=60,periodSeconds=10,timeoutSeconds=10,failureThreshold=30,tcpSocket.port=8080`、`gcloud run revisions describe manga-translator-compute-00006-2xt --project=onyx-hangout-468807-a4 --region=europe-west1`
+- 验证结果: partial（服务当前 ready revision=`00004-rxg`，参数已满足 L4 前置；GPU revision `00006-2xt` 含 `nvidia.com/gpu: 1` 与 `nodeSelector=nvidia-l4`，但 `ContainerHealthy` 为 `Unknown`，部署未完成流量切换）
+- 提交哈希: N/A
+
+## TASK-GPU-01
+- TASK-ID: TASK-GPU-01
+- 状态: completed
+- 改动文件: 无（云端配置核验）
+- 接口影响: 无
+- 验证命令: `gcloud run services describe manga-translator-compute --region=europe-west1 --project=onyx-hangout-468807-a4 --format='yaml(status.latestCreatedRevisionName,status.latestReadyRevisionName,spec.template.metadata.annotations,spec.template.spec.containerConcurrency,spec.template.spec.containers[0].resources,status.traffic)'`
+- 验证结果: pass（回滚锚点保留：`latestReadyRevisionName=manga-translator-compute-00004-rxg`；服务模板含 `cpu=4,memory=16Gi,nvidia.com/gpu=1,maxScale=1,cpu-throttling=false`）
+- 提交哈希: N/A
+
+## TASK-GPU-02
+- TASK-ID: TASK-GPU-02
+- 状态: completed
+- 改动文件: 无（Cloud Build 实操）
+- 接口影响: 无
+- 验证命令: `gcloud builds submit . --project=onyx-hangout-468807-a4 --config=/tmp/cloudbuild-manga-translator-gpu.yaml --substitutions=_IMAGE=gcr.io/onyx-hangout-468807-a4/manga-translator-compute:gpu-20260211-211034 --timeout=7200`、`gcloud builds describe 364f862b-9a8b-4fef-b08f-8a4a0b54f57e --project=onyx-hangout-468807-a4 --format='yaml(status,finishTime,results.images)'`
+- 验证结果: pass（GPU 镜像构建成功，digest=`sha256:5b6c78081b4bcd696efcc212010878179ff42ce523bfbd0e16c5df074c3f1fec`）
+- 提交哈希: N/A
+
+## TASK-GPU-03
+- TASK-ID: TASK-GPU-03
+- 状态: completed（结果为失败定位）
+- 改动文件: 无（Cloud Run 部署参数收敛）
+- 接口影响: 无
+- 验证命令: `gcloud run deploy manga-translator-compute --project=onyx-hangout-468807-a4 --region=europe-west1 --image=gcr.io/onyx-hangout-468807-a4/manga-translator-compute:gpu-20260211-211034 --gpu=1 --gpu-type=nvidia-l4 --no-gpu-zonal-redundancy --cpu=4 --memory=16Gi --concurrency=1 --timeout=900 --max-instances=1 --no-cpu-throttling --startup-probe=initialDelaySeconds=60,periodSeconds=10,timeoutSeconds=10,failureThreshold=30,tcpSocket.port=8080 --update-env-vars=MANGA_CLOUDRUN_COMPUTE_ONLY=1,MT_USE_GPU=true`
+- 验证结果: blocked（revision `manga-translator-compute-00008-k77` 未就绪；报错 `Quota exceeded for total allowable count of GPUs per project per region`）
+- 提交哈希: N/A
+
+## TASK-GPU-04
+- TASK-ID: TASK-GPU-04
+- 状态: blocked
+- 改动文件: 无（运行时验证）
+- 接口影响: 无
+- 验证命令: `gcloud run revisions describe manga-translator-compute-00007-25f --region=europe-west1 --project=onyx-hangout-468807-a4 --format='yaml(spec.containers[0].resources,spec.nodeSelector,status.conditions,status.imageDigest)'`、`gcloud run revisions describe manga-translator-compute-00008-k77 --region=europe-west1 --project=onyx-hangout-468807-a4 --format='yaml(status.conditions)'`
+- 验证结果: fail（`00007`/`00008` 未满足 ready 条件，`GET /` 与内网烟测无法在 GPU revision 上完成）
+- 提交哈希: N/A
+
+## TASK-GPU-05
+- TASK-ID: TASK-GPU-05
+- 状态: blocked（仅完成 CPU 基线）
+- 改动文件: 无（性能验证）
+- 接口影响: 无
+- 验证命令: `curl -sS -o /tmp/cloudrun_internal_out.bin -D /tmp/cloudrun_internal_headers.txt -w 'HTTP=%{http_code} TOTAL=%{time_total}\\n' -F image=@docs/perf/artifacts/2026-02-10-real-image-view/raw/bench_manga/chapter_bench/001.jpg -F source_language=en -F target_language=zh -F context_translations=[] https://manga-translator-compute-814352053861.europe-west1.run.app/internal/translate/page`
+- 验证结果: partial（CPU 版本请求成功：`HTTP=200`，耗时 `444.178s`，产图 `738791 bytes`；GPU 对照因配额阻断无法完成）
+- 提交哈希: N/A
+
+## TASK-GPU-06
+- TASK-ID: TASK-GPU-06
+- 状态: completed（跨区回退已验证为配额阻断）
+- 改动文件: 无（GCP 配额与区域验证）
+- 接口影响: 无
+- 验证命令: `gcloud run deploy manga-translator-compute --project=onyx-hangout-468807-a4 --region=us-central1 --image=gcr.io/onyx-hangout-468807-a4/manga-translator-compute:gpu-20260211-211034 --gpu=1 --gpu-type=nvidia-l4 --no-gpu-zonal-redundancy ...`、`gcloud run deploy ... --gpu-zonal-redundancy ...`、`gcloud beta quotas preferences create --project=onyx-hangout-468807-a4 --service=run.googleapis.com --quota-id=NvidiaL4GpuAllocNoZonalRedundancyPerProjectRegion --dimensions=region=europe-west1 --preferred-value=1 --preference-id=l4-nozonal-euw1`、`gcloud beta quotas preferences list --project=onyx-hangout-468807-a4`
+- 验证结果: pass（`europe-west1/us-central1` 均无法获配 GPU，quota preference 回写 `grantedValue=0`）
+- 提交哈希: N/A
+
+## TASK-GPU-07
+- TASK-ID: TASK-GPU-07
+- 状态: blocked
+- 改动文件: 无（82 挂接未切换）
+- 接口影响: 无
+- 验证命令: `gcloud run services describe manga-translator-compute --region=europe-west1 --project=onyx-hangout-468807-a4 --format='yaml(status.latestReadyRevisionName,status.url)'`
+- 验证结果: blocked（当前稳定 revision 为 CPU `manga-translator-compute-00009-pv4`，不存在可用 GPU endpoint，82 暂不切换）
+- 提交哈希: N/A
+
+## TASK-GPU-08
+- TASK-ID: TASK-GPU-08
+- 状态: completed
+- 改动文件: `docs/refactor/2026-02-10-phase4-impl-worklog.md`, `docs/2026-02-10-project-audit.md`, `docs/deployment/2026-02-11-82-cloudrun-hybrid.md`
+- 接口影响: 无
+- 验证命令: `rg -n 'TASK-GPU-0|onyx-hangout-468807-a4|quota|00009-pv4|444.178' docs/refactor/2026-02-10-phase4-impl-worklog.md docs/2026-02-10-project-audit.md docs/deployment/2026-02-11-82-cloudrun-hybrid.md`
+- 验证结果: pass
+- 提交哈希: N/A
+
+## DEP-GPU-01
+- TASK-ID: DEP-GPU-01
+- 状态: completed
+- 改动文件: 无（GCP 项目与服务基线操作）
+- 接口影响: 无 API 契约变化
+- 验证命令: `gcloud config set project gen-lang-client-0238401140`、`gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com secretmanager.googleapis.com cloudresourcemanager.googleapis.com`、`gcloud run services list --region=europe-west1 --project=gen-lang-client-0238401140`、`gcloud run services delete gpu-quota-check --region=europe-west1 --project=gen-lang-client-0238401140 --quiet`
+- 验证结果: pass（目标项目可用，必需 API 全启用，临时探针服务已清理）
+- 提交哈希: N/A
+
+## DEP-GPU-02
+- TASK-ID: DEP-GPU-02
+- 状态: completed
+- 改动文件: 无（Cloud Build 构建流程）
+- 接口影响: 无 API 契约变化
+- 验证命令: `gcloud builds submit . --project=gen-lang-client-0238401140 --config=/tmp/cloudbuild-manga-translator-gpu-023.yaml --substitutions=_IMAGE=gcr.io/gen-lang-client-0238401140/manga-translator-compute:gpu-20260212-003244 --timeout=7200`、`gcloud builds describe ae90b109-9e42-43c5-a003-8f62edeec8f7 --project=gen-lang-client-0238401140 --format='yaml(status,results.images)'`
+- 验证结果: pass（构建 SUCCESS，镜像 digest=`sha256:be2d6e9f598ad6603d06fae703caf7ebd52c4015b3abfaff173c41df4e1d9ddb`）
+- 提交哈希: N/A
+
+## DEP-GPU-03
+- TASK-ID: DEP-GPU-03
+- 状态: completed
+- 改动文件: 无（Cloud Run GPU 部署）
+- 接口影响: 无 API 契约变化
+- 验证命令: `gcloud run deploy manga-translator-compute --project=gen-lang-client-0238401140 --region=europe-west1 --image=gcr.io/gen-lang-client-0238401140/manga-translator-compute:gpu-20260212-003244 --gpu=1 --gpu-type=nvidia-l4 --no-gpu-zonal-redundancy --cpu=4 --memory=16Gi --concurrency=1 --timeout=900 --max-instances=1 --no-cpu-throttling --startup-probe=initialDelaySeconds=60,periodSeconds=10,timeoutSeconds=10,failureThreshold=30,httpGet.path=/,httpGet.port=8080 --update-env-vars=MANGA_CLOUDRUN_COMPUTE_ONLY=1,MT_USE_GPU=true,GEMINI_MODEL=gemini-2.0-flash,MANGA_INTERNAL_API_TOKEN=<redacted> --allow-unauthenticated`
+- 验证结果: pass（revision `manga-translator-compute-00001-44n` 创建并接管 100% 流量）
+- 提交哈希: N/A
+
+## DEP-GPU-04
+- TASK-ID: DEP-GPU-04
+- 状态: completed
+- 改动文件: 无（部署就绪校验）
+- 接口影响: 无 API 契约变化
+- 验证命令: `gcloud run services describe manga-translator-compute --region=europe-west1 --project=gen-lang-client-0238401140 --format='yaml(status.latestCreatedRevisionName,status.latestReadyRevisionName,spec.template.spec.containers[0].resources,spec.template.spec.nodeSelector,status.url)'`、`curl -sS -o /tmp/cr023_root_body.json -D /tmp/cr023_root_headers.txt -w 'HTTP=%{http_code} TOTAL=%{time_total}\\n' https://manga-translator-compute-3lzbxzz5dq-ew.a.run.app/`
+- 验证结果: pass（`latestCreated == latestReady == manga-translator-compute-00001-44n`，包含 `nvidia.com/gpu:1` 与 `nodeSelector=nvidia-l4`，根路径 200）
+- 提交哈希: N/A
+
+## DEP-GPU-05
+- TASK-ID: DEP-GPU-05
+- 状态: completed
+- 改动文件: 无（运行时烟测）
+- 接口影响: 无 API 契约变化
+- 验证命令: `curl -sS -o /tmp/cr023_smoke_*.bin -D /tmp/cr023_smoke_*.headers -X POST https://manga-translator-compute-3lzbxzz5dq-ew.a.run.app/internal/translate/page -H 'X-Internal-Token: <redacted>' -F image=@docs/perf/artifacts/2026-02-10-real-image-view/raw/bench_manga/chapter_bench/001.jpg -F source_language=en -F target_language=zh -F context_translations=[]`（连续 3 次）
+- 验证结果: pass（3/3 `HTTP 200`，`x-fallback-used=0`，输出 `742323 bytes`，无 503）
+- 提交哈希: N/A
+
+## DEP-GPU-06
+- TASK-ID: DEP-GPU-06
+- 状态: completed
+- 改动文件: `/etc/systemd/system/manga-translator.service`（82 服务器）
+- 接口影响: 无 API 契约变化；仅执行 backend 计算目标切换
+- 验证命令: `ssh root@82.22.36.81 'grep -E \"MANGA_TRANSLATE_EXECUTION_BACKEND|MANGA_CLOUDRUN_EXEC_URL|MANGA_CLOUDRUN_TIMEOUT_SEC|MANGA_CLOUDRUN_EXECUTOR_RETRIES\" /etc/systemd/system/manga-translator.service'`、`ssh root@82.22.36.81 'systemctl daemon-reload && systemctl restart manga-translator.service && systemctl is-active manga-translator.service'`
+- 验证结果: pass（`MANGA_TRANSLATE_EXECUTION_BACKEND=cloudrun`，`MANGA_CLOUDRUN_EXEC_URL=https://manga-translator-compute-3lzbxzz5dq-ew.a.run.app`，服务 active）
+- 提交哈希: N/A
+
+## DEP-GPU-07
+- TASK-ID: DEP-GPU-07
+- 状态: partial
+- 改动文件: 无（线上联调验证）
+- 接口影响: 无 API 契约变化
+- 验证命令: `ssh root@82.22.36.81 'curl -s -o /tmp/h1 -w \"%{http_code}\\n\" http://127.0.0.1/; curl -s -o /tmp/h2 -w \"%{http_code}\\n\" http://127.0.0.1/signin; curl -s -o /tmp/h3 -w \"%{http_code}\\n\" http://127.0.0.1/scraper; curl -s -o /tmp/h4 -w \"%{http_code}\\n\" http://127.0.0.1/manga/test-id; curl -s -o /tmp/h5 -w \"%{http_code}\\n\" http://127.0.0.1/read/m1/c1; curl -sS http://127.0.0.1/auth/status'`
+- 验证结果: partial（路由均 200，服务可达；`/auth/status` 为 `need_setup=true`，登录后章节/单页 UI 译图验证待管理员初始化后执行）
+- 提交哈希: N/A
+
+## DEP-GPU-08
+- TASK-ID: DEP-GPU-08
+- 状态: completed
+- 改动文件: 无（性能对照记录）
+- 接口影响: 无 API 契约变化
+- 验证命令: `cat /tmp/cr023_smoke_1.headers /tmp/cr023_smoke_2.headers /tmp/cr023_smoke_3.headers`、`python - <<'PY'\ncpu=444.178112\ngpu=(29.065804+29.261523+26.192682)/3\nprint(f'gpu_avg={gpu:.6f}, improve={(1-gpu/cpu)*100:.2f}%')\nPY`
+- 验证结果: pass（GPU 平均 `28.173s`；对比 CPU 基线 `444.178s`，改善约 `93.66%`；503=0）
+- 提交哈希: N/A
+
+## DEP-GPU-09
+- TASK-ID: DEP-GPU-09
+- 状态: completed
+- 改动文件: `docs/deployment/2026-02-11-82-cloudrun-hybrid.md`, `docs/2026-02-10-project-audit.md`, `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: 无 API 契约变化；文档同步最新 GPU 上线状态与验证证据
+- 验证命令: `rg -n 'gen-lang-client-0238401140|manga-translator-compute-00001-44n|gpu-20260212-003244|DEP-GPU-0' docs/deployment/2026-02-11-82-cloudrun-hybrid.md docs/2026-02-10-project-audit.md docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 验证结果: pass
+- 提交哈希: N/A
+
+## IMG-FIX-01
+- TASK-ID: IMG-FIX-01
+- 状态: completed
+- 改动文件: `/etc/nginx/sites-available/manga-translator.conf`（82 服务器）
+- 接口影响: 无 API 契约变更；仅修复 Nginx 反代路由，新增 `/data/` 转发到 `127.0.0.1:8000`
+- 验证命令: `cp /etc/nginx/sites-available/manga-translator.conf /etc/nginx/sites-available/manga-translator.conf.bak.<timestamp>`、`nginx -t`、`systemctl reload nginx`
+- 验证结果: pass（`nginx -t` 成功，配置热加载成功；备份文件 `manga-translator.conf.bak.20260211-182913`）
+- 提交哈希: N/A
+
+## IMG-FIX-02
+- TASK-ID: IMG-FIX-02
+- 状态: completed
+- 改动文件: `deploy/nginx/manga-translator-82.conf`
+- 接口影响: 无 API 契约变更；部署模板补齐 `/data/` 反代，避免后续部署回归
+- 验证命令: `rg -n 'location /data/' deploy/nginx/manga-translator-82.conf`
+- 验证结果: pass
+- 提交哈希: N/A
+
+## IMG-FIX-03
+- TASK-ID: IMG-FIX-03
+- 状态: completed
+- 改动文件: 无（运行时验证）
+- 接口影响: 无 API 契约变更
+- 验证命令: `curl -sSI http://127.0.0.1:8000/data/raw/isekai-dragondick-knight-commander/chapter-1/006.jpg`、`curl -sSI http://127.0.0.1/data/raw/isekai-dragondick-knight-commander/chapter-1/006.jpg`、`curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/{,signin,scraper,manga/test-id,read/m1/c1,api/v1/manga,auth/status,admin/scraper/health}`
+- 验证结果: pass（`:8000` 与 `:80` 均返回 `HTTP 200` + `image/jpeg`；前端路由 200；`/api/v1/manga` 与 `/admin/scraper/health` 保持 401）
+- 提交哈希: N/A
+
+## IMG-FIX-04
+- TASK-ID: IMG-FIX-04
+- 状态: completed
+- 改动文件: `docs/deployment/2026-02-11-82-cloudrun-hybrid.md`, `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: 无 API 契约变更；文档与实际修复保持一致
+- 验证命令: `rg -n '82 图片加载故障修复|IMG-FIX-0|location /data/' docs/deployment/2026-02-11-82-cloudrun-hybrid.md docs/refactor/2026-02-10-phase4-impl-worklog.md deploy/nginx/manga-translator-82.conf`
+- 验证结果: pass
+- 提交哈希: N/A
+
+## FULL-FIX-01
+- TASK-ID: FULL-FIX-01
+- 状态: partial（代码防护已完成，云端 key 注入受阻）
+- 改动文件: `manga_translator/server/routes/v1_translate.py`, `manga_translator/server/main.py`, `manga_translator/server/cloudrun_compute_main.py`
+- 接口影响: 无新增端点；`/internal/translate/page` 在 `MANGA_CLOUDRUN_COMPUTE_ONLY=1` 且缺少 `GEMINI_API_KEY` 时返回 `503`（避免 fallback 200 假成功）。
+- 验证命令: `gcloud run services describe manga-translator-compute --project=gen-lang-client-0238401140 --region=europe-west1 --format='yaml(spec.template.spec.containers[0].env)'`、`pytest -q tests/test_v1_routes.py -k internal_translate_page_requires_gemini_key_in_compute_mode`
+- 验证结果: partial（服务现状确认无 `GEMINI_API_KEY`；缺 key 场景测试通过并返回 503）
+- 提交哈希: N/A
+
+## FULL-FIX-02
+- TASK-ID: FULL-FIX-02
+- 状态: completed
+- 改动文件: `manga_translator/server/routes/v1_translate.py`, `tests/test_v1_translate_concurrency.py`
+- 接口影响: 无 API 变更；CloudRun executor 增加全局串行门（single-flight）与更长退避默认值，减少 `maxScale=1/concurrency=1` 下的 429 风暴。
+- 验证命令: `pytest -q tests/test_v1_translate_concurrency.py -k cloudrun_executor_requests_are_serialized_by_global_gate`
+- 验证结果: pass（并发调用下 `max_active==1`）
+- 提交哈希: N/A
+
+## FULL-FIX-03
+- TASK-ID: FULL-FIX-03
+- 状态: completed
+- 改动文件: `manga_translator/server/routes/v1_translate.py`, `tests/test_v1_translate_pipeline.py`
+- 接口影响: 无 schema 变化；CloudRun fallback 和上游异常统一按失败处理，失败消息包含 `failure_stage/status_code`，章节汇总继续保持 `error/partial/success` 语义。
+- 验证命令: `pytest -q tests/test_v1_translate_pipeline.py -k failed_progress_event_contains_cloudrun_status_code`
+- 验证结果: pass（失败事件包含 `status=429` 与 `failure_stage=remote`）
+- 提交哈希: N/A
+
+## FULL-FIX-04
+- TASK-ID: FULL-FIX-04
+- 状态: completed
+- 改动文件: `frontend/src/stores/translate.js`, `frontend/src/views/MangaView.vue`, `frontend/tests/translate.test.js`, `frontend/tests/translate_progress_semantics.test.js`
+- 接口影响: 无 API 变更；前端进度语义改为“成功页进度”，失败页仅计入失败统计。
+- 验证命令: `cd frontend && npm test -- --run tests/translate.test.js tests/translate_progress_semantics.test.js`
+- 验证结果: pass（失败页不再推进成功进度）
+- 提交哈希: N/A
+
+## FULL-FIX-05
+- TASK-ID: FULL-FIX-05
+- 状态: completed
+- 改动文件: `manga_translator/server/routes/v1_translate.py`, `manga_translator/server/main.py`
+- 接口影响: 无 API 变更；新增页级失败结构化日志字段（`backend/status_code/failure_stage/fallback_used/attempts`）与启动配置自检日志（`has_gemini_key/model/compute_only`）。
+- 验证命令: `python -m compileall manga_translator/server/routes/v1_translate.py manga_translator/server/main.py`
+- 验证结果: pass
+- 提交哈希: N/A
+
+## FULL-FIX-06
+- TASK-ID: FULL-FIX-06
+- 状态: completed
+- 改动文件: `tests/test_v1_translate_concurrency.py`, `tests/test_v1_translate_pipeline.py`, `tests/test_v1_routes.py`, `frontend/tests/translate_progress_semantics.test.js`, `frontend/tests/translate.test.js`
+- 接口影响: 无 API 变更；补齐 CloudRun 串行、失败语义、internal key 缺失保护、前端进度语义回归覆盖。
+- 验证命令: `pytest -q tests/test_v1_translate_concurrency.py tests/test_v1_translate_pipeline.py tests/test_v1_routes.py`、`cd frontend && npm test -- --run`
+- 验证结果: pass（后端 `48 passed`；前端 `51 passed`）
+- 提交哈希: N/A
+
+## FULL-FIX-07
+- TASK-ID: FULL-FIX-07
+- 状态: partial（受 Cloud Run 缺少有效 `GEMINI_API_KEY` 阻塞）
+- 改动文件: 无（验证与对照）
+- 接口影响: 无 API 变更
+- 验证命令: `ssh root@82.22.36.81 'systemctl cat manga-translator.service'`、`ssh root@82.22.36.81 'python3 - <<\"PY\" ... print(GEMINI_API_KEY/OPENAI_API_KEY) ... PY'`、`gcloud run services describe manga-translator-compute --project=gen-lang-client-0238401140 --region=europe-west1 --format='yaml(spec.template.spec.containers[0].env)'`
+- 验证结果: partial（82 与 Cloud Run 均确认未注入 `GEMINI_API_KEY`；因此线上仍无法完成真实翻译，仅可避免“假成功”）
+- 提交哈希: N/A
+
+## FULL-FIX-08
+- TASK-ID: FULL-FIX-08
+- 状态: completed
+- 改动文件: `docs/2026-02-10-project-audit.md`, `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: 无 API 变更；文档与本轮真实行为、阻塞项、验证证据一致。
+- 验证命令: `rg -n 'FULL-FIX-0|Vue“有进度无译图”收敛修复|GEMINI_API_KEY' docs/2026-02-10-project-audit.md docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 验证结果: pass
+- 提交哈希: N/A
+
+## FULL-FIX-01-OPS
+- TASK-ID: FULL-FIX-01-OPS
+- 状态: partial（新 revision 已部署验证，但因缺少 `GEMINI_API_KEY` 已回滚流量）
+- 改动文件: `docs/2026-02-10-project-audit.md`, `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: 无端点变更；`/internal/translate/page` 在新 revision 上按预期严格返回 `503 + compute runtime missing GEMINI_API_KEY`，已验证不会假成功。
+- 验证命令: `gcloud builds describe 897ef246-2d62-4bcd-b0d6-06632ffcd582 --project=gen-lang-client-0238401140`、`gcloud run services describe manga-translator-compute --project=gen-lang-client-0238401140 --region=europe-west1`、`curl -sS -X POST https://manga-translator-compute-3lzbxzz5dq-ew.a.run.app/internal/translate/page ...`、`gcloud run services update-traffic manga-translator-compute --project=gen-lang-client-0238401140 --region=europe-west1 --to-revisions manga-translator-compute-00001-44n=100`
+- 验证结果: partial（构建与部署成功；新 revision 503 语义正确；回滚后 200 恢复）
+- 提交哈希: N/A
+
+## CUDNN-FIX-01
+- TASK-ID: CUDNN-FIX-01
+- 状态: completed
+- 改动文件: `packaging/Dockerfile`
+- 接口影响: 无 API 契约变化；仅 GPU 镜像运行库基底与链接路径收敛
+- 验证命令: `git diff -- packaging/Dockerfile`、`gcloud builds log f4d406dd-ceaf-4ec1-84ac-fd4badaf055a --project gen-lang-client-0238401140 | tail -n 80`
+- 验证结果: pass（GPU 镜像已切到 `CUDA 12.8`，构建日志显示 `onnxruntime providers` 含 `CUDAExecutionProvider`）
+- 提交哈希: N/A
+
+## CUDNN-FIX-02
+- TASK-ID: CUDNN-FIX-02
+- 状态: completed
+- 改动文件: `packaging/Dockerfile`
+- 接口影响: 无 API 契约变化；新增构建期 GPU 依赖硬校验
+- 验证命令: `gcloud builds log f4d406dd-ceaf-4ec1-84ac-fd4badaf055a --project gen-lang-client-0238401140 | tail -n 140`
+- 验证结果: pass（`ldd -r libonnxruntime_providers_cuda.so` 校验通过，未检测到非白名单 unresolved 依赖）
+- 提交哈希: N/A
+
+## CUDNN-FIX-03
+- TASK-ID: CUDNN-FIX-03
+- 状态: completed
+- 改动文件: `manga_translator/server/cloudrun_compute_main.py`, `tests/test_cloudrun_compute_startup.py`
+- 接口影响: 无 API 契约变化；`MANGA_REQUIRE_GPU=1` 时运行期 GPU 依赖不完整将启动失败
+- 验证命令: `pytest -q tests/test_cloudrun_compute_startup.py`
+- 验证结果: pass（2 passed，startup GPU 闸门行为符合预期）
+- 提交哈希: N/A
+
+## CUDNN-FIX-04
+- TASK-ID: CUDNN-FIX-04
+- 状态: completed
+- 改动文件: `deploy/cloudrun/deploy-compute.sh`
+- 接口影响: 无 API 契约变化；部署脚本与 GPU 严格模式参数对齐
+- 验证命令: `git diff -- deploy/cloudrun/deploy-compute.sh`
+- 验证结果: pass（已固定 `MANGA_REQUIRE_GPU=1`、L4 资源参数与 startup probe）
+- 提交哈希: N/A
+
+## CUDNN-FIX-05
+- TASK-ID: CUDNN-FIX-05
+- 状态: completed
+- 改动文件: `.github/workflows/docker-build-push.yml`
+- 接口影响: 无 API 契约变化；CI GPU 构建参数同步
+- 验证命令: `git diff -- .github/workflows/docker-build-push.yml`
+- 验证结果: pass（`CUDA_VERSION` 已统一为 `12.8.0`）
+- 提交哈希: N/A
+
+## CUDNN-FIX-06
+- TASK-ID: CUDNN-FIX-06
+- 状态: completed
+- 改动文件: 无（Cloud Run canary 发布）
+- 接口影响: 无 API 契约变化；仅 revision 发布策略变更
+- 验证命令: `gcloud builds describe f4d406dd-ceaf-4ec1-84ac-fd4badaf055a --project gen-lang-client-0238401140 --format='yaml(status,results.images)'`、`gcloud run deploy manga-translator-compute ... --no-traffic --tag canary --image ...@sha256:3f5569afb169...`
+- 验证结果: pass（canary revision `manga-translator-compute-00010-xej` ready，流量 0%）
+- 提交哈希: N/A
+
+## CUDNN-FIX-07
+- TASK-ID: CUDNN-FIX-07
+- 状态: completed
+- 改动文件: 无（运行验证）
+- 接口影响: 无 API 契约变化
+- 验证命令: `curl -H 'Authorization: Bearer <id_token>' -H 'X-Internal-Token: <token>' https://canary---manga-translator-compute-3lzbxzz5dq-ew.a.run.app/internal/translate/page`（连续 3 次）、`ssh root@82.22.36.81 "curl ... https://manga-translator-compute-3lzbxzz5dq-ew.a.run.app/internal/translate/page"`（连续 3 次）、`gcloud logging read 'resource.labels.revision_name=\"manga-translator-compute-00010-xej\" ...'`
+- 验证结果: pass（本地 canary 3/3 `HTTP 200`，82 主机主域 3/3 `HTTP 200`，全部 `x-fallback-used=0`；日志无 `Failed to create CUDAExecutionProvider` / `libcudnn* undefined symbol`）
+- 提交哈希: N/A
+
+## CUDNN-FIX-08
+- TASK-ID: CUDNN-FIX-08
+- 状态: completed
+- 改动文件: 无（流量切换）
+- 接口影响: 无 API 契约变化；生产流量切换到新 revision，并保持“公网入口 + 内部 token”兼容
+- 验证命令: `gcloud run services update-traffic manga-translator-compute --project gen-lang-client-0238401140 --region europe-west1 --to-revisions manga-translator-compute-00010-xej=100`、`gcloud run services add-iam-policy-binding manga-translator-compute --project gen-lang-client-0238401140 --region europe-west1 --member=allUsers --role=roles/run.invoker`、`gcloud run services describe ...`
+- 验证结果: pass（`100% -> manga-translator-compute-00010-xej`，82 调用主域 `/internal/translate/page` 返回 `HTTP 200`，旧 revision 保留作回滚锚点）
+- 提交哈希: N/A
+
+## CUDNN-FIX-09
+- TASK-ID: CUDNN-FIX-09
+- 状态: completed
+- 改动文件: `docs/deployment/2026-02-11-82-cloudrun-hybrid.md`, `docs/2026-02-10-project-audit.md`, `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: 无 API 契约变化；文档与线上状态一致
+- 验证命令: `rg -n 'CUDNN-FIX|00010-xej|3f5569afb169|cuDNN9' docs/deployment/2026-02-11-82-cloudrun-hybrid.md docs/2026-02-10-project-audit.md docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 验证结果: pass
+- 提交哈希: N/A
+
+## MODEL-01
+- TASK-ID: MODEL-01
+- 状态: completed
+- 改动文件: `manga_translator/server/routes/v1_translate.py`, `manga_translator/server/main.py`, `manga_translator/server/cloudrun_compute_main.py`
+- 接口影响: 无新增端点；新增内部模型解析约定 `GEMINI_MODEL=gemini-3-flash-preview`、`GEMINI_FALLBACK_MODEL=gemini-2.5-flash`；旧值 `gemini-2.0-flash` 运行时归一化到 `gemini-2.5-flash`
+- 验证命令: `pytest -q tests/test_v1_routes.py -k gemini_model_resolution_defaults_and_legacy_normalization tests/test_v1_translate_concurrency.py -k runtime_gemini_model_resolution_normalizes_legacy tests/test_cloudrun_compute_startup.py -k cloudrun_runtime_gemini_models_normalize_legacy`
+- 验证结果: pass
+- 提交哈希: N/A
+
+## MODEL-02
+- TASK-ID: MODEL-02
+- 状态: completed
+- 改动文件: `manga_translator/server/routes/v1_translate.py`
+- 接口影响: 无 schema 破坏；页级结果/事件新增可选字段 `primary_model/fallback_model/selected_model`，日志新增 `fallback_reason`（模型回退原因）并保持失败语义不变
+- 验证命令: `pytest -q tests/test_v1_routes.py -k \"translate_single_image_uses_fallback_model_when_primary_fails or internal_translate_page_includes_model_headers\"`
+- 验证结果: pass
+- 提交哈希: N/A
+
+## MODEL-03
+- TASK-ID: MODEL-03
+- 状态: completed
+- 改动文件: `packaging/ppio_entrypoint.sh`
+- 接口影响: 无 API 变化；PPIO 启动脚本默认导出 `GEMINI_MODEL` 与 `GEMINI_FALLBACK_MODEL`
+- 验证命令: `rg -n 'GEMINI_MODEL|GEMINI_FALLBACK_MODEL' packaging/ppio_entrypoint.sh`
+- 验证结果: pass
+- 提交哈希: N/A
+
+## MODEL-04
+- TASK-ID: MODEL-04
+- 状态: completed
+- 改动文件: `packaging/Dockerfile`, `deploy/cloudrun/deploy-compute.sh`, `manga_translator/translators/keys.py`, `manga_translator/translators/gemini.py`, `manga_translator/translators/gemini_hq.py`, `manga_translator/translators/common.py`
+- 接口影响: 无 API 变化；容器与部署默认模型、翻译器默认模型统一到主 `3-preview` + fallback `2.5-flash`
+- 验证命令: `rg -n 'gemini-2\\.0-flash|GEMINI_MODEL|GEMINI_FALLBACK_MODEL' packaging/Dockerfile deploy/cloudrun/deploy-compute.sh manga_translator/translators`
+- 验证结果: pass（代码路径中仅保留弃用归一化常量，不再真实调用 `gemini-2.0-flash`）
+- 提交哈希: N/A
+
+## MODEL-05
+- TASK-ID: MODEL-05
+- 状态: completed
+- 改动文件: `frontend/src/stores/translate.js`（无新增改动，本轮确认现有 UI 未展示模型名称）
+- 接口影响: 无 API/前端 schema 变化；保持现有展示语义
+- 验证命令: `rg -n 'selected_model|gemini-2\\.0-flash' frontend/src/stores/translate.js frontend/src/views`
+- 验证结果: pass（未发现旧模型文案；现有 UI 无模型名称展示路径）
+- 提交哈希: N/A
+
+## MODEL-06
+- TASK-ID: MODEL-06
+- 状态: completed
+- 改动文件: `tests/test_v1_routes.py`, `tests/test_v1_translate_concurrency.py`, `tests/test_cloudrun_compute_startup.py`
+- 接口影响: 无 API 变化；新增模型解析与 fallback 回归测试
+- 验证命令: `pytest -q tests/test_cloudrun_compute_startup.py tests/test_v1_routes.py tests/test_v1_translate_concurrency.py tests/test_v1_translate_pipeline.py`
+- 验证结果: pass（55 passed）
+- 提交哈希: N/A
+
+## MODEL-07
+- TASK-ID: MODEL-07
+- 状态: completed
+- 改动文件: 无（本地验证）
+- 接口影响: 无
+- 验证命令: `cd frontend && npm test -- --run -t translate && npm run build`
+- 验证结果: pass（前端翻译相关测试通过，构建成功）
+- 提交哈希: N/A
+
+## MODEL-08
+- TASK-ID: MODEL-08
+- 状态: completed
+- 改动文件: `docs/2026-02-13-ppio-deployment-report.md`, `docs/2026-02-10-project-audit.md`, `docs/deployment/2026-02-11-82-cloudrun-hybrid.md`, `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: 无 API 变化；文档策略统一到主 `gemini-3-flash-preview` + fallback `gemini-2.5-flash`
+- 验证命令: `rg -n 'gemini-2\\.0-flash|GEMINI_MODEL|GEMINI_FALLBACK_MODEL' docs/2026-02-13-ppio-deployment-report.md docs/2026-02-10-project-audit.md docs/deployment/2026-02-11-82-cloudrun-hybrid.md`
+- 验证结果: pass
+- 提交哈希: N/A

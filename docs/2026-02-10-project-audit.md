@@ -308,7 +308,7 @@
 - **问题 3（Gemini 模型名失效）**：
   - 现象：返回原图 fallback，header 含 `Gemini API ... model not found`
   - 根因：默认模型名仍是 `gemini-1.5-flash*`，当前 API 不再可用
-  - 修复：Cloud Run 环境变量固定 `GEMINI_MODEL=gemini-2.0-flash`，并同步更新代码默认值
+  - 修复：Cloud Run 环境变量固定 `GEMINI_MODEL=gemini-3-flash-preview`，并新增 `GEMINI_FALLBACK_MODEL=gemini-2.5-flash`；`gemini-2.0-flash` 进入弃用归一化（运行时自动映射到 2.5）
 - **配置一致性补丁**：
   - `config_manager.load_default_config_dict()` 增加回退：`examples/config.json` 不存在时自动读 `examples/config-example.json`
   - 支持 `MANGA_SERVER_CONFIG_PATH` 环境变量覆盖默认配置路径
@@ -325,7 +325,7 @@
 - **已完成修复**：
   - `.gcloudignore` 显式放行 `dict/**`、`fonts/**`、`manga_translator/utils/panel/lib/**`，修复运行时资源缺失。
   - `internal/translate/page` 响应头增加 ASCII 安全编码，修复 `UnicodeEncodeError` 导致的 500。
-  - Gemini 默认模型改为 `gemini-2.0-flash`（代码默认值 + Cloud Run 环境变量一致）。
+  - Gemini 默认主模型改为 `gemini-3-flash-preview`，fallback 固定 `gemini-2.5-flash`（代码默认值 + Cloud Run 环境变量一致）。
   - Cloud Run 更新到 revision `manga-translator-compute-00016-x5x`（8Gi/4CPU/900s）。
 - **当前瓶颈**：
   - 实图单页在 CPU Cloud Run 路径耗时极长（> 420s 客户端超时），说明“计算云化但无 GPU”仍不满足目标时延。
@@ -349,6 +349,142 @@
   - 追加 RTX Pro 6000 no-zr（`europe-west1/us-central1`）申请，仍全部 `grantedValue=0`。
 - **影响**：
   - 当前无法执行你选择的 Cloud Run GPU 生产切换；服务继续以 CPU revision 运行。
+
+---
+
+### 26. GPU 启动失败收敛复测（`onyx-hangout-468807-a4`，2026-02-11 晚）
+
+- **状态**：⚠️ 阻塞（已完成根因定位与稳定回退）
+- **本轮结论**：
+  - GPU 专用镜像已成功构建（`sha256:5b6c...`），部署参数也满足 L4 前置（`cpu=4`, `memory=16Gi`, instance-based billing）。
+  - 阻塞点不是代码构建，而是 Cloud Run GPU 配额：`europe-west1` 与 `us-central1` 均未获配（with/without zonal redundancy 都失败）。
+- **证据**：
+  - `manga-translator-compute-00008-k77` 失败条件：`Quota exceeded for total allowable count of GPUs per project per region`。
+  - quota preference 回写：
+    - `l4-nozonal-euw1` / `l4-zonal-euw1`
+    - `run-l4-nozr-uscentral1` / `run-l4-zr-uscentral1`
+    - 均为 `preferredValue=1`，`grantedValue=0`。
+- **回退动作（已完成）**：
+  - 使用 `gcloud run services replace` 恢复 CPU 基线模板；
+  - 当前稳定 revision：`manga-translator-compute-00009-pv4`（`Ready=True`, traffic=100%）。
+- **功能烟测（CPU）**：
+  - 真实样图调用 `POST /internal/translate/page`：`HTTP 200`
+  - 耗时：`444.178s`，输出：`738791 bytes`，无 `503`。
+- **影响评估**：
+  - 当前“可用性”已恢复，但“GPU 性能目标”无法达成；
+- 82 后端不应切换到“GPU 预期配置”，应继续使用当前 CPU 稳定 endpoint。
+
+---
+
+### 27. Cloud Run GPU 正式落地（`gen-lang-client-0238401140`，2026-02-12）
+
+- **状态**：✅ 已完成（生产可用）
+- **关键结果**：
+  - 已在 `europe-west1` 成功部署 L4 GPU Cloud Run 服务：
+    - service: `manga-translator-compute`
+    - ready revision: `manga-translator-compute-00001-44n`
+    - 资源：`nvidia.com/gpu:1`、`cpu=4`、`memory=16Gi`、`concurrency=1`、`timeout=900`
+  - 镜像构建成功：
+    - image: `gcr.io/gen-lang-client-0238401140/manga-translator-compute:gpu-20260212-003244`
+    - digest: `sha256:be2d6e9f598ad6603d06fae703caf7ebd52c4015b3abfaff173c41df4e1d9ddb`
+    - build: `ae90b109-9e42-43c5-a003-8f62edeec8f7`
+  - 健康检查：
+    - `GET /` -> `200 {"status":"ok"}`
+    - `latestReadyRevisionName == latestCreatedRevisionName`
+- **烟测证据（真实样图）**：
+  - `POST /internal/translate/page` 连续 3 次：均 `HTTP 200`、`x-fallback-used=0`、无 503
+  - 耗时：`29.07s / 29.26s / 26.19s`
+  - 输出大小：`742323 bytes`（一致）
+- **82 联调结果**：
+  - `manga-translator.service` 已切换 cloudrun backend 并重启成功（active）
+  - 生效变量：`MANGA_TRANSLATE_EXECUTION_BACKEND=cloudrun`、`MANGA_CLOUDRUN_EXEC_URL=https://manga-translator-compute-3lzbxzz5dq-ew.a.run.app`、`MANGA_CLOUDRUN_TIMEOUT_SEC=900`
+  - 路由可达：`/`、`/signin`、`/scraper`、`/manga/:id`、`/read/:mangaId/:chapterId` 均 200
+  - 当前限制：`/auth/status` 仍 `need_setup=true`，登录后 UI 翻译验收需在管理员初始化后执行
+- **性能结论**：
+  - 对比 CPU 基线（`444.178s`），GPU 当前单图约 `28.17s`（3 次均值），提升约 `93.7%`
+  - 已达到“GPU 相对 CPU 至少 30% 改善、且无 503”验收门槛。
+
+---
+
+### 28. Vue“有进度无译图”收敛修复（2026-02-12）
+
+- **状态**：✅ 代码与测试完成；⚠️ 线上仍需补 `GEMINI_API_KEY`
+- **复现根因（已确认）**：
+  - Cloud Run 容量固定 `maxScale=1 + concurrency=1`，章节并发时出现 `429 no available instance`
+  - Cloud Run 运行时未注入 `GEMINI_API_KEY`，日志持续出现“Gemini客户端初始化失败”
+  - 前端进度语义按“已处理页（成功+失败）”推进，用户误读为“成功翻译进度”
+- **本轮修复**：
+  - 后端 `v1_translate`：
+    - 新增 Cloud Run 全局串行门（单进程 single-flight），避免多章节同时冲击单实例
+    - Cloud Run 异常改为结构化 `CloudRunExecutionError`，保留 `status_code/failure_stage/retryable`
+    - 重试退避默认从 `1/2/4s` 提升为 `8/16/32s`（可通过 `MANGA_CLOUDRUN_EXECUTOR_RETRY_BACKOFFS` 覆盖）
+    - `x-fallback-used=1` 强制判失败，不再按成功页处理
+    - 内部端点 `/internal/translate/page` 在 compute-only 且缺少 key 时直接 `503`（`compute runtime missing GEMINI_API_KEY`）
+  - 前端 `translate store + MangaView`：
+    - 拆分 `successPages` 与 `processedPages`；进度条只按 `successPages/totalPages`
+    - UI 明确展示“成功/失败/总页数”，失败页不再“看起来像成功进度”
+- **测试证据**：
+  - 后端：`pytest -q tests/test_v1_translate_concurrency.py tests/test_v1_translate_pipeline.py tests/test_v1_routes.py` -> `48 passed`
+  - 前端：`cd frontend && npm test -- --run` -> `51 passed`
+  - 构建：`cd frontend && npm run build` -> pass
+- **剩余阻塞（必须处理）**：
+  - 当前 Cloud Run 服务（`manga-translator-compute`）环境未配置 `GEMINI_API_KEY`，会触发启动后翻译失败（现在会明确失败，不再假成功）。
+  - 需先在 GCP 注入有效 key（建议 Secret Manager），再进行 82 侧端到端实图验收。
+
+---
+
+### 29. Cloud Run 新修复 Revision 上线验证与回滚（2026-02-12）
+
+- **状态**：⚠️ 已完成“构建 + 部署 + 烟测”，并执行保护性回滚
+- **执行记录**：
+  - 构建成功：
+    - image: `gcr.io/gen-lang-client-0238401140/manga-translator-compute:gpu-20260212-021840`
+    - digest: `sha256:47e5197836fd8f687522ee94632734dcf6b124b9371e013fa26ef31bc77214e4`
+    - build: `897ef246-2d62-4bcd-b0d6-06632ffcd582`
+  - 部署生成新 revision：`manga-translator-compute-00002-gfj`
+  - revision 规格确认：`gpu=1 (nvidia-l4)`, `cpu=4`, `memory=16Gi`, `concurrency=1`, startup probe 生效
+- **关键验证结果**：
+  - `POST /internal/translate/page`（新 revision）返回 `HTTP 503`
+  - 返回体：`{"detail":"compute runtime missing GEMINI_API_KEY"}`
+  - 说明：新代码中的“缺 key 严格失败语义”已生效，避免了过去“假成功”
+- **线上可用性保护动作**：
+  - 流量回滚到可用 revision：`manga-translator-compute-00001-44n`（100%）
+  - 回滚后同接口烟测恢复 `HTTP 200`，`x-fallback-used=0`
+- **结论**：
+  - 代码修复正确，且已在云侧验证；
+  - 现阶段阻塞点从“假成功”转为“配置缺失（GEMINI_API_KEY）”；
+  - 需先补齐 Cloud Run 密钥注入，再切回新 revision。
+
+---
+
+### 30. Cloud Run GPU cuDNN9 最终收敛（2026-02-12）
+
+- **状态**：✅ 完成（P0 已闭环）
+- **最终根因**：
+  - ORT 在旧 revision 运行时出现 `libcudnn_cnn.so.9 undefined symbol ... libcudnn_graph.so.9`，导致 `CUDAExecutionProvider` 初始化失败并回退 CPU。
+- **修复点**：
+  - `packaging/Dockerfile`
+    - 固定 `CUDA_VERSION=12.8.0` + `cudnn-runtime`
+    - 强制 `LD_LIBRARY_PATH` 优先使用 pip 安装的 `nvidia/*/lib`
+    - 构建期增加 `onnxruntime providers + ldd -r` 校验（过滤 `Provider_GetHost` 伪阳性）
+  - `manga_translator/server/cloudrun_compute_main.py`
+    - startup 增加 `ldd -r` 运行时探测
+    - `MANGA_REQUIRE_GPU=1` 时若 CUDA provider 依赖不完整则拒绝启动（不允许静默 CPU fallback）
+- **发布证据**：
+  - build: `f4d406dd-ceaf-4ec1-84ac-fd4badaf055a`（SUCCESS）
+  - image digest: `sha256:3f5569afb169a52f3b8c5d90c5f2f1757c82714559163bf23f760e22c2aaf5d5`
+  - ready revision: `manga-translator-compute-00010-xej`
+  - 生产流量：`100% -> manga-translator-compute-00010-xej`
+- **验收结果**：
+  - canary `POST /internal/translate/page` 连续 3 次 `HTTP 200` 且 `x-fallback-used=0`
+  - 82 主机直连主域同接口 `HTTP 200` 且 `x-fallback-used=0`
+  - 新 revision 日志未再出现：
+    - `Failed to create CUDAExecutionProvider`
+    - `libcudnn_adv.so.9 cannot open shared object file`
+    - `libcudnn_* undefined symbol`
+- **兼容性说明**：
+  - 未新增或删除 `/api/v1/*`、`/admin/*`、`/internal/*` 端点；
+  - 仅收敛部署与运行时行为（GPU 严格闸门）。
 
 ---
 

@@ -103,6 +103,8 @@ export const useTranslateStore = defineStore('translate', () => {
         chapter.isTranslating = true
         chapter.progress = 0
         chapter.totalPages = Number(data.total_pages) || Number(chapter.page_count) || 0
+        chapter.successPages = 0
+        chapter.processedPages = 0
         chapter.completedPages = 0
         chapter.failedPages = 0
         chapter.currentStage = 'init'
@@ -129,26 +131,29 @@ export const useTranslateStore = defineStore('translate', () => {
 
         if (isFinal && taskId && !tracker.finalTaskIds.has(taskId)) {
             tracker.finalTaskIds.add(taskId)
-            chapter.completedPages = Number(chapter.completedPages || 0) + 1
+            chapter.processedPages = Number(chapter.processedPages || 0) + 1
+            chapter.completedPages = Number(chapter.processedPages || 0)
             if (data.status === 'failed' || chapter.currentStage === 'failed') {
                 chapter.failedPages = Number(chapter.failedPages || 0) + 1
+            } else {
+                chapter.successPages = Number(chapter.successPages || 0) + 1
             }
         }
 
         const total = chapterTotal(chapter)
-        const completed = Number(chapter.completedPages || 0)
+        const processed = Number(chapter.processedPages || chapter.completedPages || 0)
+        const success = Number(chapter.successPages || 0)
         const failed = Number(chapter.failedPages || 0)
 
-        if (total > 0 && completed >= total) {
-            const successCount = Math.max(completed - failed, 0)
+        if (total > 0 && processed >= total) {
             markChapterComplete(
                 {
                     manga_id: data.manga_id,
                     chapter_id: data.chapter_id,
-                    success_count: successCount,
+                    success_count: success,
                     failed_count: failed,
                     total_count: total,
-                    status: successCount <= 0 ? 'error' : (failed > 0 ? 'partial' : 'success')
+                    status: success <= 0 ? 'error' : (failed > 0 ? 'partial' : 'success')
                 },
                 { silent: true }
             )
@@ -156,10 +161,9 @@ export const useTranslateStore = defineStore('translate', () => {
         }
 
         if (total > 0) {
-            chapter.progress = Math.min(99, Math.round((completed / total) * 100))
+            chapter.progress = Math.min(99, Math.round((success / total) * 100))
             if (isFinal) {
-                const failedSuffix = failed > 0 ? ` · 失败 ${failed}` : ''
-                chapter.statusText = `进行中 (${completed}/${total}${failedSuffix})`
+                chapter.statusText = `进行中 (成功 ${success} / 失败 ${failed} / 总 ${total})`
             } else {
                 chapter.statusText = `进行中 · ${stageLabel(chapter.currentStage)}`
             }
@@ -186,6 +190,8 @@ export const useTranslateStore = defineStore('translate', () => {
         chapter.isComplete = successCount > 0 && successCount === totalCount
         chapter.translated_count = successCount
         chapter.totalPages = totalCount
+        chapter.successPages = successCount
+        chapter.processedPages = successCount + failedCount
         chapter.completedPages = successCount + failedCount
         chapter.failedPages = failedCount
         chapter.currentStage = finalStatus === 'error' ? 'failed' : 'complete'
@@ -197,7 +203,7 @@ export const useTranslateStore = defineStore('translate', () => {
                 toastStore.show(`章节失败: ${chapter.name}${detail}`, 'error')
             }
         } else if (failedCount > 0) {
-            chapter.statusText = `部分完成 (${successCount}/${totalCount})`
+            chapter.statusText = `部分完成 (成功 ${successCount} / 失败 ${failedCount} / 总 ${totalCount})`
             if (!silent) {
                 const detail = data.error_message ? `，原因：${data.error_message}` : ''
                 toastStore.show(`章节部分完成: ${chapter.name} (${successCount}/${totalCount})${detail}`, 'warning')
@@ -208,7 +214,11 @@ export const useTranslateStore = defineStore('translate', () => {
                 toastStore.show(`章节完成: ${chapter.name}`, 'success')
             }
         }
-        chapter.progress = 100
+        if (totalCount > 0) {
+            chapter.progress = Math.round((successCount / totalCount) * 100)
+        } else {
+            chapter.progress = finalStatus === 'error' ? 0 : 100
+        }
         clearChapterTracker(data.manga_id, data.chapter_id)
     }
 

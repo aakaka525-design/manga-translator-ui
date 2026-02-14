@@ -10,7 +10,7 @@ from google import genai
 from google.genai import types
 
 from .common import CommonTranslator, VALID_LANGUAGES, draw_text_boxes_on_image, parse_json_or_text_response, parse_hq_response, get_glossary_extraction_prompt, merge_glossary_to_file, validate_gemini_response, AsyncGeminiCurlCffi
-from .keys import GEMINI_API_KEY
+from .keys import GEMINI_API_KEY, GEMINI_MODEL
 from ..utils import Context
 
 # 浏览器风格的请求头，避免被 CF 拦截
@@ -109,7 +109,7 @@ class GeminiHighQualityTranslator(CommonTranslator):
         
         self.api_key = os.getenv('GEMINI_API_KEY', GEMINI_API_KEY)
         self.base_url = os.getenv('GEMINI_API_BASE', 'https://generativelanguage.googleapis.com')
-        self.model_name = os.getenv('GEMINI_MODEL', "gemini-2.0-flash")
+        self.model_name = os.getenv('GEMINI_MODEL', GEMINI_MODEL)
         self.max_tokens = None  # 不限制，使用模型默认最大值
         self.temperature = 0.1
         self._MAX_REQUESTS_PER_MINUTE = 0  # 默认无限制

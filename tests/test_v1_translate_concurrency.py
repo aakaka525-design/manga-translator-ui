@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -7,6 +9,11 @@ import pytest
 import manga_translator.server.main as server_main
 import manga_translator.server.routes.v1_translate as v1_translate
 from manga_translator.server.core import task_manager
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
 
 
 def test_single_page_mode_forces_page_concurrency_one(monkeypatch: pytest.MonkeyPatch):
@@ -94,6 +101,21 @@ def test_run_server_explicit_flag_overrides_env_and_config(monkeypatch: pytest.M
     assert task_manager.server_config["_runtime_config_source"] == "run_server"
 
 
+def test_runtime_gemini_model_resolution_normalizes_legacy(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    monkeypatch.delenv("GEMINI_FALLBACK_MODEL", raising=False)
+    primary, fallback = server_main._resolve_runtime_gemini_models()
+    assert primary == "gemini-3-flash-preview"
+    assert fallback == "gemini-2.5-flash"
+    assert os.getenv("GEMINI_MODEL") == "gemini-3-flash-preview"
+    assert os.getenv("GEMINI_FALLBACK_MODEL") == "gemini-2.5-flash"
+
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-2.0-flash")
+    primary_legacy, fallback_legacy = server_main._resolve_runtime_gemini_models()
+    assert primary_legacy == "gemini-2.5-flash"
+    assert fallback_legacy == "gemini-2.5-flash"
+
+
 def test_ensure_runtime_server_config_initializes_from_default_config(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -176,3 +198,67 @@ def test_run_server_uses_task_manager_runtime_initializer(monkeypatch: pytest.Mo
 
     assert captured == {"explicit": None, "source": "run_server", "force": True}
     assert task_manager.server_config["_runtime_config_source"] == "run_server"
+
+
+@pytest.mark.anyio
+async def test_cloudrun_executor_requests_are_serialized_by_global_gate(tmp_path):
+    image_a = tmp_path / "001.jpg"
+    image_b = tmp_path / "002.jpg"
+    image_a.write_bytes(b"raw-a")
+    image_b.write_bytes(b"raw-b")
+
+    class _CloudRunExecutor(v1_translate.TranslateExecutor):
+        backend = "cloudrun"
+
+        def __init__(self):
+            self.active = 0
+            self.max_active = 0
+
+        async def translate_page(self, image_path, output_path, source_language, target_language, *, context_translations=None):
+            _ = (image_path, source_language, target_language, context_translations)
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            await asyncio.sleep(0.02)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_bytes(b"translated")
+            self.active -= 1
+            return {
+                "output_path": str(output_path),
+                "regions_count": 1,
+                "output_changed": True,
+                "stage_elapsed_ms": {},
+            }
+
+    executor = _CloudRunExecutor()
+    # Ensure clean lock object for deterministic assertion.
+    v1_translate._CLOUDRUN_SERIAL_GATE = None
+
+    async def _run_one(image_path):
+        output_path = tmp_path / "out" / image_path.name
+        return await v1_translate._execute_page_with_retry(
+            executor=executor,
+            image_path=image_path,
+            output_path=output_path,
+            source_language="en",
+            target_language="zh",
+            max_retries=0,
+        )
+
+    await asyncio.gather(_run_one(image_a), _run_one(image_b))
+    assert executor.max_active == 1
+
+
+def test_cloudrun_execution_error_retryable_semantics():
+    retryable_err = v1_translate.CloudRunExecutionError(
+        status_code=429,
+        message="cloudrun status=429",
+        retryable=True,
+    )
+    fatal_err = v1_translate.CloudRunExecutionError(
+        status_code=503,
+        message="cloudrun fallback used",
+        retryable=False,
+    )
+
+    assert v1_translate._is_retryable_executor_error(retryable_err) is True
+    assert v1_translate._is_retryable_executor_error(fatal_err) is False

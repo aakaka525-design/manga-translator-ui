@@ -37,14 +37,17 @@ const translationSummary = computed(() => {
   const totalPages = activeTranslatingChapters.value.reduce((sum, chapter) => {
     return sum + chapterTotalPages(chapter)
   }, 0)
-  const completedPages = activeTranslatingChapters.value.reduce((sum, chapter) => {
-    return sum + chapterDonePages(chapter)
+  const successPages = activeTranslatingChapters.value.reduce((sum, chapter) => {
+    return sum + chapterSuccessPages(chapter)
+  }, 0)
+  const processedPages = activeTranslatingChapters.value.reduce((sum, chapter) => {
+    return sum + chapterProcessedPages(chapter)
   }, 0)
   const failedPages = activeTranslatingChapters.value.reduce((sum, chapter) => {
     return sum + Number(chapter.failedPages || 0)
   }, 0)
-  const progress = totalPages > 0 ? Math.round((completedPages / totalPages) * 100) : 0
-  return { totalPages, completedPages, failedPages, progress }
+  const progress = totalPages > 0 ? Math.round((successPages / totalPages) * 100) : 0
+  return { totalPages, successPages, processedPages, failedPages, progress }
 })
 
 onMounted(() => {
@@ -157,9 +160,19 @@ function chapterTotalPages(chapter) {
   return Number(chapter.page_count) || 0
 }
 
-function chapterDonePages(chapter) {
+function chapterProcessedPages(chapter) {
+  const processed = Number(chapter.processedPages)
+  if (processed >= 0) return processed
   const done = Number(chapter.completedPages)
   if (done >= 0) return done
+  return 0
+}
+
+function chapterSuccessPages(chapter) {
+  const success = Number(chapter.successPages)
+  if (success >= 0) return success
+  const translated = Number(chapter.translated_count)
+  if (translated >= 0) return translated
   return 0
 }
 
@@ -168,7 +181,7 @@ function chapterProgress(chapter) {
   if (explicit > 0) return Math.min(100, explicit)
   const total = chapterTotalPages(chapter)
   if (total <= 0) return 0
-  return Math.min(99, Math.round((chapterDonePages(chapter) / total) * 100))
+  return Math.min(99, Math.round((chapterSuccessPages(chapter) / total) * 100))
 }
 
 async function translateChapter(chapter, event) {
@@ -242,8 +255,7 @@ async function translateChapter(chapter, event) {
             </div>
           </div>
           <div class="mt-2 text-xs text-text-secondary">
-            {{ translationSummary.completedPages }}/{{ translationSummary.totalPages }} 页
-            <span v-if="translationSummary.failedPages > 0"> · 失败 {{ translationSummary.failedPages }}</span>
+            成功 {{ translationSummary.successPages }} / 失败 {{ translationSummary.failedPages }} / 总 {{ translationSummary.totalPages }}
           </div>
           <div class="mt-2 h-1.5 w-full rounded-full bg-bg-secondary overflow-hidden">
             <div class="h-full bg-accent-1 transition-all duration-300" :style="{ width: translationSummary.progress + '%' }"></div>
@@ -283,7 +295,7 @@ async function translateChapter(chapter, event) {
               {{ chapter.translated_count }}/{{ chapter.page_count }}
             </span>
             <span v-if="chapter.isTranslating" class="text-xs text-accent-1 animate-pulse">
-              翻译中 {{ chapterDonePages(chapter) }}/{{ chapterTotalPages(chapter) }}
+              翻译中 成功 {{ chapterSuccessPages(chapter) }} / 总 {{ chapterTotalPages(chapter) }}
             </span>
             
             <!-- Translate Button -->

@@ -107,9 +107,11 @@ describe("translate store", () => {
 
     const chapter = mangaStore.chapters[0];
     expect(chapter.isTranslating).toBe(true);
+    expect(chapter.processedPages).toBe(2);
+    expect(chapter.successPages).toBe(1);
     expect(chapter.completedPages).toBe(2);
     expect(chapter.failedPages).toBe(1);
-    expect(chapter.progress).toBe(67);
+    expect(chapter.progress).toBe(33);
     expect(chapter.statusText).toContain("进行中");
   });
 
@@ -176,10 +178,12 @@ describe("translate store", () => {
 
     const chapter = mangaStore.chapters[0];
     expect(chapter.isTranslating).toBe(false);
+    expect(chapter.successPages).toBe(2);
+    expect(chapter.processedPages).toBe(3);
     expect(chapter.completedPages).toBe(3);
     expect(chapter.failedPages).toBe(1);
     expect(chapter.translated_count).toBe(2);
-    expect(chapter.progress).toBe(100);
+    expect(chapter.progress).toBe(67);
     expect(chapter.statusText).toContain("部分完成");
   });
 });

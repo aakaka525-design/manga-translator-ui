@@ -17,10 +17,15 @@ gcloud run deploy "${SERVICE_NAME}" \
   --image "${IMAGE}" \
   --platform managed \
   --no-allow-unauthenticated \
+  --gpu 1 \
+  --gpu-type nvidia-l4 \
+  --no-gpu-zonal-redundancy \
   --cpu 4 \
   --memory 16Gi \
   --concurrency 1 \
-  --timeout 3600 \
-  --set-env-vars "MANGA_INTERNAL_API_TOKEN=${INTERNAL_TOKEN},MANGA_TRANSLATE_EXECUTION_BACKEND=local"
+  --timeout 900 \
+  --max-instances 1 \
+  --no-cpu-throttling \
+  --set-env-vars "MANGA_INTERNAL_API_TOKEN=${INTERNAL_TOKEN},MANGA_TRANSLATE_EXECUTION_BACKEND=local,MANGA_CLOUDRUN_COMPUTE_ONLY=1,MT_USE_GPU=true,MANGA_REQUIRE_GPU=1,GEMINI_MODEL=gemini-3-flash-preview,GEMINI_FALLBACK_MODEL=gemini-2.5-flash"
 
 echo "Cloud Run compute service deployed: ${SERVICE_NAME}"

@@ -32,6 +32,7 @@ router = APIRouter(prefix="/api/v1/translate", tags=["v1-translate"])
 internal_router = APIRouter(prefix="/internal/translate", tags=["internal-translate"])
 library_service = LibraryService()
 logger = logging.getLogger(__name__)
+_CLOUDRUN_SERIAL_GATE: asyncio.Lock | None = None
 
 
 def _env_positive_int(name: str, default: int) -> int:
@@ -56,6 +57,26 @@ def _env_non_negative_int(name: str, default: int) -> int:
     return parsed if parsed >= 0 else default
 
 
+def _env_float_series(name: str, default: tuple[float, ...]) -> tuple[float, ...]:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    values: list[float] = []
+    for chunk in str(raw).split(","):
+        item = chunk.strip()
+        if not item:
+            continue
+        try:
+            parsed = float(item)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            values.append(parsed)
+    if not values:
+        return default
+    return tuple(values)
+
+
 # CLI-compatible default: no hard timeout unless explicitly configured.
 TRANSLATE_CONTEXT_TIMEOUT_SEC = _env_non_negative_int("MANGA_TRANSLATE_CONTEXT_TIMEOUT_SEC", 0)
 CHAPTER_PAGE_CONCURRENCY_DEFAULT = 3
@@ -65,9 +86,15 @@ TRANSLATE_EXECUTION_BACKEND_CHOICES = {"local", "cloudrun"}
 CONTEXT_TRANSLATION_LIMIT = 3
 CLOUDRUN_EXECUTOR_TIMEOUT_SEC = _env_positive_int("MANGA_CLOUDRUN_TIMEOUT_SEC", 120)
 CLOUDRUN_EXECUTOR_RETRIES = _env_non_negative_int("MANGA_CLOUDRUN_EXECUTOR_RETRIES", 2)
-CLOUDRUN_EXECUTOR_RETRY_BACKOFFS = (1.0, 2.0, 4.0)
+CLOUDRUN_EXECUTOR_RETRY_BACKOFFS = _env_float_series(
+    "MANGA_CLOUDRUN_EXECUTOR_RETRY_BACKOFFS",
+    (8.0, 16.0, 32.0),
+)
 CLOUDRUN_RETRYABLE_STATUS = {408, 429, 500, 502, 503, 504}
 INTERNAL_TOKEN_HEADER = "X-Internal-Token"
+GEMINI_PRIMARY_MODEL_DEFAULT = "gemini-3-flash-preview"
+GEMINI_FALLBACK_MODEL_DEFAULT = "gemini-2.5-flash"
+DEPRECATED_GEMINI_MODELS = {"gemini-2.0-flash"}
 
 LANG_CODE_ALIASES = {
     "ar": "ARA",
@@ -121,6 +148,21 @@ class InternalPageTranslateRequest(BaseModel):
     source_language: Optional[str] = None
     target_language: Optional[str] = None
     context_translations: list[str] = Field(default_factory=list)
+
+
+class CloudRunExecutionError(RuntimeError):
+    def __init__(
+        self,
+        *,
+        status_code: int | None = None,
+        message: str,
+        failure_stage: str = "remote",
+        retryable: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.failure_stage = failure_stage
+        self.retryable = retryable
 
 
 def _natural_key(value: str) -> list[object]:
@@ -310,12 +352,71 @@ def _resolve_internal_token() -> str:
     return str(os.getenv("MANGA_INTERNAL_API_TOKEN", "")).strip()
 
 
+def _is_cloudrun_compute_only() -> bool:
+    return str(os.getenv("MANGA_CLOUDRUN_COMPUTE_ONLY", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _has_runtime_gemini_key() -> bool:
+    return bool(str(os.getenv("GEMINI_API_KEY", "")).strip())
+
+
+def _normalize_gemini_model(model_name: str | None, *, role: str) -> str:
+    fallback = GEMINI_FALLBACK_MODEL_DEFAULT if role == "fallback" else GEMINI_PRIMARY_MODEL_DEFAULT
+    normalized = str(model_name or "").strip() or fallback
+    if normalized.lower() in DEPRECATED_GEMINI_MODELS:
+        logger.warning(
+            "Deprecated Gemini model '%s' requested for %s; normalized to '%s'",
+            normalized,
+            role,
+            GEMINI_FALLBACK_MODEL_DEFAULT,
+        )
+        return GEMINI_FALLBACK_MODEL_DEFAULT
+    return normalized
+
+
+def _resolve_gemini_primary_model(requested_model: str | None = None) -> str:
+    if requested_model is not None and str(requested_model).strip():
+        return _normalize_gemini_model(requested_model, role="primary")
+    configured = str(os.getenv("GEMINI_MODEL", "")).strip()
+    return _normalize_gemini_model(configured, role="primary")
+
+
+def _resolve_gemini_fallback_model(requested_model: str | None = None) -> str:
+    if requested_model is not None and str(requested_model).strip():
+        return _normalize_gemini_model(requested_model, role="fallback")
+    configured = str(os.getenv("GEMINI_FALLBACK_MODEL", "")).strip()
+    return _normalize_gemini_model(configured, role="fallback")
+
+
+def _requires_gemini_key() -> bool:
+    primary_model = _resolve_gemini_primary_model().lower()
+    fallback_model = _resolve_gemini_fallback_model().lower()
+    return "gemini" in primary_model or "gemini" in fallback_model
+
+
+def _ensure_internal_compute_ready() -> None:
+    if not _is_cloudrun_compute_only():
+        return
+    if _requires_gemini_key() and not _has_runtime_gemini_key():
+        raise HTTPException(
+            status_code=503,
+            detail="compute runtime missing GEMINI_API_KEY",
+        )
+
+
 def _verify_internal_token(received: str | None) -> None:
     required = _resolve_internal_token()
     if not required:
         return
     if not received or received.strip() != required:
         raise HTTPException(status_code=401, detail="internal token required")
+
+
+def _cloudrun_serial_lock() -> asyncio.Lock:
+    global _CLOUDRUN_SERIAL_GATE
+    if _CLOUDRUN_SERIAL_GATE is None:
+        _CLOUDRUN_SERIAL_GATE = asyncio.Lock()
+    return _CLOUDRUN_SERIAL_GATE
 
 
 def _extract_context_text(ctx) -> str:
@@ -433,15 +534,20 @@ class CloudRunTranslateExecutor(TranslateExecutor):
     ) -> dict:
         payload = image_path.read_bytes()
         context = _build_context_translations(context_translations)
+        primary_model = _resolve_gemini_primary_model()
+        fallback_model = _resolve_gemini_fallback_model()
         token = _resolve_internal_token()
         headers: dict[str, str] = {}
         if token:
             headers[INTERNAL_TOKEN_HEADER] = token
+        headers["Accept-Encoding"] = "gzip, deflate"
 
         data = {
             "source_language": source_language or "",
             "target_language": target_language or "",
             "context_translations": json.dumps(context, ensure_ascii=False),
+            "primary_model": primary_model,
+            "fallback_model": fallback_model,
         }
         files = {
             "image": (image_path.name, payload, "application/octet-stream"),
@@ -461,7 +567,12 @@ class CloudRunTranslateExecutor(TranslateExecutor):
             detail = f"cloudrun status={response.status_code}"
             if detail_text:
                 detail = f"{detail}; detail={detail_text}"
-            raise RuntimeError(detail)
+            raise CloudRunExecutionError(
+                status_code=response.status_code,
+                message=detail,
+                failure_stage="remote",
+                retryable=response.status_code in CLOUDRUN_RETRYABLE_STATUS,
+            )
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(response.content)
@@ -480,8 +591,22 @@ class CloudRunTranslateExecutor(TranslateExecutor):
         no_change_reason = _decode_header_value(response.headers.get("x-no-change-reason")) or None
         failure_stage = _decode_header_value(response.headers.get("x-failure-stage")) or None
         page_translation_text = _decode_header_value(response.headers.get("x-translation-text", "")).strip()
+        selected_model = _decode_header_value(response.headers.get("x-selected-model")) or primary_model
+        resolved_primary_model = _decode_header_value(response.headers.get("x-primary-model")) or primary_model
+        resolved_fallback_model = _decode_header_value(response.headers.get("x-fallback-model")) or fallback_model
+        model_fallback_reason = _decode_header_value(response.headers.get("x-model-fallback-reason")) or None
         remote_elapsed_ms = _to_non_negative_int(response.headers.get("x-remote-elapsed-ms"), default=0)
         cold_start = response.headers.get("x-cold-start", "0") == "1"
+
+        if fallback_used:
+            reason = fallback_reason or "unknown_fallback_reason"
+            stage = failure_stage or "translate"
+            raise CloudRunExecutionError(
+                status_code=200,
+                message=f"cloudrun fallback used: {reason}",
+                failure_stage=stage,
+                retryable=False,
+            )
 
         return {
             "output_path": str(output_path),
@@ -496,6 +621,10 @@ class CloudRunTranslateExecutor(TranslateExecutor):
             "remote_elapsed_ms": remote_elapsed_ms,
             "cold_start": cold_start,
             "page_translation_text": page_translation_text,
+            "primary_model": resolved_primary_model,
+            "fallback_model": resolved_fallback_model,
+            "selected_model": selected_model,
+            "model_fallback_reason": model_fallback_reason,
         }
 
 
@@ -592,6 +721,8 @@ def _executor_retry_limit() -> int:
 
 
 def _is_retryable_executor_error(exc: Exception) -> bool:
+    if isinstance(exc, CloudRunExecutionError):
+        return bool(exc.retryable)
     if isinstance(exc, httpx.TimeoutException):
         return True
     if isinstance(exc, httpx.TransportError):
@@ -621,12 +752,17 @@ async def _translate_single_image(
     cleanup_reason: str | None = "single_request_complete",
     cleanup_force: bool = False,
     context_translations: list[str] | None = None,
+    primary_model: str | None = None,
+    fallback_model: str | None = None,
 ) -> dict:
     started_at = time.perf_counter()
-    stage_elapsed_ms = _empty_stage_timing()
-    failure_stage = "context"
     payload = image_path.read_bytes()
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    resolved_primary_model = _resolve_gemini_primary_model(primary_model)
+    resolved_fallback_model = _resolve_gemini_fallback_model(fallback_model)
+    selected_model = resolved_primary_model
+    model_fallback_reason: str | None = None
 
     try:
         from manga_translator.server.core.config_manager import load_default_config
@@ -640,62 +776,95 @@ async def _translate_single_image(
             setattr(config, "_context_translations_seed", _build_context_translations(context_translations))
         else:
             setattr(config, "_context_translations_seed", [])
+        if hasattr(config, "translator"):
+            config.translator.user_api_model = resolved_primary_model
 
         fake_request = Request({"type": "http", "method": "POST", "path": "/api/v1/translate/page", "headers": []})
-        context_started_at = time.perf_counter()
+
+        async def _run_with_model(model_name: str) -> dict:
+            stage_elapsed_ms = _empty_stage_timing()
+            failure_stage = "context"
+            if hasattr(config, "translator"):
+                config.translator.user_api_model = model_name
+            context_started_at = time.perf_counter()
+            try:
+                context_awaitable = _build_translate_context(
+                    fake_request,
+                    config,
+                    payload,
+                    cleanup_reason=cleanup_reason,
+                    cleanup_force=cleanup_force,
+                )
+            except TypeError as exc:
+                if "cleanup_reason" not in str(exc):
+                    raise
+                # Backward-compatible path for tests/mocks overriding legacy signature.
+                context_awaitable = _build_translate_context(fake_request, config, payload)
+
+            ctx = await _await_translate_context(context_awaitable, TRANSLATE_CONTEXT_TIMEOUT_SEC)
+            stage_elapsed_ms["context"] = (time.perf_counter() - context_started_at) * 1000.0
+            if not getattr(ctx, "result", None):
+                raise RuntimeError("Translation produced no output image")
+
+            failure_stage = "render"
+            render_started_at = time.perf_counter()
+            prepared_result = _prepare_output_image(ctx.result, output_path)
+            prepared_result.save(output_path)
+            stage_elapsed_ms["render"] = (time.perf_counter() - render_started_at) * 1000.0
+            regions_count = len(getattr(ctx, "text_regions", []) or [])
+            page_translation_text = _extract_context_text(ctx)
+            # Fast path: if OCR detected text regions, treat output as changed.
+            # This avoids expensive full-image diff on every translated page.
+            output_changed = regions_count > 0
+            if not output_changed:
+                output_changed = _image_has_visible_changes(payload, output_path)
+            no_change_reason = None
+            if not output_changed:
+                no_change_reason = "no_text_regions_detected" if regions_count == 0 else "output_matches_source"
+            stage_elapsed_ms["total"] = (time.perf_counter() - started_at) * 1000.0
+            return {
+                "output_path": str(output_path),
+                "regions_count": regions_count,
+                "output_changed": output_changed,
+                "no_change_reason": no_change_reason,
+                "fallback_used": False,
+                "fallback_reason": None,
+                "stage_elapsed_ms": stage_elapsed_ms,
+                "failure_stage": None,
+                "execution_backend": "local",
+                "remote_elapsed_ms": None,
+                "page_translation_text": page_translation_text,
+                "primary_model": resolved_primary_model,
+                "fallback_model": resolved_fallback_model,
+                "selected_model": model_name,
+                "model_fallback_reason": model_fallback_reason,
+            }
+
         try:
-            context_awaitable = _build_translate_context(
-                fake_request,
-                config,
-                payload,
-                cleanup_reason=cleanup_reason,
-                cleanup_force=cleanup_force,
-            )
-        except TypeError as exc:
-            if "cleanup_reason" not in str(exc):
-                raise
-            # Backward-compatible path for tests/mocks overriding legacy signature.
-            context_awaitable = _build_translate_context(fake_request, config, payload)
-
-        ctx = await _await_translate_context(context_awaitable, TRANSLATE_CONTEXT_TIMEOUT_SEC)
-        stage_elapsed_ms["context"] = (time.perf_counter() - context_started_at) * 1000.0
-        if not getattr(ctx, "result", None):
-            raise RuntimeError("Translation produced no output image")
-
-        failure_stage = "render"
-        render_started_at = time.perf_counter()
-        prepared_result = _prepare_output_image(ctx.result, output_path)
-        prepared_result.save(output_path)
-        stage_elapsed_ms["render"] = (time.perf_counter() - render_started_at) * 1000.0
-        regions_count = len(getattr(ctx, "text_regions", []) or [])
-        page_translation_text = _extract_context_text(ctx)
-        # Fast path: if OCR detected text regions, treat output as changed.
-        # This avoids expensive full-image diff on every translated page.
-        output_changed = regions_count > 0
-        if not output_changed:
-            output_changed = _image_has_visible_changes(payload, output_path)
-        no_change_reason = None
-        if not output_changed:
-            no_change_reason = "no_text_regions_detected" if regions_count == 0 else "output_matches_source"
-        stage_elapsed_ms["total"] = (time.perf_counter() - started_at) * 1000.0
-        return {
-            "output_path": str(output_path),
-            "regions_count": regions_count,
-            "output_changed": output_changed,
-            "no_change_reason": no_change_reason,
-            "fallback_used": False,
-            "fallback_reason": None,
-            "stage_elapsed_ms": stage_elapsed_ms,
-            "failure_stage": None,
-            "execution_backend": "local",
-            "remote_elapsed_ms": None,
-            "page_translation_text": page_translation_text,
-        }
+            selected_model = resolved_primary_model
+            return await _run_with_model(selected_model)
+        except Exception as primary_exc:  # noqa: BLE001
+            primary_reason = str(primary_exc).strip() or primary_exc.__class__.__name__
+            if resolved_fallback_model != resolved_primary_model:
+                selected_model = resolved_fallback_model
+                model_fallback_reason = primary_reason
+                logger.warning(
+                    "Primary Gemini model failed; retrying with fallback model primary_model=%s fallback_model=%s fallback_reason=%s",
+                    resolved_primary_model,
+                    resolved_fallback_model,
+                    primary_reason,
+                )
+                return await _run_with_model(selected_model)
+            raise
     except Exception as exc:  # noqa: BLE001
         # Compatibility fallback for environments where full translator deps are unavailable.
         logger.exception("v1 translate fallback used for %s", image_path)
         fallback_reason = str(exc).strip() or exc.__class__.__name__
+        failure_stage = "translate"
+        if "render" in fallback_reason.lower():
+            failure_stage = "render"
         output_path.write_bytes(payload)
+        stage_elapsed_ms = _empty_stage_timing()
         stage_elapsed_ms["total"] = (time.perf_counter() - started_at) * 1000.0
         return {
             "output_path": str(output_path),
@@ -709,6 +878,10 @@ async def _translate_single_image(
             "execution_backend": "local",
             "remote_elapsed_ms": None,
             "page_translation_text": "",
+            "primary_model": resolved_primary_model,
+            "fallback_model": resolved_fallback_model,
+            "selected_model": selected_model,
+            "model_fallback_reason": model_fallback_reason,
         }
 
 
@@ -721,11 +894,16 @@ def _build_runtime_snapshot(execution_mode: str, page_concurrency: int, translat
     except Exception:  # noqa: BLE001
         pass
 
+    primary_model = _resolve_gemini_primary_model()
+    fallback_model = _resolve_gemini_fallback_model()
+
     return {
         "use_gpu": use_gpu,
         "execution_mode": execution_mode,
         "page_concurrency": page_concurrency,
         "translator": translator_name or "unknown",
+        "primary_model": primary_model,
+        "fallback_model": fallback_model,
     }
 
 
@@ -738,6 +916,10 @@ async def _translate_chapter_batch_pipeline(
     context_elapsed_ms = 0.0
     payloads = [image_path.read_bytes() for image_path in images]
     outputs: list[tuple[Path, dict | None, Exception | None]] = []
+    primary_model = _resolve_gemini_primary_model()
+    fallback_model = _resolve_gemini_fallback_model()
+    selected_model = primary_model
+    model_fallback_reason: str | None = None
 
     try:
         from manga_translator.server.core.config_manager import load_default_config
@@ -749,6 +931,8 @@ async def _translate_chapter_batch_pipeline(
         if request.source_language:
             config.translator.skip_lang = None
         config.translator.target_lang = _resolve_target_language(request.target_language)
+        if hasattr(config, "translator"):
+            config.translator.user_api_model = primary_model
 
         fake_request = Request(
             {
@@ -760,18 +944,41 @@ async def _translate_chapter_batch_pipeline(
         )
         batch_timeout = TRANSLATE_CONTEXT_TIMEOUT_SEC * max(1, len(images))
         context_started_at = time.perf_counter()
-        contexts = await _await_translate_context(
-            get_batch_ctx(
-                fake_request,
-                config,
-                payloads,
-                batch_size=max(1, page_concurrency),
-                workflow="normal",
-                cleanup_reason="chapter_batch_complete",
-                cleanup_force=False,
-            ),
-            batch_timeout,
-        )
+
+        async def _run_batch_contexts(model_name: str):
+            if hasattr(config, "translator"):
+                config.translator.user_api_model = model_name
+            return await _await_translate_context(
+                get_batch_ctx(
+                    fake_request,
+                    config,
+                    payloads,
+                    batch_size=max(1, page_concurrency),
+                    workflow="normal",
+                    cleanup_reason="chapter_batch_complete",
+                    cleanup_force=False,
+                ),
+                batch_timeout,
+            )
+
+        try:
+            contexts = await _run_batch_contexts(primary_model)
+            selected_model = primary_model
+        except Exception as primary_exc:  # noqa: BLE001
+            primary_reason = str(primary_exc).strip() or primary_exc.__class__.__name__
+            if fallback_model != primary_model:
+                selected_model = fallback_model
+                model_fallback_reason = primary_reason
+                logger.warning(
+                    "Batch pipeline primary model failed; retrying fallback model primary_model=%s fallback_model=%s fallback_reason=%s",
+                    primary_model,
+                    fallback_model,
+                    primary_reason,
+                )
+                contexts = await _run_batch_contexts(fallback_model)
+            else:
+                raise
+
         context_elapsed_ms = (time.perf_counter() - context_started_at) * 1000.0
 
         contexts_list = list(contexts or [])
@@ -798,6 +1005,10 @@ async def _translate_chapter_batch_pipeline(
                             "fallback_reason": fallback_reason,
                             "stage_elapsed_ms": page_stage,
                             "failure_stage": "translate",
+                            "primary_model": primary_model,
+                            "fallback_model": fallback_model,
+                            "selected_model": selected_model,
+                            "model_fallback_reason": model_fallback_reason,
                         },
                         None,
                     )
@@ -838,6 +1049,10 @@ async def _translate_chapter_batch_pipeline(
                             "fallback_reason": None,
                             "stage_elapsed_ms": page_stage,
                             "failure_stage": None,
+                            "primary_model": primary_model,
+                            "fallback_model": fallback_model,
+                            "selected_model": selected_model,
+                            "model_fallback_reason": model_fallback_reason,
                         },
                         None,
                     )
@@ -860,6 +1075,10 @@ async def _translate_chapter_batch_pipeline(
                             "fallback_reason": fallback_reason,
                             "stage_elapsed_ms": page_stage,
                             "failure_stage": "render",
+                            "primary_model": primary_model,
+                            "fallback_model": fallback_model,
+                            "selected_model": selected_model,
+                            "model_fallback_reason": model_fallback_reason,
                         },
                         page_exc,
                     )
@@ -888,6 +1107,10 @@ async def _translate_chapter_batch_pipeline(
                         "fallback_reason": fallback_reason,
                         "stage_elapsed_ms": page_stage,
                         "failure_stage": "translate",
+                        "primary_model": primary_model,
+                        "fallback_model": fallback_model,
+                        "selected_model": selected_model,
+                        "model_fallback_reason": model_fallback_reason,
                     },
                     exc,
                 )
@@ -903,6 +1126,8 @@ async def _translate_payload_via_temp_files(
     target_language: str | None,
     *,
     context_translations: list[str] | None = None,
+    primary_model: str | None = None,
+    fallback_model: str | None = None,
 ) -> tuple[bytes, dict]:
     suffix = Path(image_name).suffix or ".jpg"
     with tempfile.TemporaryDirectory(prefix="mt-internal-translate-") as temp_dir:
@@ -916,6 +1141,8 @@ async def _translate_payload_via_temp_files(
             source_language,
             target_language,
             context_translations=context_translations,
+            primary_model=primary_model,
+            fallback_model=fallback_model,
         )
         if not output_path.exists():
             raise RuntimeError("internal translate produced no output file")
@@ -940,13 +1167,23 @@ async def _execute_page_with_retry(
     for attempt_index in range(attempts):
         executed_attempts = attempt_index + 1
         try:
-            result = await executor.translate_page(
-                image_path,
-                output_path,
-                source_language,
-                target_language,
-                context_translations=context_translations,
-            )
+            if executor.backend == "cloudrun":
+                async with _cloudrun_serial_lock():
+                    result = await executor.translate_page(
+                        image_path,
+                        output_path,
+                        source_language,
+                        target_language,
+                        context_translations=context_translations,
+                    )
+            else:
+                result = await executor.translate_page(
+                    image_path,
+                    output_path,
+                    source_language,
+                    target_language,
+                    context_translations=context_translations,
+                )
             stage = dict(result.get("stage_elapsed_ms") or {})
             stage["executor_attempts"] = attempt_index + 1
             result["stage_elapsed_ms"] = stage
@@ -972,8 +1209,33 @@ async def _publish_page_result(
 ) -> bool:
     stage_elapsed = dict(result.get("stage_elapsed_ms") or {}) if result else {}
     remote_elapsed_ms = _to_non_negative_int((result or {}).get("remote_elapsed_ms"), default=0)
+    primary_model = str((result or {}).get("primary_model") or "")
+    fallback_model = str((result or {}).get("fallback_model") or "")
+    selected_model = str((result or {}).get("selected_model") or "")
+    model_fallback_reason = str((result or {}).get("model_fallback_reason") or "")
     if error is not None:
         _cleanup_translated_variants(request.manga_id, request.chapter_id, image_path.name)
+        failure_stage = str(getattr(error, "failure_stage", "") or "translate")
+        status_code = getattr(error, "status_code", None)
+        error_detail = str(error).strip() or error.__class__.__name__
+        if status_code is not None:
+            error_detail = f"status={status_code}; {error_detail}"
+        error_message = f"[{failure_stage}] {error_detail}"
+        logger.warning(
+            "translate_page_failed backend=%s image=%s task_id=%s status_code=%s failure_stage=%s fallback_used=%s attempts=%s primary_model=%s fallback_model=%s selected_model=%s fallback_reason=%s error=%s",
+            execution_backend,
+            image_path.name,
+            task_id,
+            status_code,
+            failure_stage,
+            False,
+            stage_elapsed.get("executor_attempts"),
+            primary_model,
+            fallback_model,
+            selected_model,
+            model_fallback_reason,
+            error_detail,
+        )
         await v1_event_bus.publish(
             {
                 "type": "progress",
@@ -983,12 +1245,15 @@ async def _publish_page_result(
                 "image_name": image_path.name,
                 "stage": "failed",
                 "status": "failed",
-                "error_message": str(error),
+                "error_message": error_message,
                 "pipeline": pipeline,
                 "execution_backend": execution_backend,
-                "failure_stage": "translate",
+                "failure_stage": failure_stage,
                 "remote_elapsed_ms": remote_elapsed_ms,
                 "stage_elapsed_ms": stage_elapsed,
+                "primary_model": primary_model,
+                "fallback_model": fallback_model,
+                "selected_model": selected_model,
             }
         )
         return False
@@ -1009,6 +1274,9 @@ async def _publish_page_result(
                 "failure_stage": "translate",
                 "remote_elapsed_ms": remote_elapsed_ms,
                 "stage_elapsed_ms": stage_elapsed,
+                "primary_model": primary_model,
+                "fallback_model": fallback_model,
+                "selected_model": selected_model,
             }
         )
         return False
@@ -1028,6 +1296,21 @@ async def _publish_page_result(
             error_message = "no detected text regions"
         else:
             error_message = f"no visible changes: {result.get('no_change_reason') or 'unknown_no_change_reason'}"
+        logger.warning(
+            "translate_page_failed backend=%s image=%s task_id=%s status_code=%s failure_stage=%s fallback_used=%s attempts=%s primary_model=%s fallback_model=%s selected_model=%s fallback_reason=%s error=%s",
+            execution_backend,
+            image_path.name,
+            task_id,
+            None,
+            failure_stage,
+            fallback_used,
+            stage_elapsed.get("executor_attempts"),
+            primary_model,
+            fallback_model,
+            selected_model,
+            model_fallback_reason or str(result.get("fallback_reason") or ""),
+            error_message,
+        )
         await v1_event_bus.publish(
             {
                 "type": "progress",
@@ -1043,6 +1326,9 @@ async def _publish_page_result(
                 "failure_stage": failure_stage,
                 "remote_elapsed_ms": remote_elapsed_ms,
                 "stage_elapsed_ms": stage_elapsed,
+                "primary_model": primary_model,
+                "fallback_model": fallback_model,
+                "selected_model": selected_model,
             }
         )
         return False
@@ -1060,6 +1346,9 @@ async def _publish_page_result(
             "execution_backend": execution_backend,
             "remote_elapsed_ms": remote_elapsed_ms,
             "stage_elapsed_ms": stage_elapsed,
+            "primary_model": primary_model,
+            "fallback_model": fallback_model,
+            "selected_model": selected_model,
         }
     )
     return True
@@ -1185,6 +1474,9 @@ async def _process_chapter_job(
                         result = {
                             "stage_elapsed_ms": {"executor_attempts": attempts},
                             "execution_backend": backend,
+                            "primary_model": runtime.get("primary_model"),
+                            "fallback_model": runtime.get("fallback_model"),
+                            "selected_model": runtime.get("primary_model"),
                         }
                     return image_path, task_id, result, error
             except Exception as exc:  # noqa: BLE001
@@ -1383,6 +1675,9 @@ async def translate_page(request: PageTranslateRequest, _session: Session = Depe
             "url": translated_url,
             "pipeline": "single_page",
             "stage_elapsed_ms": result.get("stage_elapsed_ms") or {},
+            "primary_model": result.get("primary_model"),
+            "fallback_model": result.get("fallback_model"),
+            "selected_model": result.get("selected_model"),
         }
     )
 
@@ -1395,6 +1690,9 @@ async def translate_page(request: PageTranslateRequest, _session: Session = Depe
         "output_changed": True,
         "regions_count": result["regions_count"],
         "stage_elapsed_ms": result.get("stage_elapsed_ms") or {},
+        "primary_model": result.get("primary_model"),
+        "fallback_model": result.get("fallback_model"),
+        "selected_model": result.get("selected_model"),
     }
 
 
@@ -1404,9 +1702,12 @@ async def internal_translate_page(
     source_language: Optional[str] = Form(None),
     target_language: Optional[str] = Form(None),
     context_translations: Optional[str] = Form("[]"),
+    primary_model: Optional[str] = Form(None),
+    fallback_model: Optional[str] = Form(None),
     x_internal_token: Optional[str] = Header(None, alias=INTERNAL_TOKEN_HEADER),
 ):
     _verify_internal_token(x_internal_token)
+    _ensure_internal_compute_ready()
 
     try:
         payload = await image.read()
@@ -1427,6 +1728,8 @@ async def internal_translate_page(
         source_language=source_language,
         target_language=target_language,
         context_translations=_build_context_translations(parsed_context),
+        primary_model=primary_model,
+        fallback_model=fallback_model,
     )
     elapsed_ms = int((time.perf_counter() - started_at) * 1000.0)
 
@@ -1447,6 +1750,10 @@ async def internal_translate_page(
         "x-remote-elapsed-ms": str(elapsed_ms),
         "x-cold-start": "0",
         "x-translation-text": _encode_header_value(context_text),
+        "x-primary-model": str(result.get("primary_model") or ""),
+        "x-fallback-model": str(result.get("fallback_model") or ""),
+        "x-selected-model": str(result.get("selected_model") or ""),
+        "x-model-fallback-reason": _encode_header_value(result.get("model_fallback_reason") or ""),
     }
     return Response(content=output_bytes, media_type="application/octet-stream", headers=headers)
 

@@ -58,6 +58,9 @@ from manga_translator.server.routes import (
 from manga_translator.server.routes import sessions_router
 
 logger = logging.getLogger('manga_translator.server')
+GEMINI_PRIMARY_MODEL_DEFAULT = "gemini-3-flash-preview"
+GEMINI_FALLBACK_MODEL_DEFAULT = "gemini-2.5-flash"
+DEPRECATED_GEMINI_MODELS = {"gemini-2.0-flash"}
 
 # 设置Web服务器标志，防止翻译器重新加载.env覆盖用户环境变量
 os.environ['MANGA_TRANSLATOR_WEB_SERVER'] = 'true'
@@ -92,6 +95,28 @@ _audit_service = None
 _system_initializer = None
 
 
+def _normalize_gemini_model(model_name: str | None, *, role: str) -> str:
+    fallback = GEMINI_FALLBACK_MODEL_DEFAULT if role == "fallback" else GEMINI_PRIMARY_MODEL_DEFAULT
+    normalized = str(model_name or "").strip() or fallback
+    if normalized.lower() in DEPRECATED_GEMINI_MODELS:
+        logger.warning(
+            "Deprecated Gemini model '%s' requested for %s; normalized to '%s'",
+            normalized,
+            role,
+            GEMINI_FALLBACK_MODEL_DEFAULT,
+        )
+        return GEMINI_FALLBACK_MODEL_DEFAULT
+    return normalized
+
+
+def _resolve_runtime_gemini_models() -> tuple[str, str]:
+    primary = _normalize_gemini_model(os.getenv("GEMINI_MODEL"), role="primary")
+    fallback = _normalize_gemini_model(os.getenv("GEMINI_FALLBACK_MODEL"), role="fallback")
+    os.environ["GEMINI_MODEL"] = primary
+    os.environ["GEMINI_FALLBACK_MODEL"] = fallback
+    return primary, fallback
+
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on server startup"""
@@ -103,7 +128,17 @@ async def startup_event():
     runtime_source = task_manager.server_config.get("_runtime_config_source", "unknown")
     logger.info("Runtime config ready: use_gpu=%s source=%s", resolved_use_gpu, runtime_source)
     add_log(f"运行时配置: use_gpu={resolved_use_gpu}, source={runtime_source}", "INFO")
-    
+    compute_only = str(os.getenv("MANGA_CLOUDRUN_COMPUTE_ONLY", "")).strip().lower() in {"1", "true", "yes", "on"}
+    gemini_model, gemini_fallback_model = _resolve_runtime_gemini_models()
+    has_gemini_key = bool(str(os.getenv("GEMINI_API_KEY", "")).strip())
+    logger.info(
+        "Compute runtime check: compute_only=%s primary_model=%s fallback_model=%s has_gemini_key=%s",
+        compute_only,
+        gemini_model,
+        gemini_fallback_model,
+        has_gemini_key,
+    )
+
     from manga_translator.server.core import (
         AccountService,
         SessionService,

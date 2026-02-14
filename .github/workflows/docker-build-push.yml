@@ -113,7 +113,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             BUILD_TYPE=${{ matrix.build_type }}
-            CUDA_VERSION=12.1.0
+            CUDA_VERSION=12.8.0
             PYTHON_VERSION=3.12
           cache-from: type=gha
           cache-to: type=gha,mode=max

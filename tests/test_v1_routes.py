@@ -783,6 +783,115 @@ def test_internal_translate_page_requires_internal_token(monkeypatch: pytest.Mon
         assert response.status_code == 401
 
 
+def test_gemini_model_resolution_defaults_and_legacy_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    monkeypatch.delenv("GEMINI_FALLBACK_MODEL", raising=False)
+    assert v1_translate._resolve_gemini_primary_model() == "gemini-3-flash-preview"
+    assert v1_translate._resolve_gemini_fallback_model() == "gemini-2.5-flash"
+
+    warning_messages: list[str] = []
+
+    def _fake_warning(message, *args, **kwargs):
+        _ = kwargs
+        if args:
+            warning_messages.append(str(message) % args)
+        else:
+            warning_messages.append(str(message))
+
+    monkeypatch.setattr(v1_translate.logger, "warning", _fake_warning)
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-2.0-flash")
+    assert v1_translate._resolve_gemini_primary_model() == "gemini-2.5-flash"
+    assert any("gemini-2.0-flash" in msg for msg in warning_messages)
+    assert any("deprecated" in msg.lower() for msg in warning_messages)
+
+
+def test_internal_translate_page_requires_gemini_key_in_compute_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    patch_services,
+):
+    monkeypatch.setenv("MANGA_INTERNAL_API_TOKEN", "secret-token")
+    monkeypatch.setenv("MANGA_CLOUDRUN_COMPUTE_ONLY", "1")
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-3-flash-preview")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    app = FastAPI()
+    app.include_router(v1_translate.internal_router)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/internal/translate/page",
+            headers={"X-Internal-Token": "secret-token"},
+            files={"image": ("001.jpg", b"raw-image", "image/jpeg")},
+        )
+
+    assert response.status_code == 503
+    assert "missing GEMINI_API_KEY" in response.json()["detail"]
+
+
+@pytest.mark.anyio
+async def test_translate_single_image_uses_fallback_model_when_primary_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    source_path = tmp_path / "source.jpg"
+    output_path = tmp_path / "output.jpg"
+    img = Image.new("RGB", (8, 8), color=(240, 240, 240))
+    img.save(source_path)
+
+    class _TranslatorConfig:
+        attempts = 1
+        target_lang = "ENG"
+        skip_lang = None
+        user_api_model = None
+
+    class _CliConfig:
+        attempts = 1
+
+    class _Config:
+        translator = _TranslatorConfig()
+        cli = _CliConfig()
+
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-3-flash-preview")
+    monkeypatch.setenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash")
+    monkeypatch.setattr(
+        v1_translate,
+        "_resolve_translate_attempts",
+        lambda _config: 1,
+    )
+    monkeypatch.setattr(
+        v1_translate,
+        "_resolve_target_language",
+        lambda _target: "CHS",
+    )
+    monkeypatch.setattr(
+        "manga_translator.server.core.config_manager.load_default_config",
+        lambda: _Config(),
+    )
+
+    seen_models: list[str] = []
+
+    async def _fake_build_translate_context(_request, config, payload, cleanup_reason=None, cleanup_force=False):
+        _ = (cleanup_reason, cleanup_force)
+        selected = getattr(config.translator, "user_api_model", "")
+        seen_models.append(selected)
+        if selected == "gemini-3-flash-preview":
+            raise RuntimeError("primary model unavailable")
+        with Image.open(io.BytesIO(payload)) as payload_img:
+            result_img = payload_img.convert("RGB")
+        return SimpleNamespace(result=result_img, text_regions=[object()])
+
+    monkeypatch.setattr(v1_translate, "_build_translate_context", _fake_build_translate_context)
+
+    result = await v1_translate._translate_single_image(source_path, output_path, "en", "zh")
+    assert result["fallback_used"] is False
+    assert result["primary_model"] == "gemini-3-flash-preview"
+    assert result["fallback_model"] == "gemini-2.5-flash"
+    assert result["selected_model"] == "gemini-2.5-flash"
+    assert seen_models[:2] == ["gemini-3-flash-preview", "gemini-2.5-flash"]
+
+
 def test_internal_translate_page_encodes_non_latin_headers(monkeypatch: pytest.MonkeyPatch, patch_services):
     monkeypatch.setenv("MANGA_INTERNAL_API_TOKEN", "secret-token")
 
@@ -815,6 +924,43 @@ def test_internal_translate_page_encodes_non_latin_headers(monkeypatch: pytest.M
     assert response.content == b"translated-image"
     assert v1_translate._decode_header_value(response.headers.get("x-fallback-reason")) == "最后一次错误: 未知错误"
     assert v1_translate._decode_header_value(response.headers.get("x-translation-text")) == "你好，世界"
+
+
+def test_internal_translate_page_includes_model_headers(monkeypatch: pytest.MonkeyPatch, patch_services):
+    monkeypatch.setenv("MANGA_INTERNAL_API_TOKEN", "secret-token")
+
+    async def _fake_translate_payload(*args, **kwargs):
+        _ = (args, kwargs)
+        return b"translated-image", {
+            "regions_count": 1,
+            "output_changed": True,
+            "fallback_used": False,
+            "fallback_reason": None,
+            "no_change_reason": None,
+            "failure_stage": None,
+            "stage_elapsed_ms": {"total": 10.0},
+            "page_translation_text": "ok",
+            "primary_model": "gemini-3-flash-preview",
+            "fallback_model": "gemini-2.5-flash",
+            "selected_model": "gemini-3-flash-preview",
+        }
+
+    monkeypatch.setattr(v1_translate, "_translate_payload_via_temp_files", _fake_translate_payload)
+
+    app = FastAPI()
+    app.include_router(v1_translate.internal_router)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/internal/translate/page",
+            headers={"X-Internal-Token": "secret-token"},
+            files={"image": ("001.jpg", b"raw-image", "image/jpeg")},
+        )
+
+    assert response.status_code == 200
+    assert response.headers.get("x-primary-model") == "gemini-3-flash-preview"
+    assert response.headers.get("x-fallback-model") == "gemini-2.5-flash"
+    assert response.headers.get("x-selected-model") == "gemini-3-flash-preview"
 
 
 def test_build_context_translations_uses_latest_three():
