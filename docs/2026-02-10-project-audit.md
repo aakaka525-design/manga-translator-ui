@@ -529,3 +529,19 @@
   - 原“split 分支已实现但 main 未收口”问题已解除（`main` 已 merge）。
   - 原待办“前端降级提示 + 灰度证据”已补齐，可进入稳定维护态。
   - 联调环境灰度复测已完成并关闭：`TASK-SPLIT-009 completed`（PPIO endpoint 的 detect/render/cache miss/split/unified 联调均通过）。
+
+---
+
+### 31. 82 URL 漂移 + Gemini Key 泄露收敛（2026-02-14）
+
+- **状态**：⚠️ 部分完成（运行链路止血完成，密钥轮换待执行）
+- **确认问题**：
+  - 82 `manga-translator.service` 的 `MANGA_CLOUDRUN_EXEC_URL` 曾被 `90-canary-override.conf` 覆盖到旧域名，调用 `/internal/translate/page` 返回 `404`。
+  - Cloud Run 现有 `GEMINI_API_KEY` 已被上游标记泄露，单图请求出现 `x-fallback-used=1`，错误原因为 key leaked（403）。
+- **本轮已完成动作**：
+  - 82 临时回切 `MANGA_TRANSLATE_EXECUTION_BACKEND=local`，避免用户侧继续出现“有进度无译图”。
+  - 82 主 service 与 override 同步校正为当前可用 Cloud Run URL：`https://manga-translator-compute-fp6zarze5a-ew.a.run.app`。
+  - 校正后基础可用性恢复：`/`、`/signin`、`/scraper`、`/manga/:id`、`/read/:id/:chapter`、`/auth/status` 返回正常。
+- **待完成动作（阻塞项）**：
+  - 轮换并注入新的有效 `GEMINI_API_KEY`（建议 Secret Manager 引用，避免明文 env）。
+  - 完成后执行 Cloud Run 三次单图烟测，要求 `x-fallback-used=0`，再将 82 执行后端切回 `cloudrun`。

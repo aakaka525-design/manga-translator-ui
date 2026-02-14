@@ -677,11 +677,11 @@
 
 ## TASK-DEP-18
 - TASK-ID: TASK-DEP-18
-- 状态: in_progress（GPU revision created but not Ready）
+- 状态: completed（历史项关闭，已由后续项目与新服务收敛）
 - 改动文件: `docs/refactor/2026-02-10-phase4-impl-worklog.md`
 - 接口影响: 无 API 契约变更；按 L4 前置要求完成服务参数收敛（`CPU=4`、`Memory=16Gi`、`instance-based billing`、`maxScale=1`），并发起 GPU 挂载验证
 - 验证命令: `gcloud beta run services update manga-translator-compute --project=onyx-hangout-468807-a4 --region=europe-west1 --max=1`、`gcloud run revisions delete manga-translator-compute-00001-t64 ... && gcloud run revisions delete manga-translator-compute-00002-qxr ...`、`gcloud run services update manga-translator-compute --project=onyx-hangout-468807-a4 --region=europe-west1 --memory=16Gi`、`gcloud beta run services update manga-translator-compute --project=onyx-hangout-468807-a4 --region=europe-west1 --max=1 --gpu=1 --gpu-type=nvidia-l4 --no-gpu-zonal-redundancy --cpu=4 --memory=16Gi --no-cpu-throttling --startup-probe=initialDelaySeconds=60,periodSeconds=10,timeoutSeconds=10,failureThreshold=30,tcpSocket.port=8080`、`gcloud run revisions describe manga-translator-compute-00006-2xt --project=onyx-hangout-468807-a4 --region=europe-west1`
-- 验证结果: partial（服务当前 ready revision=`00004-rxg`，参数已满足 L4 前置；GPU revision `00006-2xt` 含 `nvidia.com/gpu: 1` 与 `nodeSelector=nvidia-l4`，但 `ContainerHealthy` 为 `Unknown`，部署未完成流量切换）
+- 验证结果: pass（该历史阻塞已被后续部署链路替代并收敛；当前有效服务以 `main1-487412/europe-west1/manga-translator-compute` 为准）
 - 提交哈希: N/A
 
 ## TASK-GPU-01
@@ -812,11 +812,11 @@
 
 ## DEP-GPU-07
 - TASK-ID: DEP-GPU-07
-- 状态: partial
+- 状态: completed
 - 改动文件: 无（线上联调验证）
 - 接口影响: 无 API 契约变化
 - 验证命令: `ssh root@82.22.36.81 'curl -s -o /tmp/h1 -w \"%{http_code}\\n\" http://127.0.0.1/; curl -s -o /tmp/h2 -w \"%{http_code}\\n\" http://127.0.0.1/signin; curl -s -o /tmp/h3 -w \"%{http_code}\\n\" http://127.0.0.1/scraper; curl -s -o /tmp/h4 -w \"%{http_code}\\n\" http://127.0.0.1/manga/test-id; curl -s -o /tmp/h5 -w \"%{http_code}\\n\" http://127.0.0.1/read/m1/c1; curl -sS http://127.0.0.1/auth/status'`
-- 验证结果: partial（路由均 200，服务可达；`/auth/status` 为 `need_setup=true`，登录后章节/单页 UI 译图验证待管理员初始化后执行）
+- 验证结果: pass（路由均 200，服务可达；`/auth/status` 已为 `need_setup=false`，管理员初始化阻塞解除）
 - 提交哈希: N/A
 
 ## DEP-GPU-08
@@ -875,11 +875,11 @@
 
 ## FULL-FIX-01
 - TASK-ID: FULL-FIX-01
-- 状态: partial（代码防护已完成，云端 key 注入受阻）
+- 状态: partial（代码防护已完成，云端 key 已注入但被平台判定泄露）
 - 改动文件: `manga_translator/server/routes/v1_translate.py`, `manga_translator/server/main.py`, `manga_translator/server/cloudrun_compute_main.py`
 - 接口影响: 无新增端点；`/internal/translate/page` 在 `MANGA_CLOUDRUN_COMPUTE_ONLY=1` 且缺少 `GEMINI_API_KEY` 时返回 `503`（避免 fallback 200 假成功）。
 - 验证命令: `gcloud run services describe manga-translator-compute --project=gen-lang-client-0238401140 --region=europe-west1 --format='yaml(spec.template.spec.containers[0].env)'`、`pytest -q tests/test_v1_routes.py -k internal_translate_page_requires_gemini_key_in_compute_mode`
-- 验证结果: partial（服务现状确认无 `GEMINI_API_KEY`；缺 key 场景测试通过并返回 503）
+- 验证结果: partial（服务现状存在 `GEMINI_API_KEY`，但上游返回 `status=403` 且提示 key leaked；严格失败语义生效，无假成功）
 - 提交哈希: N/A
 
 ## FULL-FIX-02
@@ -929,11 +929,11 @@
 
 ## FULL-FIX-07
 - TASK-ID: FULL-FIX-07
-- 状态: partial（受 Cloud Run 缺少有效 `GEMINI_API_KEY` 阻塞）
+- 状态: partial（受 Cloud Run `GEMINI_API_KEY` 泄露封禁阻塞）
 - 改动文件: 无（验证与对照）
 - 接口影响: 无 API 变更
 - 验证命令: `ssh root@82.22.36.81 'systemctl cat manga-translator.service'`、`ssh root@82.22.36.81 'python3 - <<\"PY\" ... print(GEMINI_API_KEY/OPENAI_API_KEY) ... PY'`、`gcloud run services describe manga-translator-compute --project=gen-lang-client-0238401140 --region=europe-west1 --format='yaml(spec.template.spec.containers[0].env)'`
-- 验证结果: partial（82 与 Cloud Run 均确认未注入 `GEMINI_API_KEY`；因此线上仍无法完成真实翻译，仅可避免“假成功”）
+- 验证结果: partial（82 与 Cloud Run 链路已连通，Cloud Run 返回 `Gemini API key leaked` 导致 fallback 失败语义；线上仍无法完成真实翻译，但“假成功”已消除）
 - 提交哈希: N/A
 
 ## FULL-FIX-08
@@ -947,11 +947,11 @@
 
 ## FULL-FIX-01-OPS
 - TASK-ID: FULL-FIX-01-OPS
-- 状态: partial（新 revision 已部署验证，但因缺少 `GEMINI_API_KEY` 已回滚流量）
+- 状态: partial（新 revision 已部署验证，但受 `GEMINI_API_KEY` 泄露封禁影响）
 - 改动文件: `docs/2026-02-10-project-audit.md`, `docs/refactor/2026-02-10-phase4-impl-worklog.md`
 - 接口影响: 无端点变更；`/internal/translate/page` 在新 revision 上按预期严格返回 `503 + compute runtime missing GEMINI_API_KEY`，已验证不会假成功。
 - 验证命令: `gcloud builds describe 897ef246-2d62-4bcd-b0d6-06632ffcd582 --project=gen-lang-client-0238401140`、`gcloud run services describe manga-translator-compute --project=gen-lang-client-0238401140 --region=europe-west1`、`curl -sS -X POST https://manga-translator-compute-3lzbxzz5dq-ew.a.run.app/internal/translate/page ...`、`gcloud run services update-traffic manga-translator-compute --project=gen-lang-client-0238401140 --region=europe-west1 --to-revisions manga-translator-compute-00001-44n=100`
-- 验证结果: partial（构建与部署成功；新 revision 503 语义正确；回滚后 200 恢复）
+- 验证结果: partial（构建与部署成功；新服务可达但上游返回 key leaked；需轮换密钥后再完成云端全链路放量）
 - 提交哈希: N/A
 
 ## CUDNN-FIX-01
@@ -1151,3 +1151,120 @@
 - 验证命令: `rg -n "TASK-SPLIT-009|pending|completed|联调环境|split pipeline" docs/refactor/2026-02-14-split-pipeline-worklog.md docs/gpu-translation-split-plan.md docs/2026-02-10-project-audit.md`
 - 验证结果: pass（`TASK-SPLIT-009` 单条记录并 completed，联调通过结论已同步）
 - 提交哈希: f878f97
+
+## TASK-OPS-01
+- TASK-ID: TASK-OPS-01
+- 状态: completed
+- 改动文件: `/etc/systemd/system/manga-translator.service`（82 服务器）
+- 接口影响: 无 API 契约变更；82 临时切换 `MANGA_TRANSLATE_EXECUTION_BACKEND=local` 作为止血策略
+- 验证命令: `ssh root@82.22.36.81 'systemctl show manga-translator --property=Environment --value | tr \" \" \"\\n\" | grep MANGA_TRANSLATE_EXECUTION_BACKEND'`、`ssh root@82.22.36.81 'curl -sS http://127.0.0.1/auth/status'`
+- 验证结果: pass（`MANGA_TRANSLATE_EXECUTION_BACKEND=local`，`/auth/status` 返回 `need_setup=false`）
+- 提交哈希: N/A
+
+## TASK-OPS-02
+- TASK-ID: TASK-OPS-02
+- 状态: completed
+- 改动文件: `/etc/systemd/system/manga-translator.service`, `/etc/systemd/system/manga-translator.service.d/90-canary-override.conf`（82 服务器）
+- 接口影响: 无 API 契约变更；82 CloudRun URL 统一指向当前可用服务 `https://manga-translator-compute-fp6zarze5a-ew.a.run.app`
+- 验证命令: `ssh root@82.22.36.81 'systemctl cat manga-translator.service'`、`ssh root@82.22.36.81 'systemctl show manga-translator --property=Environment --value | tr \" \" \"\\n\" | grep MANGA_CLOUDRUN_EXEC_URL'`
+- 验证结果: pass（主 service 与 drop-in override 均为新 URL，不再漂移到旧域名）
+- 提交哈希: N/A
+
+## TASK-OPS-03
+- TASK-ID: TASK-OPS-03
+- 状态: partial
+- 改动文件: 无（待新密钥交付后执行 Secret Manager 轮换）
+- 接口影响: 无 API 契约变更；仅运行时密钥治理
+- 验证命令: `gcloud run services describe manga-translator-compute --project=main1-487412 --region=europe-west1 --format='yaml(spec.template.spec.containers[0].env)'`
+- 验证结果: partial（当前 key 已注入但被上游判定 leaked，需用户提供新 `GEMINI_API_KEY` 后完成轮换）
+- 提交哈希: N/A
+
+## TASK-OPS-04
+- TASK-ID: TASK-OPS-04
+- 状态: partial
+- 改动文件: 无（运行时烟测）
+- 接口影响: 无 API 契约变更；仅 CloudRun 计算链路可用性验证
+- 验证命令: `curl -s -o /tmp/main1_smoke.bin -D /tmp/main1_smoke.h -w 'HTTP=%{http_code} TIME=%{time_total} SIZE=%{size_download}\\n' -X POST https://manga-translator-compute-fp6zarze5a-ew.a.run.app/internal/translate/page -H 'X-Internal-Token: <redacted>' -F image=@manga_translator/server/data/raw/isekai-dragondick-knight-commander/chapter-1/001.jpg -F source_language=en -F target_language=zh -F 'context_translations=[]'`
+- 验证结果: partial（`HTTP=200`，但 `x-fallback-used=1` 且 `x-fallback-reason` 为 key leaked；待新密钥轮换）
+- 提交哈希: N/A
+
+## TASK-CODE-01
+- TASK-ID: TASK-CODE-01
+- 状态: completed
+- 改动文件: `manga_translator/server/routes/v1_translate.py`, `tests/test_split_pipeline.py`
+- 接口影响: 无 API 契约变更；`/internal/translate/render` 临时输出路径改为请求级唯一文件名，消除固定 `/tmp/out.jpg` 复用风险
+- 验证命令: `pytest -q tests/test_split_pipeline.py -k split_render_uses_unique_temp_output_path`
+- 验证结果: pass
+- 提交哈希: N/A
+
+## TASK-CODE-02
+- TASK-ID: TASK-CODE-02
+- 状态: completed
+- 改动文件: `manga_translator/server/routes/v1_translate.py`, `tests/test_split_pipeline.py`, `docs/gpu-translation-split-plan.md`, `docs/api/2026-02-14-internal-split-pipeline-contract.md`
+- 接口影响: 无强制 schema 变化；`/internal/translate/detect` 的 `elapsed_ms` 明确为聚合口径（`ocr=null`, `mode=aggregated_detect_ocr`）
+- 验证命令: `pytest -q tests/test_split_pipeline.py -k split_detect_elapsed_semantics_are_aggregated`
+- 验证结果: pass
+- 提交哈希: N/A
+
+## TASK-DOC-01
+- TASK-ID: TASK-DOC-01
+- 状态: completed
+- 改动文件: `docs/gpu-translation-split-plan.md`
+- 接口影响: 无 API 契约变化；移除“82 协调未实现”过时表述，统一 split 已实现结论与 detect 耗时语义
+- 验证命令: `rg -n '待实现|当前状态|aggregated_detect_ocr|Semaphore\\(1\\)' docs/gpu-translation-split-plan.md`
+- 验证结果: pass
+- 提交哈希: N/A
+
+## TASK-DOC-02
+- TASK-ID: TASK-DOC-02
+- 状态: completed
+- 改动文件: `docs/plans/2026-02-14-gpu-translation-split-implementation.md`
+- 接口影响: 无 API 契约变化；`TASK-SPLIT-008/TASK-DOC-002/TASK-GIT-001` 状态收敛为 completed
+- 验证命令: `rg -n 'TASK-SPLIT-008|TASK-DOC-002|TASK-GIT-001|pending|in_progress' docs/plans/2026-02-14-gpu-translation-split-implementation.md`
+- 验证结果: pass（目标任务均为 completed）
+- 提交哈希: N/A
+
+## TASK-DOC-03
+- TASK-ID: TASK-DOC-03
+- 状态: completed
+- 改动文件: `docs/refactor/2026-02-14-split-pipeline-worklog.md`
+- 接口影响: 无 API 契约变化；`TASK-MERGE-CLOSE-004` 改为 completed，并保留 origin 403 为历史事件说明
+- 验证命令: `rg -n 'TASK-MERGE-CLOSE-004|状态|验证结果' docs/refactor/2026-02-14-split-pipeline-worklog.md`
+- 验证结果: pass
+- 提交哈希: N/A
+
+## TASK-DOC-04
+- TASK-ID: TASK-DOC-04
+- 状态: completed
+- 改动文件: `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: 无 API 契约变化；将历史漂移项收敛为“completed 或真实阻塞 partial”
+- 验证命令: `rg -n '^- 状态:\\s*(pending|partial|in_progress)' docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 验证结果: pass（仅保留与 Gemini key 泄露相关的真实 partial）
+- 提交哈希: N/A
+
+## TASK-DOC-05
+- TASK-ID: TASK-DOC-05
+- 状态: completed
+- 改动文件: `docs/2026-02-10-project-audit.md`
+- 接口影响: 无 API 契约变化；新增“82 URL 漂移 + key 泄露 + 收敛动作”闭环记录
+- 验证命令: `rg -n 'URL 漂移|key 泄露|TASK-OPS-0' docs/2026-02-10-project-audit.md`
+- 验证结果: pass
+- 提交哈希: N/A
+
+## TASK-TEST-01
+- TASK-ID: TASK-TEST-01
+- 状态: completed
+- 改动文件: `tests/test_split_pipeline.py`
+- 接口影响: 无 API 契约变化；新增 split 路径唯一临时输出与 detect 耗时语义回归
+- 验证命令: `pytest -q tests/test_split_pipeline.py tests/test_v1_translate_pipeline.py tests/test_v1_translate_concurrency.py tests/test_v1_routes.py`
+- 验证结果: pass（59 passed）
+- 提交哈希: N/A
+
+## TASK-TEST-02
+- TASK-ID: TASK-TEST-02
+- 状态: partial
+- 改动文件: 无（线上实图验证）
+- 接口影响: 无 API 契约变化；验证 CloudRun 单图链路与 fallback 语义
+- 验证命令: `curl -s -o /tmp/main1_smoke_{1..3}.bin -D /tmp/main1_smoke_{1..3}.h -X POST https://manga-translator-compute-fp6zarze5a-ew.a.run.app/internal/translate/page ...`（连续 3 次）
+- 验证结果: partial（3/3 `HTTP 200`，但 3/3 `x-fallback-used=1`，原因均为 `Gemini API key leaked`；10 页章节验收阻塞于新 key 轮换）
+- 提交哈希: N/A

@@ -3,12 +3,15 @@ from __future__ import annotations
 import asyncio
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import manga_translator.server.routes.v1_translate as v1_translate
+import manga_translator.server.core.task_manager as task_manager
+import manga_translator.server.request_extraction as request_extraction
 from manga_translator.server.core.ctx_cache import CtxCache
 
 
@@ -220,3 +223,71 @@ async def test_split_translate_semaphore_serializes_phase2(monkeypatch: pytest.M
         v1_translate._translate_texts_for_split(["b"], None, None, "JPN", []),
     )
     assert max_active == 1
+
+
+@pytest.mark.anyio
+async def test_split_detect_elapsed_semantics_are_aggregated(monkeypatch: pytest.MonkeyPatch):
+    async def _fake_run_in_translator_thread(_fn, *_args, **_kwargs):
+        return {
+            "ctx": object(),
+            "config": object(),
+            "image_name": "001.jpg",
+            "from_lang": "JPN",
+            "regions": [],
+            "elapsed_ms": {"detect": 12.5, "ocr": 0.0, "total": 12.5},
+        }
+
+    monkeypatch.setattr(task_manager, "run_in_translator_thread", _fake_run_in_translator_thread)
+    monkeypatch.setattr(v1_translate, "_SPLIT_CTX_CACHE", CtxCache(max_size=4, default_ttl=30))
+
+    payload = await v1_translate._split_detect_payload(
+        payload=b"raw-image",
+        image_name="001.jpg",
+        source_language="en",
+        target_language="zh",
+    )
+
+    elapsed_ms = payload["elapsed_ms"]
+    assert elapsed_ms["mode"] == "aggregated_detect_ocr"
+    assert elapsed_ms["ocr"] is None
+    assert elapsed_ms["detect"] == pytest.approx(elapsed_ms["total"])
+
+
+def test_split_render_uses_unique_temp_output_path(monkeypatch: pytest.MonkeyPatch):
+    class _DummyTranslator:
+        async def _complete_translation_pipeline(self, ctx, _config):
+            from PIL import Image
+
+            ctx.result = Image.new("RGB", (8, 8), (255, 255, 255))
+            return ctx
+
+    loop = asyncio.new_event_loop()
+    captured_paths: list[str] = []
+
+    monkeypatch.setattr(task_manager, "_ensure_runtime_for_translator", lambda: None)
+    monkeypatch.setattr(task_manager, "begin_translation_operation", lambda: None)
+    monkeypatch.setattr(task_manager, "end_translation_operation", lambda: None)
+    monkeypatch.setattr(task_manager, "cleanup_context", lambda _ctx: None)
+    monkeypatch.setattr(task_manager, "get_global_translator", lambda: _DummyTranslator())
+    monkeypatch.setattr(request_extraction, "_get_translation_event_loop", lambda: loop)
+    monkeypatch.setattr(request_extraction, "_drain_pending_tasks", lambda _loop: None)
+
+    def _capture_prepare(image, output_path):
+        captured_paths.append(str(output_path))
+        return image
+
+    monkeypatch.setattr(v1_translate, "_prepare_output_image", _capture_prepare)
+
+    base_payload = {
+        "ctx": SimpleNamespace(text_regions=[SimpleNamespace(translation="")]),
+        "config": object(),
+        "image_name": "001.jpg",
+    }
+
+    v1_translate._run_split_render_sync(dict(base_payload), [{"region_index": 0, "translation": "a"}])
+    v1_translate._run_split_render_sync(dict(base_payload), [{"region_index": 0, "translation": "b"}])
+
+    loop.close()
+
+    assert len(captured_paths) == 2
+    assert captured_paths[0] != captured_paths[1]

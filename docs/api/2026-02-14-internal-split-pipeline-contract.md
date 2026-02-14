@@ -33,8 +33,9 @@
   "from_lang": "JPN",
   "elapsed_ms": {
     "detect": 123.4,
-    "ocr": 0.0,
-    "total": 123.4
+    "ocr": null,
+    "total": 123.4,
+    "mode": "aggregated_detect_ocr"
   }
 }
 ```
@@ -42,6 +43,7 @@
 说明:
 - `region_index` 为连续整数 `0..n-1`，作为 render 回写锚点。
 - `regions_count=0` 仍返回 `200`。
+- `elapsed_ms` 当前为聚合口径：`detect` 与 `total` 表示 detect+ocr 总耗时，`ocr` 为 `null`。
 
 ## Render Request
 

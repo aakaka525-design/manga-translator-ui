@@ -500,6 +500,33 @@ def _extract_context_text(ctx) -> str:
     return "\n".join(values).strip()
 
 
+def _to_non_negative_float(value: Any, default: float = 0.0) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    return parsed if parsed >= 0 else float(default)
+
+
+def _normalize_split_detect_elapsed(raw_elapsed: Any) -> dict[str, Any]:
+    source = dict(raw_elapsed or {}) if isinstance(raw_elapsed, dict) else {}
+    total_ms = _to_non_negative_float(source.get("total"), default=0.0)
+    detect_ms = _to_non_negative_float(source.get("detect"), default=total_ms)
+    if total_ms <= 0 and detect_ms > 0:
+        total_ms = detect_ms
+    if total_ms <= 0 and detect_ms <= 0:
+        detect_ms = 0.0
+        total_ms = 0.0
+
+    # _translate_until_translation currently returns an aggregated detect+ocr stage.
+    return {
+        "detect": round(total_ms, 3),
+        "ocr": None,
+        "total": round(total_ms, 3),
+        "mode": "aggregated_detect_ocr",
+    }
+
+
 def _resolve_chapter_page_concurrency(
     execution_mode: str | None = None,
     translator_name: str | None = None,
@@ -583,11 +610,13 @@ def _run_split_detect_sync(
             "image_name": image_name,
             "from_lang": str(getattr(ctx, "from_lang", "") or ""),
             "regions": regions,
-            "elapsed_ms": {
-                "detect": round(total_ms, 3),
-                "ocr": 0.0,
-                "total": round(total_ms, 3),
-            },
+            "elapsed_ms": _normalize_split_detect_elapsed(
+                {
+                    "detect": round(total_ms, 3),
+                    "ocr": None,
+                    "total": round(total_ms, 3),
+                }
+            ),
         }
     finally:
         end_translation_operation()
@@ -692,7 +721,7 @@ def _run_split_render_sync(
             raise RuntimeError("render produced no output image")
         suffix = Path(image_name).suffix.lower() or ".jpg"
         format_map = {".jpg": "JPEG", ".jpeg": "JPEG", ".png": "PNG", ".webp": "WEBP"}
-        target_path = Path(f"/tmp/out{suffix}")
+        target_path = Path(tempfile.gettempdir()) / f"split-render-{uuid.uuid4().hex}{suffix}"
         prepared = _prepare_output_image(ctx.result, target_path)
         output = io.BytesIO()
         prepared.save(output, format=format_map.get(suffix, "PNG"))
@@ -749,7 +778,7 @@ async def _split_detect_payload(
         "regions_count": len(serialized_regions),
         "regions": serialized_regions,
         "from_lang": str(raw.get("from_lang") or ""),
-        "elapsed_ms": raw.get("elapsed_ms") or {"detect": 0.0, "ocr": 0.0, "total": 0.0},
+        "elapsed_ms": _normalize_split_detect_elapsed(raw.get("elapsed_ms")),
     }
 
 
@@ -2320,25 +2349,26 @@ async def internal_translate_render(
     if reason == "IMAGE_HASH_MISMATCH":
         raise HTTPException(status_code=422, detail="IMAGE_HASH_MISMATCH")
 
-    ctx_obj = (cache_payload or {}).get("ctx") if isinstance(cache_payload, dict) else None
-    text_regions = list(getattr(ctx_obj, "text_regions", []) or [])
-    translated_regions_payload: list[dict[str, Any]] = []
-    for item in request.translated_regions:
-        region_index = int(item.region_index)
-        if region_index < 0 or region_index >= len(text_regions):
-            raise HTTPException(status_code=400, detail="RENDER_INPUT_INVALID")
-        translated_regions_payload.append(
-            {
-                "region_index": region_index,
-                "translation": str(item.translation or ""),
-            }
-        )
-
-    started_at = time.perf_counter()
     try:
-        output_bytes, render_result = await _split_render_payload(cache_payload, translated_regions_payload)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="RENDER_INPUT_INVALID") from exc
+        ctx_obj = (cache_payload or {}).get("ctx") if isinstance(cache_payload, dict) else None
+        text_regions = list(getattr(ctx_obj, "text_regions", []) or [])
+        translated_regions_payload: list[dict[str, Any]] = []
+        for item in request.translated_regions:
+            region_index = int(item.region_index)
+            if region_index < 0 or region_index >= len(text_regions):
+                raise HTTPException(status_code=400, detail="RENDER_INPUT_INVALID")
+            translated_regions_payload.append(
+                {
+                    "region_index": region_index,
+                    "translation": str(item.translation or ""),
+                }
+            )
+
+        started_at = time.perf_counter()
+        try:
+            output_bytes, render_result = await _split_render_payload(cache_payload, translated_regions_payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="RENDER_INPUT_INVALID") from exc
     finally:
         _SPLIT_CTX_CACHE.pop(request.task_id)
 

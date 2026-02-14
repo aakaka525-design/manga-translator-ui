@@ -28,9 +28,9 @@
 7. `TASK-SPLIT-005` completed
 8. `TASK-SPLIT-006` completed
 9. `TASK-SPLIT-007` completed
-10. `TASK-SPLIT-008` pending（待联调实图）
-11. `TASK-DOC-002` in_progress
-12. `TASK-GIT-001` pending
+10. `TASK-SPLIT-008` completed（本地小样本灰度实测）
+11. `TASK-DOC-002` completed
+12. `TASK-GIT-001` completed
 
 ## Verification Snapshot
 
@@ -42,4 +42,4 @@
 - detect/render 可用，状态机正确
 - cache miss 自动降级 unified，且无假成功
 - `success_count + failed_count == total_count`
-- 前端成功页数与文件数一致（待联调实图确认）
+- 前端成功页数与文件数一致（本地灰度 + 联调环境已确认）
