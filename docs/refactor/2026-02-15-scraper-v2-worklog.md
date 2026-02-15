@@ -58,4 +58,4 @@
 - 接口影响: 无；仅远端同步
 - 验证命令: `git push personal codex/scraper-v2-refactor-20260215 && git push origin codex/scraper-v2-refactor-20260215`
 - 验证结果: `personal` 成功；`origin` 失败（`403 Permission denied`），已按规则记录阻塞事件
-- 提交哈希: TO_BE_FILLED_COMMIT_4
+- 提交哈希: 2d63e62
