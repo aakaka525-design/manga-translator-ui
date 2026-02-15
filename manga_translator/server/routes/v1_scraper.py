@@ -625,7 +625,11 @@ async def _fetch_with_cf_solve(
             referer=context.base_url,
         )
         merged_cookies = {**context.cookies, **(solved.cookies or {})}
-        retry_ctx = replace(context, cookies=merged_cookies)
+        # CF cf_clearance is bound to both TLS fingerprint AND User-Agent.
+        # When FlareSolverr returns a solved UA we must use it for the retry
+        # so that Cloudflare accepts the cf_clearance cookie.
+        retry_ua = solved.user_agent or context.user_agent
+        retry_ctx = replace(context, cookies=merged_cookies, user_agent=retry_ua)
         return await provider_fn(retry_ctx, *args)
 
     try:
