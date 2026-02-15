@@ -38,7 +38,7 @@
 - 接口影响: 无；记录门禁测试结果与非阻塞全量 pytest 观察项
 - 验证命令: `pytest -q tests/test_v1_routes.py tests/test_v1_scraper_phase2.py tests/test_v1_scraper_phase3.py tests/test_v1_scraper_phase4.py && pytest -q -x`
 - 验证结果: 门禁通过（78 passed）；全量观察项首个失败 `tests/test_runtime_gpu_lazy_init.py::test_load_default_config_dict_falls_back_to_config_example`（非本轮范围）
-- 提交哈希: TO_BE_FILLED_COMMIT_3
+- 提交哈希: f42e9c5
 
 ## TASK-SV2-CLOSE-004
 
@@ -48,14 +48,14 @@
 - 接口影响: 无；提交按“核心代码/文档初始化/收口证据”三段切分
 - 验证命令: `git log --oneline -n 8`
 - 验证结果: pass（存在 3 个 TASK-ID 规范提交）
-- 提交哈希: TO_BE_FILLED_COMMIT_3
+- 提交哈希: f42e9c5
 
 ## TASK-SV2-CLOSE-005
 
 - TASK-ID: TASK-SV2-CLOSE-005
-- 状态: in_progress
+- 状态: completed
 - 改动文件: `remote:personal`, `remote:origin`
 - 接口影响: 无；仅远端同步
 - 验证命令: `git push personal codex/scraper-v2-refactor-20260215 && git push origin codex/scraper-v2-refactor-20260215`
-- 验证结果: TO_BE_FILLED_AFTER_PUSH
-- 提交哈希: TO_BE_FILLED_COMMIT_3
+- 验证结果: `personal` 成功；`origin` 失败（`403 Permission denied`），已按规则记录阻塞事件
+- 提交哈希: TO_BE_FILLED_COMMIT_4
