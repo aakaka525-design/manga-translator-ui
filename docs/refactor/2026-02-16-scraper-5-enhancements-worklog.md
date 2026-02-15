@@ -98,4 +98,4 @@
 - 接口影响: 无；文档与索引闭环
 - 验证命令: `rg -n 'scraper-5|TASK-S5|inject_cookies|actionable|form_schema' docs/INDEX.md docs/refactor/INDEX.md docs/refactoring/scraper-5-enhancements-evaluation.md`
 - 验证结果: pass
-- 提交哈希: pending-doc-commit
+- 提交哈希: a18c83f
