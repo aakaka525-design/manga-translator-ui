@@ -1,10 +1,11 @@
-# v1 Scraper v2 契约说明（2026-02-15）
+# v1 Scraper v2 / Scraper 5 Enhancements 契约说明（2026-02-15 ~ 2026-02-16）
 
 ## 契约结论
 
 1. 对外 API 路径不变：`/api/v1/scraper/*` 与 `/admin/scraper/*` 保持兼容。
-2. 不新增或删除必填字段；现有调用方无需修改请求体必填参数。
-3. 本轮变更为内部实现重构与兼容桥接，不引入 `/api/v2`。
+2. 不删除既有端点，不变更既有必填字段；现有调用方可继续使用旧请求体。
+3. 2026-02-16 新增 `POST /api/v1/scraper/inject_cookies`，用于 challenge 人工 cookie 闭环。
+4. 本轮不引入 `/api/v2`。
 
 ## 对外接口兼容清单
 
@@ -19,12 +20,13 @@
 9. `/api/v1/scraper/access-check`
 10. `/api/v1/scraper/upload-state`
 11. `/api/v1/scraper/auth-url`
-12. `/admin/scraper/tasks`
-13. `/admin/scraper/metrics`
-14. `/admin/scraper/health`
-15. `/admin/scraper/alerts`
-16. `/admin/scraper/alerts/test-webhook`
-17. `/admin/scraper/queue/stats`
+12. `/api/v1/scraper/inject_cookies`
+13. `/admin/scraper/tasks`
+14. `/admin/scraper/metrics`
+15. `/admin/scraper/health`
+16. `/admin/scraper/alerts`
+17. `/admin/scraper/alerts/test-webhook`
+18. `/admin/scraper/queue/stats`
 
 ## 内部实现变化（非破坏）
 
@@ -43,6 +45,22 @@
    - `progress_completed INTEGER NOT NULL DEFAULT 0`
    - `progress_total INTEGER NOT NULL DEFAULT 0`
 2. 迁移方式：运行时自动迁移（向后兼容，旧数据可读）。
+
+### 2026-02-16 增强点（非破坏）
+
+1. `/api/v1/scraper/providers` 返回新增可选字段：
+   - `features?: string[]`
+   - `form_schema?: Array<{ key,label,type,required?,default?,placeholder?,help?,options? }>`
+   - `image_cache_public?: boolean`
+2. challenge 错误 detail 支持新增可选字段：
+   - `action?: "PROMPT_USER_COOKIE" | "PROMPT_USER_LOGIN" | "RETRY_AFTER"`
+   - `payload?: object`
+3. `/api/v1/scraper/search|catalog|chapters` 返回项可附带新增可选 DTO 字段：
+   - 漫画：`author`, `status`, `source`
+   - 章节：`number`, `date`, `language`
+4. `/api/v1/scraper/image` 默认响应头：
+   - `Cache-Control: private, max-age=3600`
+   - 当 provider 声明 `image_cache_public=true` 时使用 `public, max-age=86400`
 
 ## 兼容策略
 

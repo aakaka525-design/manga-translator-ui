@@ -25,7 +25,10 @@
 - Split Pipeline 收口日志：[`docs/refactor/2026-02-14-split-pipeline-worklog.md`](refactor/2026-02-14-split-pipeline-worklog.md)
 - Scraper v2 实施：[`docs/plans/2026-02-15-scraper-v2-implementation.md`](plans/2026-02-15-scraper-v2-implementation.md)
 - Scraper v2 收口日志：[`docs/refactor/2026-02-15-scraper-v2-worklog.md`](refactor/2026-02-15-scraper-v2-worklog.md)
+- Scraper 5 Enhancements 实施：[`docs/plans/2026-02-16-scraper-5-enhancements-implementation.md`](plans/2026-02-16-scraper-5-enhancements-implementation.md)
+- Scraper 5 Enhancements 日志：[`docs/refactor/2026-02-16-scraper-5-enhancements-worklog.md`](refactor/2026-02-16-scraper-5-enhancements-worklog.md)
 - FlareSolverr 集成方案：[`docs/refactoring/flaresolverr-integration-plan.md`](refactoring/flaresolverr-integration-plan.md)
+- Scraper 5 项评估（执行态）：[`docs/refactoring/scraper-5-enhancements-evaluation.md`](refactoring/scraper-5-enhancements-evaluation.md)
 - Qt 分离计划：[`docs/refactoring/qt-separation-plan.md`](refactoring/qt-separation-plan.md)
 
 ## 契约与决策

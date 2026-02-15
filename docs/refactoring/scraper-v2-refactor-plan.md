@@ -1,6 +1,8 @@
 # 爬虫模块 v2 重构方案
 
-> **日期**: 2026-02-15 | **状态**: 执行中（FlareSolverr 集成已落地到 v2 分支） | **预估总工时**: 约 2 周（单人）
+> **日期**: 2026-02-15 | **状态**: 已完成（主线）+ 增强项已在 2026-02-16 落地 | **预估总工时**: 约 2 周（单人）
+
+> 2026-02-16 后续增强已落地：`Provider Schema`、`Actionable Errors`、`inject_cookies`、`image proxy` 与前端动态 schema 渲染。详见 `docs/refactoring/scraper-5-enhancements-evaluation.md`。
 
 ---
 

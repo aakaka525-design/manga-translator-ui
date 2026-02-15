@@ -34,7 +34,10 @@
 - Split Pipeline API Contract: `docs/api/2026-02-14-internal-split-pipeline-contract.md`
 - Scraper v2 Implementation Plan: `docs/plans/2026-02-15-scraper-v2-implementation.md`
 - Scraper v2 Worklog: `docs/refactor/2026-02-15-scraper-v2-worklog.md`
+- Scraper 5 Enhancements Plan: `docs/plans/2026-02-16-scraper-5-enhancements-implementation.md`
+- Scraper 5 Enhancements Worklog: `docs/refactor/2026-02-16-scraper-5-enhancements-worklog.md`
 - FlareSolverr Integration Plan: `docs/refactoring/flaresolverr-integration-plan.md`
+- Scraper 5 Enhancements Evaluation: `docs/refactoring/scraper-5-enhancements-evaluation.md`
 - Scraper v2 API Contract: `docs/api/2026-02-15-v1-scraper-v2-contract.md`
 - Qt Separation Plan: `docs/refactoring/qt-separation-plan.md`
 
