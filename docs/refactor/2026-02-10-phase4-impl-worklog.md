@@ -1352,3 +1352,19 @@
 - 验证命令: `pytest -q tests/test_v1_routes.py tests/test_runtime_deps_check.py`; `pytest -q`; `python packaging/launch.py --help`; `python -m manga_translator local -i doc/images/0012.png --config examples/config-example.json --verbose`; `python - <<'PY' ... /api/locales/list ...`
 - 验证结果: 关键回归通过（`tests/test_v1_routes.py` + `tests/test_runtime_deps_check.py` 全绿、`/api/locales/list` 和 `/locales/zh_CN.json` 返回 200、`local` 模式可运行且不依赖 Qt）；全量 `pytest -q` 仅剩 2 个历史失败（`tests/test_runtime_gpu_lazy_init.py::test_load_default_config_dict_falls_back_to_config_example`、`tests/test_v1_translate_perf_quick.py::test_example_config_contains_chapter_page_concurrency`），均与 `examples/config-example.json` 基线预期差异相关。
 - 提交哈希: N/A
+
+### TASK-ID: TASK-QT-001~008-COMMIT
+- 状态: completed
+- 改动文件: 本轮 Qt 分离主变更集合
+- 接口影响: 无
+- 验证命令: `git show --name-status --oneline f5acc9f`
+- 验证结果: 主提交已落地，覆盖 TASK-QT-001~008
+- 提交哈希: f5acc9f
+
+### TASK-ID: TASK-QT-009
+- 状态: completed
+- 改动文件: `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: 无
+- 验证命令: `git push personal codex/qt-separation-20260215`
+- 验证结果: 待推送执行
+- 提交哈希: N/A
