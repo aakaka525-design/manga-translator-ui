@@ -1327,6 +1327,8 @@ def test_scraper_routes_map_upstream_http_status(monkeypatch: pytest.MonkeyPatch
         )
         assert search_resp.status_code == 403
         assert search_resp.json()["detail"]["code"] == "SCRAPER_AUTH_CHALLENGE"
+        assert search_resp.json()["detail"]["action"] == "PROMPT_USER_COOKIE"
+        assert search_resp.json()["detail"]["payload"]["provider_id"] == "generic"
 
         catalog_resp = client.post(
             "/api/v1/scraper/catalog",
@@ -1334,6 +1336,8 @@ def test_scraper_routes_map_upstream_http_status(monkeypatch: pytest.MonkeyPatch
         )
         assert catalog_resp.status_code == 403
         assert catalog_resp.json()["detail"]["code"] == "SCRAPER_AUTH_CHALLENGE"
+        assert catalog_resp.json()["detail"]["action"] == "PROMPT_USER_COOKIE"
+        assert catalog_resp.json()["detail"]["payload"]["cookie_keys"] == ["cf_clearance"]
 
         chapters_resp = client.post(
             "/api/v1/scraper/chapters",
@@ -1470,6 +1474,64 @@ def test_scraper_search_auto_solves_upstream_403(monkeypatch: pytest.MonkeyPatch
         assert search_resp.status_code == 200
         assert search_resp.json()[0]["id"] == "demo"
         assert calls["count"] == 2
+
+
+def test_scraper_image_sets_private_cache_control_by_default(monkeypatch: pytest.MonkeyPatch, authed_app):
+    class _FakeClient:
+        async def fetch_binary(self, *args, **kwargs):
+            _ = (args, kwargs)
+            return SimpleNamespace(payload=b"jpeg-data", media_type="image/jpeg")
+
+    monkeypatch.setattr(v1_scraper, "get_http_client", lambda default_user_agent=None: _FakeClient())
+
+    with TestClient(authed_app) as client:
+        resp = client.get(
+            "/api/v1/scraper/image",
+            params={
+                "url": "https://toongod.org/wp-content/uploads/demo.jpg",
+                "base_url": "https://toongod.org",
+                "site_hint": "toongod",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.headers.get("cache-control") == "private, max-age=3600"
+        assert resp.content == b"jpeg-data"
+
+
+def test_scraper_image_challenge_returns_actionable_error(monkeypatch: pytest.MonkeyPatch, authed_app):
+    class _FailingClient:
+        async def fetch_binary(self, *args, **kwargs):
+            _ = (args, kwargs)
+            raise aiohttp.ClientResponseError(
+                request_info=SimpleNamespace(real_url="https://toongod.org/wp-content/uploads/demo.jpg"),
+                history=(),
+                status=403,
+                message="Forbidden",
+                headers=None,
+            )
+
+    class _FailingSolver:
+        async def solve(self, *args, **kwargs):
+            _ = (args, kwargs)
+            raise v1_scraper.CloudflareChallengeError("challenge required")
+
+    monkeypatch.setattr(v1_scraper, "get_http_client", lambda default_user_agent=None: _FailingClient())
+    monkeypatch.setattr(v1_scraper, "_get_cf_solver", lambda: _FailingSolver())
+
+    with TestClient(authed_app) as client:
+        resp = client.get(
+            "/api/v1/scraper/image",
+            params={
+                "url": "https://toongod.org/wp-content/uploads/demo.jpg",
+                "base_url": "https://toongod.org",
+                "site_hint": "toongod",
+            },
+        )
+        assert resp.status_code == 403
+        detail = resp.json()["detail"]
+        assert detail["code"] == "SCRAPER_AUTH_CHALLENGE"
+        assert detail["action"] == "PROMPT_USER_COOKIE"
+        assert detail["payload"]["provider_id"] == "toongod"
 
 
 def test_v1_settings_routes(authed_app):

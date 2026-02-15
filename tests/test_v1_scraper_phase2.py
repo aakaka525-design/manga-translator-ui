@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -234,6 +235,11 @@ def test_providers_endpoint(phase2_app):
         payload = resp.json()
         keys = {item["key"] for item in payload["items"]}
         assert {"mangaforfree", "toongod", "generic"}.issubset(keys)
+        toongod = next(item for item in payload["items"] if item["key"] == "toongod")
+        assert isinstance(toongod.get("features"), list)
+        assert "chapters" in toongod.get("features", [])
+        assert isinstance(toongod.get("form_schema"), list)
+        assert "image_cache_public" in toongod
 
 
 def test_task_status_reads_from_sqlite_store(phase2_app):
@@ -397,3 +403,40 @@ def test_task_status_backward_compatible_fields(phase2_app):
         # Phase3 optional fields may appear, but should keep safe defaults.
         assert payload.get("retry_count", 0) == 0
         assert payload.get("max_retries", 2) >= 2
+
+
+def test_inject_cookies_updates_state_file(phase2_app, phase2_data):
+    state_path = phase2_data["state_dir"] / "toongod_state.json"
+    with TestClient(phase2_app) as client:
+        resp = client.post(
+            "/api/v1/scraper/inject_cookies",
+            json={
+                "base_url": "https://toongod.org",
+                "storage_state_path": str(state_path),
+                "cookie_header": "cf_clearance=token123; __cf_bm=bm123",
+                "site_hint": "toongod",
+            },
+        )
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["status"] == "ok"
+        assert "cf_clearance" in payload["updated_cookie_keys"]
+
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    cookies = {item["name"]: item["value"] for item in persisted.get("cookies", []) if isinstance(item, dict)}
+    assert cookies["cf_clearance"] == "token123"
+    assert cookies["__cf_bm"] == "bm123"
+
+
+def test_inject_cookies_requires_cf_clearance(phase2_app):
+    with TestClient(phase2_app) as client:
+        resp = client.post(
+            "/api/v1/scraper/inject_cookies",
+            json={
+                "base_url": "https://toongod.org",
+                "cookie_header": "__cf_bm=missing-clearance",
+                "site_hint": "toongod",
+            },
+        )
+        assert resp.status_code == 400
+        assert resp.json()["detail"]["code"] == "SCRAPER_COOKIE_MISSING_REQUIRED"

@@ -10,9 +10,27 @@ beforeEach(() => {
         ok: true,
         json: async () => ({
           items: [
-            { key: "mangaforfree" },
-            { key: "toongod" },
-            { key: "generic" }
+            {
+              key: "mangaforfree",
+              label: "MangaForFree",
+              hosts: ["mangaforfree.com"],
+              form_schema: [{ key: "rate_limit_rps", type: "number", default: 2 }],
+              features: ["search"]
+            },
+            {
+              key: "toongod",
+              label: "ToonGod",
+              hosts: ["toongod.org"],
+              form_schema: [{ key: "storage_state_path", type: "string", default: "data/toongod_state.json" }],
+              features: ["search", "chapters"]
+            },
+            {
+              key: "generic",
+              label: "Generic",
+              hosts: [],
+              form_schema: [{ key: "http_mode", type: "boolean", default: true }],
+              features: ["search", "custom_host"]
+            }
           ]
         })
       };
@@ -61,5 +79,8 @@ describe("scraper multisite phase2 payload", () => {
     const store = useScraperStore();
     await store.loadProviders();
     expect(store.providerMeta.items.map(item => item.key)).toContain("generic");
+    expect(store.siteOptions().map(item => item.key)).toContain("toongod");
+    store.setSite("toongod");
+    expect(store.providerSchemaFields().length).toBeGreaterThan(0);
   });
 });
