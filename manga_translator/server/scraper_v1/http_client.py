@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
 
 import aiohttp
 from yarl import URL
@@ -48,6 +51,17 @@ class ScraperHttpClient:
         self._rate_lock = asyncio.Lock()
         self._semaphore_lock = Lock()
         self.engine = DEFAULT_ENGINE
+        # FlareSolverr transparent fallback — any GET 403 will automatically
+        # be retried through FlareSolverr using the exact same URL.
+        self._flaresolverr_url: str = (
+            os.environ.get("FLARESOLVERR_URL") or ""
+        ).strip()
+        # Domain → {cookies, user_agent, ts} extracted from FlareSolverr.
+        # Used by fetch_binary to retry 403 image/binary requests.
+        # Entries expire after _CF_COOKIE_TTL seconds.
+        self._cf_cookies: dict[str, tuple[dict[str, str], float]] = {}   # domain -> (cookies, timestamp)
+        self._cf_user_agent: dict[str, tuple[str, float]] = {}           # domain -> (ua, timestamp)
+        self._CF_COOKIE_TTL: float = 1800.0  # 30 minutes
 
     def set_engine(self, engine: str | None) -> None:
         candidate = (engine or "").strip().lower()
@@ -169,8 +183,18 @@ class ScraperHttpClient:
         req_headers = self._build_headers(user_agent=user_agent, referer=referer, headers=headers)
 
         async with sem:
-            if self.engine == "curl_cffi" and curl_requests is not None:
-                return await self._request_text_curl_cffi(
+            try:
+                if self.engine == "curl_cffi" and curl_requests is not None:
+                    return await self._request_text_curl_cffi(
+                        method,
+                        url,
+                        data=data,
+                        cookies=cookies,
+                        headers=req_headers,
+                        allow_error_body=allow_error_body,
+                        timeout_sec=timeout_sec,
+                    )
+                return await self._request_text_aiohttp(
                     method,
                     url,
                     data=data,
@@ -179,15 +203,47 @@ class ScraperHttpClient:
                     allow_error_body=allow_error_body,
                     timeout_sec=timeout_sec,
                 )
-            return await self._request_text_aiohttp(
-                method,
-                url,
-                data=data,
-                cookies=cookies,
-                headers=req_headers,
-                allow_error_body=allow_error_body,
-                timeout_sec=timeout_sec,
-            )
+            except aiohttp.ClientResponseError as exc:
+                status_code = int(exc.status or 0)
+                is_cf_blocked = status_code in {401, 403}
+
+                # curl_cffi TLS fingerprint is incompatible with cf_clearance
+                # cookies obtained from FlareSolverr (Chrome). Automatically
+                # fall back to aiohttp when cf_clearance is present but
+                # curl_cffi gets blocked.
+                if (
+                    is_cf_blocked
+                    and self.engine == "curl_cffi"
+                    and cookies
+                    and "cf_clearance" in cookies
+                ):
+                    logger.info(
+                        "[http_client] curl_cffi %d with cf_clearance, "
+                        "falling back to aiohttp for %s",
+                        status_code, url,
+                    )
+                    try:
+                        return await self._request_text_aiohttp(
+                            method, url, data=data, cookies=cookies,
+                            headers=req_headers,
+                            allow_error_body=allow_error_body,
+                            timeout_sec=timeout_sec,
+                        )
+                    except aiohttp.ClientResponseError:
+                        pass  # fall through to FlareSolverr below
+
+                # Transparent FlareSolverr fallback: on 403 for GET requests,
+                # automatically retry via FlareSolverr with the exact URL.
+                if (
+                    is_cf_blocked
+                    and method.upper() == "GET"
+                    and self._flaresolverr_url
+                    and not allow_error_body
+                ):
+                    html = await self._try_flaresolverr(url, user_agent or self._default_ua)
+                    if html is not None:
+                        return html
+                raise
 
     async def _request_text_aiohttp(
         self,
@@ -232,6 +288,97 @@ class ScraperHttpClient:
                 raise self._client_error(url, status, response.headers)
             return text
 
+    async def _try_flaresolverr(self, url: str, user_agent: str) -> str | None:
+        """Transparent FlareSolverr fallback for CF-protected pages.
+
+        Called automatically by request_text() when a GET returns 403.
+        Sends the exact URL to FlareSolverr and returns the full HTML on
+        success, or None if FlareSolverr can't help (caller re-raises).
+        """
+        from .base import looks_like_challenge  # avoid circular import
+
+        logger.info("[FlareSolverr] 403 fallback for %s", url)
+        payload: dict[str, Any] = {
+            "cmd": "request.get",
+            "url": url,
+            "maxTimeout": 45000,
+            "userAgent": user_agent,
+        }
+        for attempt in range(2):
+            try:
+                timeout = aiohttp.ClientTimeout(total=60)
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.post(self._flaresolverr_url, json=payload) as resp:
+                        if resp.status >= 500 and attempt == 0:
+                            await asyncio.sleep(2)
+                            continue
+                        if resp.status >= 400:
+                            logger.warning("[FlareSolverr] HTTP %d from FlareSolverr", resp.status)
+                            return None
+                        body = await resp.json()
+            except (asyncio.TimeoutError, aiohttp.ClientError) as exc:
+                if attempt == 0:
+                    await asyncio.sleep(2)
+                    continue
+                logger.warning("[FlareSolverr] connection error: %s", exc)
+                return None
+
+            solution = body.get("solution") if isinstance(body, dict) else None
+            if not isinstance(solution, dict):
+                logger.warning("[FlareSolverr] no 'solution' in response")
+                return None
+
+            html = str(solution.get("response") or "")
+
+            # Parse cookies first — cf_clearance presence is the strongest
+            # signal that the challenge was solved, even if the HTML still
+            # triggers looks_like_challenge() due to embedded CF CDN refs.
+            cookies_payload = solution.get("cookies")
+            has_cf_clearance = False
+            if isinstance(cookies_payload, list):
+                for item in cookies_payload:
+                    if isinstance(item, dict) and str(item.get("name") or "").strip() == "cf_clearance":
+                        has_cf_clearance = True
+                        break
+
+            if not html:
+                logger.warning("[FlareSolverr] returned empty HTML")
+                return None
+
+            if looks_like_challenge(html) and not has_cf_clearance:
+                logger.warning("[FlareSolverr] returned challenge page (no cf_clearance)")
+                return None
+
+            if looks_like_challenge(html) and has_cf_clearance:
+                logger.info(
+                    "[FlareSolverr] HTML triggered challenge detection but "
+                    "cf_clearance present — trusting solve result"
+                )
+
+            # Extract and cache cookies + UA per domain so that fetch_binary
+            # can reuse them for image/binary requests on the same domain.
+            domain = self._domain_key(url)
+            cookies_payload = solution.get("cookies")
+            now = time.monotonic()
+            if isinstance(cookies_payload, list):
+                parsed: dict[str, str] = {}
+                for item in cookies_payload:
+                    if isinstance(item, dict):
+                        name = str(item.get("name") or "").strip()
+                        value = str(item.get("value") or "")
+                        if name:
+                            parsed[name] = value
+                if parsed:
+                    self._cf_cookies[domain] = (parsed, now)
+            solved_ua = str(solution.get("userAgent") or "")
+            if solved_ua:
+                self._cf_user_agent[domain] = (solved_ua, now)
+
+            logger.info("[FlareSolverr] OK %d bytes for %s", len(html), url)
+            return html
+
+        return None
+
     async def fetch_binary(
         self,
         url: str,
@@ -247,27 +394,74 @@ class ScraperHttpClient:
         domain = self._domain_key(url)
         await self._wait_rate_limit(domain, rate_limit_rps)
         sem = self._domain_semaphore(domain, concurrency)
-        req_headers = self._build_headers(user_agent=user_agent, referer=referer, headers=headers)
+
+        # Merge in any non-expired cf_clearance cookies from FlareSolverr
+        effective_cookies = dict(cookies or {})
+        now = time.monotonic()
+        cf_entry = self._cf_cookies.get(domain)
+        if cf_entry and (now - cf_entry[1]) < self._CF_COOKIE_TTL:
+            for k, v in cf_entry[0].items():
+                effective_cookies.setdefault(k, v)
+        # Use FlareSolverr's UA if available and not expired
+        ua_entry = self._cf_user_agent.get(domain)
+        effective_ua = (ua_entry[0] if ua_entry and (now - ua_entry[1]) < self._CF_COOKIE_TTL else None) or user_agent
+        req_headers = self._build_headers(user_agent=effective_ua, referer=referer, headers=headers)
 
         async with sem:
-            if self.engine == "curl_cffi" and curl_requests is not None:
-                assert curl_requests is not None
-                async with curl_requests.AsyncSession(impersonate="chrome120", timeout=timeout_sec) as session:
-                    response = await session.get(url, headers=req_headers, cookies=cookies or {})
-                    status = int(response.status_code)
-                    if status >= 400:
-                        raise self._client_error(url, status, response.headers)
-                    media_type = (response.headers or {}).get("content-type") or "application/octet-stream"
-                    return BinaryResponse(payload=response.content or b"", media_type=media_type)
+            # First attempt with effective cookies + UA
+            try:
+                return await self._fetch_binary_raw(
+                    url, cookies=effective_cookies, headers=req_headers, timeout_sec=timeout_sec,
+                )
+            except aiohttp.ClientResponseError as exc:
+                if int(exc.status or 0) != 403 or not self._flaresolverr_url:
+                    raise
+                # 403 on binary — trigger FlareSolverr to refresh cookies,
+                # then retry with the new cookies.
+                logger.info("[FlareSolverr] binary 403 for %s, refreshing cookies", url)
+                solve_url = referer or url
+                _ = await self._try_flaresolverr(solve_url, effective_ua or self._default_ua)
+                # Merge cookies from both solve_domain and binary_domain
+                # (handles CDN/subdomain scenarios where they differ)
+                refreshed_cookies = dict(cookies or {})
+                solve_domain = self._domain_key(solve_url)
+                for d in {domain, solve_domain}:
+                    cf_new = self._cf_cookies.get(d)
+                    if cf_new:
+                        refreshed_cookies.update(cf_new[0])
+                # Pick UA from whichever domain has it
+                new_ua_entry = self._cf_user_agent.get(domain) or self._cf_user_agent.get(solve_domain)
+                new_ua = (new_ua_entry[0] if new_ua_entry else None) or effective_ua
+                new_headers = self._build_headers(user_agent=new_ua, referer=referer, headers=headers)
+                return await self._fetch_binary_raw(
+                    url, cookies=refreshed_cookies, headers=new_headers, timeout_sec=timeout_sec,
+                )
 
-            timeout = aiohttp.ClientTimeout(total=timeout_sec)
-            async with aiohttp.ClientSession(timeout=timeout, cookies=cookies or {}) as session:
-                async with session.get(url, headers=req_headers) as response:
-                    if response.status >= 400:
-                        raise self._client_error(url, response.status, response.headers)
-                    payload = await response.read()
-                    media_type = response.headers.get("content-type") or "application/octet-stream"
-                    return BinaryResponse(payload=payload, media_type=media_type)
+    async def _fetch_binary_raw(
+        self,
+        url: str,
+        *,
+        cookies: dict[str, str],
+        headers: dict[str, str],
+        timeout_sec: float,
+    ) -> BinaryResponse:
+        if self.engine == "curl_cffi" and curl_requests is not None:
+            async with curl_requests.AsyncSession(impersonate="chrome120", timeout=timeout_sec) as session:
+                response = await session.get(url, headers=headers, cookies=cookies)
+                status = int(response.status_code)
+                if status >= 400:
+                    raise self._client_error(url, status, response.headers)
+                media_type = (response.headers or {}).get("content-type") or "application/octet-stream"
+                return BinaryResponse(payload=response.content or b"", media_type=media_type)
+
+        timeout = aiohttp.ClientTimeout(total=timeout_sec)
+        async with aiohttp.ClientSession(timeout=timeout, cookies=cookies) as session:
+            async with session.get(url, headers=headers) as response:
+                if response.status >= 400:
+                    raise self._client_error(url, response.status, response.headers)
+                payload = await response.read()
+                media_type = response.headers.get("content-type") or "application/octet-stream"
+                return BinaryResponse(payload=payload, media_type=media_type)
 
     async def download_binary(
         self,
