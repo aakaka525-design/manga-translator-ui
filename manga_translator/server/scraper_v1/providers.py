@@ -39,6 +39,9 @@ class ProviderAdapter:
     chapters: ChaptersFn
     reader_images: ReaderImagesFn
     auth_url: str
+    features: tuple[str, ...] = ()
+    form_schema: tuple[dict[str, Any], ...] = ()
+    image_cache_public: bool = False
 
 
 def _host_match(host: str, expected: str) -> bool:
@@ -205,6 +208,27 @@ PROVIDERS: dict[str, ProviderAdapter] = {
         chapters=_mff_chapters,
         reader_images=_mff_reader_images,
         auth_url="https://mangaforfree.com",
+        features=("search", "catalog", "chapters", "download", "image_proxy"),
+        form_schema=(
+            {
+                "key": "storage_state_path",
+                "label": "状态文件路径",
+                "type": "string",
+                "required": False,
+                "default": "data/mangaforfree_state.json",
+                "placeholder": "data/mangaforfree_state.json",
+                "help": "可选，包含 cf_clearance 等 Cookie",
+            },
+            {
+                "key": "rate_limit_rps",
+                "label": "每秒请求数",
+                "type": "number",
+                "required": False,
+                "default": 2,
+                "help": "建议 0.5~3，站点风控严格时降低",
+            },
+        ),
+        image_cache_public=False,
     ),
     "toongod": ProviderAdapter(
         key="toongod",
@@ -219,6 +243,35 @@ PROVIDERS: dict[str, ProviderAdapter] = {
         chapters=_toongod_chapters,
         reader_images=_toongod_reader_images,
         auth_url="https://toongod.org",
+        features=("search", "catalog", "chapters", "download", "image_proxy"),
+        form_schema=(
+            {
+                "key": "storage_state_path",
+                "label": "状态文件路径",
+                "type": "string",
+                "required": False,
+                "default": "data/toongod_state.json",
+                "placeholder": "data/toongod_state.json",
+                "help": "推荐上传包含 cf_clearance 的状态文件",
+            },
+            {
+                "key": "user_data_dir",
+                "label": "浏览器配置目录",
+                "type": "string",
+                "required": False,
+                "default": "data/toongod_profile",
+                "help": "有头/无头模式复用浏览器会话",
+            },
+            {
+                "key": "rate_limit_rps",
+                "label": "每秒请求数",
+                "type": "number",
+                "required": False,
+                "default": 2,
+                "help": "建议 0.5~2，过快容易触发风控",
+            },
+        ),
+        image_cache_public=False,
     ),
     "generic": ProviderAdapter(
         key="generic",
@@ -233,6 +286,32 @@ PROVIDERS: dict[str, ProviderAdapter] = {
         chapters=_generic_chapters,
         reader_images=_generic_reader_images,
         auth_url="",
+        features=("search", "catalog", "chapters", "download", "image_proxy", "custom_host"),
+        form_schema=(
+            {
+                "key": "base_url",
+                "label": "站点地址",
+                "type": "string",
+                "required": True,
+                "default": "",
+                "placeholder": "https://example.com",
+            },
+            {
+                "key": "http_mode",
+                "label": "HTTP 模式",
+                "type": "boolean",
+                "required": False,
+                "default": True,
+            },
+            {
+                "key": "rate_limit_rps",
+                "label": "每秒请求数",
+                "type": "number",
+                "required": False,
+                "default": 1,
+            },
+        ),
+        image_cache_public=False,
     ),
 }
 
@@ -301,6 +380,9 @@ def providers_payload() -> dict[str, Any]:
                 "supports_playwright": provider.supports_playwright,
                 "supports_custom_host": provider.supports_custom_host,
                 "default_catalog_path": provider.default_catalog_path,
+                "features": list(provider.features),
+                "form_schema": [dict(field) for field in provider.form_schema],
+                "image_cache_public": bool(provider.image_cache_public),
             }
         )
     return {"items": items}

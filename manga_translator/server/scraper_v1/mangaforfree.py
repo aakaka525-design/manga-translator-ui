@@ -29,6 +29,9 @@ class MangaItem:
     title: str
     url: str
     cover_url: Optional[str] = None
+    author: str = "Unknown"
+    status: str = "unknown"
+    source: str = ""
 
 
 @dataclass(frozen=True)
@@ -37,6 +40,9 @@ class ChapterItem:
     title: str
     url: str
     index: int
+    number: float | None = None
+    date: str | None = None
+    language: str | None = None
 
 
 class CloudflareChallengeError(RuntimeError):

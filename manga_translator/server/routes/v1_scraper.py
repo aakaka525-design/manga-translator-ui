@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import json
 import logging
 import os
 import re
@@ -33,8 +34,10 @@ from manga_translator.server.scraper_v1 import (
     ScraperAlertEngine,
     ScraperTaskStore,
     get_cookie_store,
+    default_state_path,
     get_state_info,
     get_http_client,
+    load_state_payload,
     merge_cookies,
     normalize_alert_settings,
     normalize_base_url,
@@ -91,6 +94,9 @@ class MangaPayload(BaseModel):
     title: Optional[str] = None
     url: Optional[str] = None
     cover_url: Optional[str] = None
+    author: Optional[str] = None
+    status: Optional[str] = None
+    source: Optional[str] = None
 
 
 class ChapterPayload(BaseModel):
@@ -98,6 +104,9 @@ class ChapterPayload(BaseModel):
     title: Optional[str] = None
     url: Optional[str] = None
     index: Optional[int] = None
+    number: Optional[float] = None
+    date: Optional[str] = None
+    language: Optional[str] = None
     downloaded: bool = False
     downloaded_count: int = 0
     downloaded_total: int = 0
@@ -147,6 +156,13 @@ class ScraperAccessCheckRequest(BaseModel):
     base_url: str
     storage_state_path: Optional[str] = None
     path: Optional[str] = None
+    site_hint: Optional[str] = None
+
+
+class ScraperInjectCookiesRequest(BaseModel):
+    base_url: str
+    storage_state_path: Optional[str] = None
+    cookie_header: str
     site_hint: Optional[str] = None
 
 
@@ -401,8 +417,20 @@ async def trigger_test_webhook(webhook_url: str | None = None) -> dict[str, Any]
     return result
 
 
-def _scraper_http_error(status_code: int, code: str, message: str) -> HTTPException:
-    return HTTPException(status_code=status_code, detail={"code": code, "message": message})
+def _scraper_http_error(
+    status_code: int,
+    code: str,
+    message: str,
+    *,
+    action: str | None = None,
+    payload: dict[str, Any] | None = None,
+) -> HTTPException:
+    detail: dict[str, Any] = {"code": code, "message": message}
+    if action:
+        detail["action"] = action
+    if payload:
+        detail["payload"] = payload
+    return HTTPException(status_code=status_code, detail=detail)
 
 
 def _optional_text(value: object | None) -> str | None:
@@ -416,13 +444,84 @@ def _optional_text(value: object | None) -> str | None:
     return text
 
 
-def _map_upstream_client_error(exc: aiohttp.ClientResponseError, fallback_code: str) -> HTTPException:
+def _map_upstream_client_error(
+    exc: aiohttp.ClientResponseError,
+    fallback_code: str,
+    *,
+    challenge_payload: dict[str, Any] | None = None,
+) -> HTTPException:
     status = int(exc.status or 500)
     if status in {401, 403}:
-        return _scraper_http_error(403, "SCRAPER_AUTH_CHALLENGE", str(exc))
+        return _scraper_http_error(
+            403,
+            "SCRAPER_AUTH_CHALLENGE",
+            str(exc),
+            action="PROMPT_USER_COOKIE",
+            payload=challenge_payload,
+        )
     if status == 404:
         return _scraper_http_error(404, fallback_code, str(exc))
     return _scraper_http_error(500, fallback_code, str(exc))
+
+
+def _challenge_payload(
+    *,
+    provider: ProviderAdapter,
+    base_url: str,
+    target_url: str,
+    storage_state_path: str | None,
+) -> dict[str, Any]:
+    state_path = (storage_state_path or "").strip()
+    if not state_path:
+        state_path = str(default_state_path(base_url, STATE_DIR))
+    return {
+        "target_url": target_url,
+        "provider_id": provider.key,
+        "cookie_keys": ["cf_clearance"],
+        "base_url": base_url,
+        "storage_state_path": state_path,
+    }
+
+
+def _parse_cookie_header(cookie_header: str) -> dict[str, str]:
+    parsed: dict[str, str] = {}
+    for chunk in (cookie_header or "").split(";"):
+        item = chunk.strip()
+        if not item:
+            continue
+        if "=" not in item:
+            raise ValueError("invalid_cookie_item")
+        key, value = item.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise ValueError("invalid_cookie_item")
+        parsed[key] = value.strip()
+    if not parsed:
+        raise ValueError("empty_cookie_header")
+    return parsed
+
+
+def _cookie_domain(base_url: str) -> str:
+    return (urlparse(normalize_base_url(base_url)).hostname or "").lower()
+
+
+def _build_state_cookie_record(name: str, value: str, domain: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "value": value,
+        "domain": domain,
+        "path": "/",
+        "httpOnly": False,
+        "secure": True,
+        "sameSite": "Lax",
+    }
+
+
+def _write_state_payload_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f"{path.name}.tmp.{uuid4().hex}")
+    tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path.replace(path)
 
 
 def _safe_name(value: str, default: str = "item") -> str:
@@ -1059,6 +1158,12 @@ async def search(req: ScraperSearchRequest, _session: Session = Depends(require_
         rate_limit_rps=float(req.rate_limit_rps or 2.0),
         concurrency=max(1, min(32, int(req.concurrency or 6))),
     )
+    challenge_payload = _challenge_payload(
+        provider=provider,
+        base_url=base_url,
+        target_url=base_url,
+        storage_state_path=req.storage_state_path,
+    )
 
     try:
         items = await _fetch_with_cf_solve(
@@ -1071,13 +1176,19 @@ async def search(req: ScraperSearchRequest, _session: Session = Depends(require_
     except BrowserUnavailableError as exc:
         raise _scraper_http_error(400, "SCRAPER_BROWSER_UNAVAILABLE", str(exc)) from exc
     except CloudflareChallengeError as exc:
-        raise _scraper_http_error(403, "SCRAPER_AUTH_CHALLENGE", str(exc)) from exc
+        raise _scraper_http_error(
+            403,
+            "SCRAPER_AUTH_CHALLENGE",
+            str(exc),
+            action="PROMPT_USER_COOKIE",
+            payload=challenge_payload,
+        ) from exc
     except aiohttp.ClientResponseError as exc:
-        raise _map_upstream_client_error(exc, "SCRAPER_SEARCH_FAILED") from exc
+        raise _map_upstream_client_error(exc, "SCRAPER_SEARCH_FAILED", challenge_payload=challenge_payload) from exc
     except Exception as exc:  # noqa: BLE001
         raise _scraper_http_error(500, "SCRAPER_SEARCH_FAILED", str(exc)) from exc
 
-    return [item.__dict__ for item in items]
+    return [{**item.__dict__, "source": item.source or provider.key} for item in items]
 
 
 @router.post("/catalog", response_model=ScraperCatalogResponse)
@@ -1100,6 +1211,12 @@ async def catalog(req: ScraperCatalogRequest, _session: Session = Depends(requir
     )
     catalog_path = _normalize_catalog_path(req.path) or provider.default_catalog_path
     target_url = urljoin(base_url, catalog_path)
+    challenge_payload = _challenge_payload(
+        provider=provider,
+        base_url=base_url,
+        target_url=target_url,
+        storage_state_path=req.storage_state_path,
+    )
 
     try:
         items, has_more = await _fetch_with_cf_solve(
@@ -1114,13 +1231,23 @@ async def catalog(req: ScraperCatalogRequest, _session: Session = Depends(requir
     except BrowserUnavailableError as exc:
         raise _scraper_http_error(400, "SCRAPER_BROWSER_UNAVAILABLE", str(exc)) from exc
     except CloudflareChallengeError as exc:
-        raise _scraper_http_error(403, "SCRAPER_AUTH_CHALLENGE", str(exc)) from exc
+        raise _scraper_http_error(
+            403,
+            "SCRAPER_AUTH_CHALLENGE",
+            str(exc),
+            action="PROMPT_USER_COOKIE",
+            payload=challenge_payload,
+        ) from exc
     except aiohttp.ClientResponseError as exc:
-        raise _map_upstream_client_error(exc, "SCRAPER_CATALOG_FAILED") from exc
+        raise _map_upstream_client_error(exc, "SCRAPER_CATALOG_FAILED", challenge_payload=challenge_payload) from exc
     except Exception as exc:  # noqa: BLE001
         raise _scraper_http_error(500, "SCRAPER_CATALOG_FAILED", str(exc)) from exc
 
-    return ScraperCatalogResponse(page=max(1, req.page), has_more=has_more, items=[MangaPayload(**item.__dict__) for item in items])
+    return ScraperCatalogResponse(
+        page=max(1, req.page),
+        has_more=has_more,
+        items=[MangaPayload(**{**item.__dict__, "source": item.source or provider.key}) for item in items],
+    )
 
 
 @router.post("/chapters")
@@ -1144,6 +1271,12 @@ async def chapters(req: ScraperChaptersRequest, _session: Session = Depends(requ
 
     fallback_path = provider.default_catalog_path.rstrip("/") or "/manga"
     manga_url = req.manga.url or urljoin(base_url, f"{fallback_path}/{req.manga.id}/")
+    challenge_payload = _challenge_payload(
+        provider=provider,
+        base_url=base_url,
+        target_url=manga_url,
+        storage_state_path=req.storage_state_path,
+    )
 
     try:
         items = await _fetch_with_cf_solve(
@@ -1156,9 +1289,15 @@ async def chapters(req: ScraperChaptersRequest, _session: Session = Depends(requ
     except BrowserUnavailableError as exc:
         raise _scraper_http_error(400, "SCRAPER_BROWSER_UNAVAILABLE", str(exc)) from exc
     except CloudflareChallengeError as exc:
-        raise _scraper_http_error(403, "SCRAPER_AUTH_CHALLENGE", str(exc)) from exc
+        raise _scraper_http_error(
+            403,
+            "SCRAPER_AUTH_CHALLENGE",
+            str(exc),
+            action="PROMPT_USER_COOKIE",
+            payload=challenge_payload,
+        ) from exc
     except aiohttp.ClientResponseError as exc:
-        raise _map_upstream_client_error(exc, "SCRAPER_CHAPTERS_FAILED") from exc
+        raise _map_upstream_client_error(exc, "SCRAPER_CHAPTERS_FAILED", challenge_payload=challenge_payload) from exc
     except Exception as exc:  # noqa: BLE001
         raise _scraper_http_error(500, "SCRAPER_CHAPTERS_FAILED", str(exc)) from exc
 
@@ -1179,6 +1318,9 @@ async def chapters(req: ScraperChaptersRequest, _session: Session = Depends(requ
                 "title": item.title,
                 "url": item.url,
                 "index": item.index,
+                "number": item.number,
+                "date": item.date,
+                "language": item.language,
                 "downloaded": downloaded_count > 0,
                 "downloaded_count": downloaded_count,
                 "downloaded_total": downloaded_count,
@@ -1416,6 +1558,94 @@ async def upload_state(
     )
 
 
+@router.post("/inject_cookies")
+async def inject_cookies(req: ScraperInjectCookiesRequest, _session: Session = Depends(require_auth)):
+    provider, normalized_base = _resolve_provider_or_error(req.base_url, req.site_hint)
+    domain = _cookie_domain(normalized_base)
+    if not domain:
+        raise _scraper_http_error(400, "SCRAPER_COOKIE_INVALID", "base_url 无法解析域名")
+
+    try:
+        parsed_cookie_map = _parse_cookie_header(req.cookie_header)
+    except ValueError as exc:
+        raise _scraper_http_error(400, "SCRAPER_COOKIE_INVALID", f"cookie header 无效: {exc}") from exc
+
+    required_keys = ["cf_clearance"]
+    missing = [key for key in required_keys if not parsed_cookie_map.get(key)]
+    if missing:
+        raise _scraper_http_error(
+            400,
+            "SCRAPER_COOKIE_MISSING_REQUIRED",
+            f"缺少必需 cookie: {', '.join(missing)}",
+        )
+
+    state_path = Path((req.storage_state_path or "").strip()) if (req.storage_state_path or "").strip() else default_state_path(normalized_base, STATE_DIR)
+
+    existing_payload: dict[str, Any]
+    if state_path.exists() and state_path.is_file():
+        try:
+            existing_payload = load_state_payload(state_path)
+        except Exception:
+            existing_payload = {}
+    else:
+        existing_payload = {}
+
+    cookies_raw = existing_payload.get("cookies")
+    cookies_list = list(cookies_raw) if isinstance(cookies_raw, list) else []
+    merged_map: dict[str, dict[str, Any]] = {}
+    for item in cookies_list:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        cookie_domain = str(item.get("domain") or "").lstrip(".").lower()
+        key = f"{cookie_domain}:{name}"
+        merged_map[key] = dict(item)
+
+    updated_keys: list[str] = []
+    for key, value in parsed_cookie_map.items():
+        map_key = f"{domain}:{key}"
+        updated = merged_map.get(map_key) or _build_state_cookie_record(key, value, domain)
+        updated["name"] = key
+        updated["value"] = value
+        updated["domain"] = domain
+        updated.setdefault("path", "/")
+        updated.setdefault("httpOnly", False)
+        updated.setdefault("secure", True)
+        updated.setdefault("sameSite", "Lax")
+        merged_map[map_key] = updated
+        updated_keys.append(key)
+
+    next_payload = dict(existing_payload)
+    next_payload["cookies"] = list(merged_map.values())
+    next_payload.setdefault("origins", [])
+
+    try:
+        _write_state_payload_atomic(state_path, next_payload)
+    except Exception as exc:  # noqa: BLE001
+        raise _scraper_http_error(500, "SCRAPER_COOKIE_STORE_ERROR", str(exc)) from exc
+
+    cookie_store = get_cookie_store()
+    current_host_cookies = cookie_store.get_cookies(domain)
+    cookie_store.update_cookies(domain, {**current_host_cookies, **parsed_cookie_map}, None)
+
+    logger.info(
+        "scraper cookies injected: provider=%s base=%s path=%s keys=%s",
+        provider.key,
+        normalized_base,
+        state_path,
+        ",".join(sorted(updated_keys)),
+    )
+
+    return {
+        "path": str(state_path),
+        "status": "ok",
+        "updated_cookie_keys": sorted(updated_keys),
+        "message": "cookie 已写入状态文件",
+    }
+
+
 @router.get("/auth-url", response_model=ScraperAuthUrlResponse)
 async def auth_url(
     base_url: Optional[str] = Query(None),
@@ -1453,24 +1683,79 @@ async def scraper_image(
         raise _scraper_http_error(400, "SCRAPER_IMAGE_SOURCE_UNSUPPORTED", "封面来源不受支持")
 
     cookies = _merge_cookies(normalized_base, storage_state_path, None)
-    headers = {
-        "User-Agent": user_agent or _default_user_agent(),
-        "Referer": normalized_base,
-    }
+    request_ua = user_agent or _default_user_agent()
+    challenge_payload = _challenge_payload(
+        provider=provider,
+        base_url=normalized_base,
+        target_url=url,
+        storage_state_path=storage_state_path,
+    )
+    cache_control = "public, max-age=86400" if provider.image_cache_public else "private, max-age=3600"
+    client = get_http_client(default_user_agent=request_ua)
 
     try:
-        client = get_http_client(default_user_agent=headers["User-Agent"])
         image = await client.fetch_binary(
             url,
             cookies=cookies,
-            user_agent=headers["User-Agent"],
+            user_agent=request_ua,
             referer=normalized_base,
             timeout_sec=20,
         )
-        if not image.payload:
-            raise _scraper_http_error(403, "SCRAPER_IMAGE_FETCH_FORBIDDEN", "图片获取失败")
-        return Response(content=image.payload, media_type=image.media_type or "image/jpeg")
-    except HTTPException:
-        raise
+    except aiohttp.ClientResponseError as exc:
+        if int(exc.status or 0) not in {401, 403}:
+            raise _scraper_http_error(403, "SCRAPER_IMAGE_FETCH_FORBIDDEN", str(exc)) from exc
+        try:
+            solved = await _get_cf_solver().solve(
+                url,
+                current_cookies=cookies,
+                user_agent=request_ua,
+                referer=normalized_base,
+            )
+            image = await client.fetch_binary(
+                url,
+                cookies={**cookies, **(solved.cookies or {})},
+                user_agent=request_ua,
+                referer=normalized_base,
+                timeout_sec=20,
+            )
+        except CloudflareChallengeError as solve_exc:
+            raise _scraper_http_error(
+                403,
+                "SCRAPER_AUTH_CHALLENGE",
+                str(solve_exc),
+                action="PROMPT_USER_COOKIE",
+                payload=challenge_payload,
+            ) from solve_exc
+        except aiohttp.ClientResponseError as retry_exc:
+            if int(retry_exc.status or 0) in {401, 403}:
+                raise _scraper_http_error(
+                    403,
+                    "SCRAPER_AUTH_CHALLENGE",
+                    str(retry_exc),
+                    action="PROMPT_USER_COOKIE",
+                    payload=challenge_payload,
+                ) from retry_exc
+            raise _scraper_http_error(403, "SCRAPER_IMAGE_FETCH_FORBIDDEN", str(retry_exc)) from retry_exc
+        except Exception as retry_exc:  # noqa: BLE001
+            raise _scraper_http_error(403, "SCRAPER_IMAGE_FETCH_FORBIDDEN", str(retry_exc)) from retry_exc
+    except CloudflareChallengeError as exc:
+        raise _scraper_http_error(
+            403,
+            "SCRAPER_AUTH_CHALLENGE",
+            str(exc),
+            action="PROMPT_USER_COOKIE",
+            payload=challenge_payload,
+        ) from exc
     except Exception as exc:  # noqa: BLE001
         raise _scraper_http_error(403, "SCRAPER_IMAGE_FETCH_FORBIDDEN", str(exc)) from exc
+
+    try:
+        if not image.payload:
+            raise _scraper_http_error(403, "SCRAPER_IMAGE_FETCH_FORBIDDEN", "图片获取失败")
+        return Response(
+            content=image.payload,
+            media_type=image.media_type or "image/jpeg",
+            headers={"Cache-Control": cache_control},
+        )
+    except HTTPException:
+        raise
