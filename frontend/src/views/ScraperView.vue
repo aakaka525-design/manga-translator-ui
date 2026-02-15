@@ -33,6 +33,18 @@ const parserListItems = computed(() => parserListSource.value?.items || [])
 const parserListAvailable = computed(() => parserListSource.value?.page_type === 'list' && parserListItems.value.length > 0)
 const parserListRecognized = computed(() => parserListSource.value?.recognized === true)
 const parserListDownloadable = computed(() => parserListSource.value?.downloadable === true)
+const actionPromptRequiredKeys = computed(() => {
+  const keys = scraper.actionPrompt?.payload?.cookie_keys
+  return Array.isArray(keys) && keys.length > 0 ? keys : ['cf_clearance']
+})
+
+function closeActionPrompt() {
+  scraper.clearActionPrompt()
+}
+
+async function submitActionPrompt() {
+  await scraper.submitCookiePrompt()
+}
 
 async function copyText(text) {
   if (!text) { alert('没有可复制内容'); return }
@@ -556,6 +568,48 @@ onUnmounted(() => {
         </div>
       </div>
     </main>
+
+    <div v-if="scraper.actionPrompt.visible" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+      <div class="w-full max-w-2xl rounded-xl border border-border-subtle bg-surface p-4 shadow-2xl">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <h3 class="text-sm font-semibold text-text-main">站点需要 Cookie 验证</h3>
+            <p class="mt-1 text-xs text-text-secondary">
+              {{ scraper.actionPrompt.message }}
+            </p>
+          </div>
+          <button class="text-text-secondary hover:text-text-main transition-colors" @click="closeActionPrompt">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <div class="mt-3 rounded-lg bg-bg-secondary/40 p-3 text-xs text-text-secondary space-y-1">
+          <p>目标地址：<span class="font-mono break-all">{{ scraper.actionPrompt.payload?.target_url || '-' }}</span></p>
+          <p>必需 Cookie：{{ actionPromptRequiredKeys.join(', ') }}</p>
+        </div>
+        <textarea
+          v-model="scraper.actionPrompt.cookieHeader"
+          class="mt-3 h-32 w-full rounded-lg border border-border-subtle bg-bg-secondary px-3 py-2 text-xs text-text-main focus:border-accent-1 focus:outline-none"
+          placeholder="粘贴 Cookie Header，例如：cf_clearance=...; __cf_bm=..."
+        ></textarea>
+        <div class="mt-3 flex justify-end gap-2">
+          <button
+            class="rounded-lg border border-border-subtle px-3 py-2 text-xs text-text-secondary hover:text-text-main"
+            @click="closeActionPrompt"
+            :disabled="scraper.actionPrompt.pending"
+          >
+            取消
+          </button>
+          <button
+            class="rounded-lg bg-accent-1 px-3 py-2 text-xs font-semibold text-white hover:bg-accent-1/90 disabled:opacity-60"
+            @click="submitActionPrompt"
+            :disabled="scraper.actionPrompt.pending"
+          >
+            <span v-if="scraper.actionPrompt.pending">提交中...</span>
+            <span v-else>注入并{{ scraper.actionPrompt.retryLabel || '重试' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 

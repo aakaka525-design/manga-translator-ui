@@ -24,7 +24,10 @@ const SCRAPER_ERROR_MESSAGE_MAP = {
     SCRAPER_STATE_COOKIE_MISSING: '状态文件中没有可用 cookie',
     SCRAPER_IMAGE_SOURCE_UNSUPPORTED: '封面来源不受支持，已跳过代理',
     SCRAPER_IMAGE_FETCH_FORBIDDEN: '封面抓取失败，请检查 cookie 是否有效',
-    SCRAPER_TASK_NOT_FOUND: '下载任务不存在或已过期'
+    SCRAPER_TASK_NOT_FOUND: '下载任务不存在或已过期',
+    SCRAPER_COOKIE_INVALID: 'Cookie 格式无效，请检查后重试',
+    SCRAPER_COOKIE_MISSING_REQUIRED: '缺少必需 Cookie，请补充后重试',
+    SCRAPER_COOKIE_STORE_ERROR: 'Cookie 持久化失败，请稍后重试'
 }
 
 function _withRequestId(message, requestId) {
@@ -50,6 +53,8 @@ async function _buildApiError(res, fallbackMessage) {
     const detailMessage = detail && typeof detail === 'object'
         ? (detail.message || '')
         : (typeof detail === 'string' ? detail : '')
+    const detailAction = detail && typeof detail === 'object' ? (detail.action || '') : ''
+    const detailPayload = detail && typeof detail === 'object' ? (detail.payload || null) : null
     const requestId = payload?.error?.request_id || ''
     const code = detailCode || payload?.error?.code || ''
 
@@ -62,6 +67,8 @@ async function _buildApiError(res, fallbackMessage) {
     const error = new Error(message)
     error.status = res.status
     error.code = code
+    error.action = detailAction || ''
+    error.payload = detailPayload && typeof detailPayload === 'object' ? detailPayload : null
     error.requestId = requestId
     error.raw = payload
     return error
@@ -138,6 +145,15 @@ const api = {
     async providers() {
         const res = await authFetch('/api/v1/scraper/providers')
         if (!res.ok) throw await _buildApiError(res, 'Provider 列表获取失败')
+        return res.json()
+    },
+    async injectCookies(payload) {
+        const res = await authFetch('/api/v1/scraper/inject_cookies', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+        if (!res.ok) throw await _buildApiError(res, 'Cookie 注入失败')
         return res.json()
     },
     async download(payload) {
@@ -393,6 +409,17 @@ export const useScraperStore = defineStore('scraper', () => {
         loading: false,
         error: ''
     })
+    const providerFormState = reactive({})
+    const actionPrompt = reactive({
+        visible: false,
+        action: '',
+        message: '',
+        payload: null,
+        cookieHeader: '',
+        pending: false,
+        retryLabel: '',
+        retryFn: null
+    })
     const uploadInfo = reactive({
         status: 'idle',
         message: ''
@@ -439,22 +466,100 @@ export const useScraperStore = defineStore('scraper', () => {
         return selectedManga.value?.id || null
     }
 
+    function selectedProviderMeta() {
+        const key = (state.site || '').trim().toLowerCase()
+        if (!key) return null
+        return providerMeta.items.find(item => item?.key === key) || null
+    }
+
+    function providerSchemaFields() {
+        const provider = selectedProviderMeta()
+        const schema = provider?.form_schema
+        return Array.isArray(schema) ? schema : []
+    }
+
+    function siteOptions() {
+        return providerMeta.items.map(item => ({
+            key: item.key,
+            label: item.label || item.key
+        }))
+    }
+
+    function _normalizeSiteKey(site) {
+        const key = (site || '').trim().toLowerCase()
+        if (!key || key === 'custom') return 'generic'
+        return key
+    }
+
+    function _applyProviderSchemaDefaults(provider) {
+        const schema = Array.isArray(provider?.form_schema) ? provider.form_schema : []
+        for (const field of schema) {
+            if (!field || typeof field !== 'object') continue
+            const key = String(field.key || '').trim()
+            if (!key) continue
+            const hasDefault = Object.prototype.hasOwnProperty.call(field, 'default')
+            if (!hasDefault) continue
+            const value = field.default
+            if (key === 'base_url') {
+                if (!state.baseUrl || _safeHostname(state.baseUrl) === '') state.baseUrl = String(value || '')
+                continue
+            }
+            if (key === 'storage_state_path') {
+                if (!state.storageStatePath) state.storageStatePath = String(value || '')
+                continue
+            }
+            if (key === 'user_data_dir') {
+                if (!state.userDataDir) state.userDataDir = String(value || '')
+                continue
+            }
+            if (key === 'rate_limit_rps') {
+                if (!Number.isFinite(Number(state.rateLimitRps))) state.rateLimitRps = Number(value || 2)
+                continue
+            }
+            if (key === 'concurrency') {
+                if (!Number.isFinite(Number(state.concurrency))) state.concurrency = Number(value || 6)
+                continue
+            }
+            if (key === 'http_mode') {
+                if (typeof value === 'boolean') {
+                    state.httpMode = value
+                    state.mode = value ? 'http' : state.mode
+                }
+                continue
+            }
+            if (!(key in providerFormState)) {
+                providerFormState[key] = value
+            }
+        }
+    }
+
     function setSite(site) {
-        state.site = site
+        const normalizedSite = _normalizeSiteKey(site)
+        state.site = normalizedSite
         error.value = ''
-        if (site === 'mangaforfree') {
-            state.baseUrl = 'https://mangaforfree.com'
-            state.storageStatePath = 'data/mangaforfree_state.json'
+        const provider = providerMeta.items.find(item => item?.key === normalizedSite) || null
+        const providerHost = Array.isArray(provider?.hosts) && provider.hosts.length > 0 ? provider.hosts[0] : ''
+        if (providerHost && !provider.supports_custom_host) {
+            state.baseUrl = `https://${providerHost}`
+        } else if (!state.baseUrl && providerHost) {
+            state.baseUrl = `https://${providerHost}`
+        }
+        if (normalizedSite === 'mangaforfree') {
+            if (!state.storageStatePath || state.storageStatePath.includes('toongod_state')) {
+                state.storageStatePath = 'data/mangaforfree_state.json'
+            }
             if (!state.userDataDir || state.userDataDir.includes('toongod_profile')) {
                 state.userDataDir = 'data/mangaforfree_profile'
             }
-        } else if (site === 'toongod') {
-            state.baseUrl = 'https://toongod.org'
-            state.storageStatePath = 'data/toongod_state.json'
+        } else if (normalizedSite === 'toongod') {
+            if (!state.storageStatePath || state.storageStatePath.includes('mangaforfree_state')) {
+                state.storageStatePath = 'data/toongod_state.json'
+            }
             if (!state.userDataDir || state.userDataDir.includes('mangaforfree_profile')) {
                 state.userDataDir = 'data/toongod_profile'
             }
         }
+        _applyProviderSchemaDefaults(provider)
         results.value = []
         chapters.value = []
         selectedManga.value = null
@@ -506,7 +611,12 @@ export const useScraperStore = defineStore('scraper', () => {
     }
 
     function getCatalogBasePath() {
-        if (state.site === 'toongod') return '/webtoon/'
+        const provider = selectedProviderMeta()
+        const path = provider?.default_catalog_path
+        if (typeof path === 'string' && path.trim()) {
+            const normalized = path.trim()
+            return normalized.startsWith('/') ? normalized : `/${normalized}`
+        }
         return '/manga/'
     }
 
@@ -558,6 +668,67 @@ export const useScraperStore = defineStore('scraper', () => {
     function resolveForceEngine(siteHint) {
         if (siteHint !== 'generic') return null
         return state.httpMode ? 'http' : 'playwright'
+    }
+
+    function getSchemaFieldValue(field) {
+        const key = String(field?.key || '').trim()
+        if (!key) return ''
+        if (key === 'base_url') return state.baseUrl
+        if (key === 'storage_state_path') return state.storageStatePath
+        if (key === 'user_data_dir') return state.userDataDir
+        if (key === 'rate_limit_rps') return state.rateLimitRps
+        if (key === 'concurrency') return state.concurrency
+        if (key === 'http_mode') return state.httpMode
+        if (key === 'user_agent') return state.userAgent
+        if (Object.prototype.hasOwnProperty.call(providerFormState, key)) return providerFormState[key]
+        if (Object.prototype.hasOwnProperty.call(field || {}, 'default')) return field.default
+        return ''
+    }
+
+    function setSchemaFieldValue(field, rawValue) {
+        const key = String(field?.key || '').trim()
+        if (!key) return
+        const type = String(field?.type || 'string')
+        let value = rawValue
+        if (type === 'number') value = Number(rawValue)
+        if (type === 'boolean') value = Boolean(rawValue)
+
+        if (key === 'base_url') {
+            state.baseUrl = String(value || '')
+            return
+        }
+        if (key === 'storage_state_path') {
+            state.storageStatePath = String(value || '')
+            return
+        }
+        if (key === 'user_data_dir') {
+            state.userDataDir = String(value || '')
+            return
+        }
+        if (key === 'rate_limit_rps') {
+            state.rateLimitRps = normalizeRateLimitRps(value)
+            return
+        }
+        if (key === 'concurrency') {
+            const numeric = Number(value)
+            state.concurrency = Number.isFinite(numeric) ? Math.max(1, Math.min(32, numeric)) : state.concurrency
+            return
+        }
+        if (key === 'http_mode') {
+            const enabled = Boolean(value)
+            state.httpMode = enabled
+            if (enabled) {
+                state.mode = 'http'
+                state.headless = true
+                state.manualChallenge = false
+            }
+            return
+        }
+        if (key === 'user_agent') {
+            state.userAgent = String(value || '')
+            return
+        }
+        providerFormState[key] = value
     }
 
     function getPayload() {
@@ -736,6 +907,59 @@ export const useScraperStore = defineStore('scraper', () => {
         })
     }
 
+    function clearActionPrompt() {
+        actionPrompt.visible = false
+        actionPrompt.action = ''
+        actionPrompt.message = ''
+        actionPrompt.payload = null
+        actionPrompt.cookieHeader = ''
+        actionPrompt.pending = false
+        actionPrompt.retryLabel = ''
+        actionPrompt.retryFn = null
+    }
+
+    function handleActionableError(errorObj, retryLabel, retryFn) {
+        const action = (errorObj?.action || '').trim()
+        if (action !== 'PROMPT_USER_COOKIE') return false
+        actionPrompt.visible = true
+        actionPrompt.action = action
+        actionPrompt.message = errorObj?.message || '站点触发验证，需要补充 Cookie'
+        actionPrompt.payload = errorObj?.payload && typeof errorObj.payload === 'object' ? errorObj.payload : null
+        actionPrompt.cookieHeader = ''
+        actionPrompt.pending = false
+        actionPrompt.retryLabel = retryLabel || '重试'
+        actionPrompt.retryFn = typeof retryFn === 'function' ? retryFn : null
+        return true
+    }
+
+    async function submitCookiePrompt() {
+        if (!actionPrompt.visible || actionPrompt.action !== 'PROMPT_USER_COOKIE') return
+        const toast = useToastStore()
+        if (!actionPrompt.cookieHeader.trim()) {
+            toast.show('请输入 Cookie Header', 'warning')
+            return
+        }
+        const payload = actionPrompt.payload || {}
+        actionPrompt.pending = true
+        try {
+            await api.injectCookies({
+                base_url: payload.base_url || state.baseUrl,
+                storage_state_path: payload.storage_state_path || state.storageStatePath || null,
+                cookie_header: actionPrompt.cookieHeader.trim(),
+                site_hint: payload.provider_id || resolveSiteHint()
+            })
+            toast.show('Cookie 已注入，正在自动重试', 'success')
+            const retryFn = actionPrompt.retryFn
+            clearActionPrompt()
+            if (typeof retryFn === 'function') {
+                await retryFn()
+            }
+        } catch (e) {
+            toast.show(e.message || 'Cookie 注入失败', 'error')
+            actionPrompt.pending = false
+        }
+    }
+
     async function search() {
         const toast = useToastStore()
         if (state.view !== 'search') {
@@ -767,8 +991,14 @@ export const useScraperStore = defineStore('scraper', () => {
                 results.value = mapItemsCoverWithProxy(found, proxyImageUrl)
             }
         } catch (e) {
-            toast.show(e.message, 'error')
-            error.value = e.message
+            const handled = handleActionableError(e, '重试搜索', async () => search())
+            if (handled) {
+                toast.show(e.message || '站点需要 Cookie 验证', 'warning')
+                error.value = e.message || '站点需要 Cookie 验证'
+            } else {
+                toast.show(e.message, 'error')
+                error.value = e.message
+            }
         } finally {
             loading.value = false
         }
@@ -792,8 +1022,14 @@ export const useScraperStore = defineStore('scraper', () => {
                 downloaded_total: chapter.downloaded_total || 0
             }))
         } catch (e) {
-            toast.show(`获取章节失败: ${e.message}`, 'error')
-            error.value = e.message
+            const handled = handleActionableError(e, '重试章节加载', async () => selectManga(manga))
+            if (handled) {
+                toast.show(e.message || '站点需要 Cookie 验证', 'warning')
+                error.value = e.message || '站点需要 Cookie 验证'
+            } else {
+                toast.show(`获取章节失败: ${e.message}`, 'error')
+                error.value = e.message
+            }
         } finally {
             loading.value = false
         }
@@ -817,8 +1053,14 @@ export const useScraperStore = defineStore('scraper', () => {
                 downloaded_total: chapter.downloaded_total || 0
             }))
         } catch (e) {
-            toast.show(`获取章节失败: ${e.message}`, 'error')
-            error.value = e.message
+            const handled = handleActionableError(e, '重试章节加载', async () => selectMangaFromParser(manga))
+            if (handled) {
+                toast.show(e.message || '站点需要 Cookie 验证', 'warning')
+                error.value = e.message || '站点需要 Cookie 验证'
+            } else {
+                toast.show(`获取章节失败: ${e.message}`, 'error')
+                error.value = e.message
+            }
         } finally {
             loading.value = false
         }
@@ -852,8 +1094,14 @@ export const useScraperStore = defineStore('scraper', () => {
             catalog.page = data.page
             catalog.hasMore = data.has_more
         } catch (e) {
-            toast.show(`加载目录失败: ${e.message}`, 'error')
-            error.value = e.message
+            const handled = handleActionableError(e, '重试目录加载', async () => loadCatalog(reset))
+            if (handled) {
+                toast.show(e.message || '站点需要 Cookie 验证', 'warning')
+                error.value = e.message || '站点需要 Cookie 验证'
+            } else {
+                toast.show(`加载目录失败: ${e.message}`, 'error')
+                error.value = e.message
+            }
         } finally {
             catalog.loading = false
         }
@@ -995,6 +1243,14 @@ export const useScraperStore = defineStore('scraper', () => {
         try {
             const data = await api.providers()
             providerMeta.items = Array.isArray(data?.items) ? data.items : []
+            const normalizedSite = _normalizeSiteKey(state.site)
+            const matched = providerMeta.items.find(item => item?.key === normalizedSite)
+            if (matched) {
+                state.site = normalizedSite
+                _applyProviderSchemaDefaults(matched)
+            } else if (providerMeta.items.length > 0) {
+                setSite(providerMeta.items[0].key)
+            }
         } catch (e) {
             providerMeta.error = e.message || 'Provider 列表获取失败'
         } finally {
@@ -1275,6 +1531,8 @@ export const useScraperStore = defineStore('scraper', () => {
         uploadInfo,
         authInfo,
         providerMeta,
+        providerFormState,
+        actionPrompt,
         parser,
         downloadSummary,
         task,
@@ -1284,6 +1542,11 @@ export const useScraperStore = defineStore('scraper', () => {
         setCatalogMode,
         syncUserAgent,
         ensureUserAgent,
+        siteOptions,
+        selectedProviderMeta,
+        providerSchemaFields,
+        getSchemaFieldValue,
+        setSchemaFieldValue,
         proxyImageUrl,
         proxyParserImageUrl,
         search,
@@ -1296,6 +1559,8 @@ export const useScraperStore = defineStore('scraper', () => {
         uploadStateFile,
         parseUrl,
         loadProviders,
+        submitCookiePrompt,
+        clearActionPrompt,
         resolveAuthUrl,
         stateInfoLabel,
         stateInfoClass,

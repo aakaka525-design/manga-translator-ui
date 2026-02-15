@@ -1,7 +1,10 @@
 <script setup>
+import { computed } from 'vue'
 import { useScraperStore } from '@/stores/scraper'
 
 const scraper = useScraperStore()
+const providerOptions = computed(() => scraper.siteOptions())
+const providerSchema = computed(() => scraper.providerSchemaFields().filter(field => String(field?.key || '') !== 'base_url'))
 const ratePresets = [
   { key: 'conservative', label: '保守', value: 0.5, hint: '更稳，减少风控' },
   { key: 'balanced', label: '平衡', value: 1, hint: '推荐默认' },
@@ -14,6 +17,26 @@ function applyRatePreset(value) {
 
 function isRatePresetActive(value) {
   return Math.abs(Number(scraper.state.rateLimitRps || 0) - value) < 0.01
+}
+
+function schemaFieldValue(field) {
+  return scraper.getSchemaFieldValue(field)
+}
+
+function schemaFieldInputType(field) {
+  const type = String(field?.type || 'string')
+  if (type === 'number') return 'number'
+  return 'text'
+}
+
+function updateSchemaField(field, event) {
+  const type = String(field?.type || 'string')
+  if (type === 'boolean') {
+    scraper.setSchemaFieldValue(field, !!event?.target?.checked)
+    return
+  }
+  const value = event?.target?.value
+  scraper.setSchemaFieldValue(field, type === 'number' ? Number(value) : value)
 }
 
 defineProps({
@@ -42,9 +65,10 @@ const emit = defineEmits(['toggle-mobile'])
             <label class="text-xs text-text-secondary">站点</label>
             <select v-model="scraper.state.site" @change="scraper.setSite(scraper.state.site)"
               class="mt-1 w-full bg-bg-secondary border border-border-subtle text-text-main rounded-lg px-3 py-2 text-sm focus:border-accent-1 focus:outline-none transition-colors">
-              <option value="toongod">ToonGod</option>
-              <option value="mangaforfree">MangaForFree</option>
-              <option value="custom">自定义</option>
+              <option v-for="item in providerOptions" :key="item.key" :value="item.key">
+                {{ item.label }}
+              </option>
+              <option v-if="providerOptions.length === 0" value="toongod">ToonGod</option>
             </select>
             <p v-if="scraper.providerMeta.items.length > 0" class="text-[10px] text-text-secondary mt-1 opacity-70">
               可用 Provider: {{ scraper.providerMeta.items.map(item => item.key).join(', ') }}
@@ -57,6 +81,46 @@ const emit = defineEmits(['toggle-mobile'])
             <label class="text-xs text-text-secondary">基础地址</label>
             <input v-model="scraper.state.baseUrl" placeholder="https://toongod.org"
               class="mt-1 w-full bg-bg-secondary border border-border-subtle text-text-main rounded-lg px-3 py-2 text-sm focus:border-accent-1 focus:outline-none" />
+          </div>
+          <div v-if="providerSchema.length > 0" class="space-y-3 rounded-xl border border-border-subtle bg-bg-secondary/30 p-3">
+            <p class="text-[10px] uppercase tracking-widest text-text-secondary opacity-70">Provider Schema</p>
+            <div v-for="field in providerSchema" :key="field.key">
+              <label class="text-xs text-text-secondary">{{ field.label || field.key }}</label>
+              <template v-if="field.type === 'select'">
+                <select
+                  class="mt-1 w-full bg-bg-secondary border border-border-subtle text-text-main rounded-lg px-3 py-2 text-sm focus:border-accent-1 focus:outline-none"
+                  :value="schemaFieldValue(field)"
+                  @change="updateSchemaField(field, $event)"
+                >
+                  <option v-for="option in (field.options || [])" :key="option.value || option" :value="option.value || option">
+                    {{ option.label || option.value || option }}
+                  </option>
+                </select>
+              </template>
+              <template v-else-if="field.type === 'boolean'">
+                <div class="mt-1 flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    class="accent-accent-1"
+                    :checked="!!schemaFieldValue(field)"
+                    @change="updateSchemaField(field, $event)"
+                  />
+                  <span class="text-[10px] text-text-secondary opacity-70">{{ field.help || '' }}</span>
+                </div>
+              </template>
+              <template v-else>
+                <input
+                  :type="schemaFieldInputType(field)"
+                  :placeholder="field.placeholder || ''"
+                  :value="schemaFieldValue(field)"
+                  @input="updateSchemaField(field, $event)"
+                  class="mt-1 w-full bg-bg-secondary border border-border-subtle text-text-main rounded-lg px-3 py-2 text-sm focus:border-accent-1 focus:outline-none"
+                />
+              </template>
+              <p v-if="field.help && field.type !== 'boolean'" class="text-[10px] text-text-secondary mt-1 opacity-70">
+                {{ field.help }}
+              </p>
+            </div>
           </div>
           <div>
             <label class="text-xs text-text-secondary">抓取模式</label>
