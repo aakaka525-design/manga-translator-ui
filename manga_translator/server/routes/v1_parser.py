@@ -5,13 +5,13 @@ from __future__ import annotations
 import asyncio
 from urllib.parse import urlparse
 
-import httpx
 from bs4 import BeautifulSoup
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from manga_translator.server.core.middleware import require_auth
 from manga_translator.server.core.models import Session
+from manga_translator.server.scraper_v1.http_client import ScraperHttpClient
 
 
 router = APIRouter(prefix="/api/v1/parser", tags=["v1-parser"])
@@ -36,25 +36,21 @@ def _fetch_html(url: str, mode: str = "http") -> str:
     if mode not in {"http", "playwright"}:
         raise HTTPException(status_code=400, detail="不支持的抓取模式")
 
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-        )
-    }
+    user_agent = (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    )
 
     if mode == "http":
+        client = ScraperHttpClient(default_user_agent=user_agent)
         try:
-            with httpx.Client(timeout=20.0, follow_redirects=True) as client:
-                response = client.get(url, headers=headers)
-        except httpx.RequestError as exc:
+            return asyncio.run(client.fetch_html(url, user_agent=user_agent, timeout_sec=20.0))
+        except Exception as exc:  # noqa: BLE001
+            status = getattr(exc, "status", None)
+            if isinstance(status, int) and status >= 400:
+                raise HTTPException(status_code=400, detail=f"请求失败（{status}）") from exc
             raise HTTPException(status_code=400, detail=f"请求失败: {exc}") from exc
 
-        if response.status_code >= 400:
-            raise HTTPException(status_code=400, detail=f"请求失败（{response.status_code}）")
-        return response.text
-
-    # playwright mode fallback
     try:
         from playwright.sync_api import sync_playwright
     except Exception as exc:  # noqa: BLE001
@@ -63,20 +59,23 @@ def _fetch_html(url: str, mode: str = "http") -> str:
             detail={"code": "SCRAPER_BROWSER_UNAVAILABLE", "message": str(exc)},
         ) from exc
 
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
-        context = browser.new_context(user_agent=headers["User-Agent"])
-        page = context.new_page()
-        try:
-            resp = page.goto(url, wait_until="domcontentloaded", timeout=20000)
-            status_code = resp.status if resp else 0
-            if status_code >= 400:
-                raise HTTPException(status_code=400, detail=f"请求失败（{status_code}）")
-            return page.content()
-        finally:
-            page.close()
-            context.close()
-            browser.close()
+    def _fetch_via_playwright() -> str:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(user_agent=user_agent)
+            page = context.new_page()
+            try:
+                resp = page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                status_code = resp.status if resp else 0
+                if status_code >= 400:
+                    raise HTTPException(status_code=400, detail=f"请求失败（{status_code}）")
+                return page.content()
+            finally:
+                page.close()
+                context.close()
+                browser.close()
+
+    return _fetch_via_playwright()
 
 
 def _recognize_site(url: str) -> tuple[str | None, str | None]:
@@ -131,8 +130,7 @@ def _extract_list_items(html: str, base_url: str) -> list[dict[str, object]]:
 
             if not any(marker in full_url for marker in markers):
                 continue
-            parsed = urlparse(full_url)
-            manga_id = [p for p in parsed.path.split("/") if p][-1]
+            manga_id = [p for p in urlparse(full_url).path.split("/") if p][-1]
             if manga_id in seen:
                 continue
 

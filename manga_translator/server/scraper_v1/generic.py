@@ -6,46 +6,22 @@ import asyncio
 import re
 from urllib.parse import quote_plus, urljoin
 
-import aiohttp
 from bs4 import BeautifulSoup
 
-from .mangaforfree import (
-    ChapterItem,
-    CloudflareChallengeError,
-    MangaItem,
-    _canonical_series_url,
-    _infer_slug,
-    _normalize_url,
+from .base import (
+    canonical_series_url,
+    extract_cover,
+    infer_slug,
+    looks_like_challenge,
+    normalize_url,
     parse_catalog_has_more,
 )
+from .http_client import get_http_client
+from .mangaforfree import ChapterItem, CloudflareChallengeError, MangaItem
 
 
 class BrowserUnavailableError(RuntimeError):
     pass
-
-
-def _looks_like_challenge(html: str) -> bool:
-    sample = html.lower()
-    markers = ("cloudflare", "cf-challenge", "just a moment", "attention required")
-    return any(marker in sample for marker in markers)
-
-
-async def _fetch_html_http(
-    url: str,
-    *,
-    cookies: dict[str, str],
-    user_agent: str,
-    timeout_sec: float = 25,
-) -> str:
-    timeout = aiohttp.ClientTimeout(total=timeout_sec)
-    headers = {"User-Agent": user_agent, "Accept-Encoding": "gzip, deflate"}
-    async with aiohttp.ClientSession(timeout=timeout, cookies=cookies) as session:
-        async with session.get(url, headers=headers) as response:
-            text = await response.text()
-            if _looks_like_challenge(text):
-                raise CloudflareChallengeError("检测到站点验证，请先上传可用状态文件")
-            response.raise_for_status()
-            return text
 
 
 def _fetch_html_playwright_sync(url: str, user_agent: str, timeout_ms: int = 25000) -> str:
@@ -77,28 +53,38 @@ async def _fetch_html(
     user_agent: str,
     http_mode: bool,
     force_engine: str | None,
+    rate_limit_rps: float | None = None,
+    concurrency: int | None = None,
 ) -> str:
     engine = (force_engine or "").strip().lower()
     use_playwright = engine == "playwright" or (engine == "" and not http_mode)
     if use_playwright:
         return await asyncio.to_thread(_fetch_html_playwright_sync, url, user_agent)
-    return await _fetch_html_http(url, cookies=cookies, user_agent=user_agent)
+
+    client = get_http_client(default_user_agent=user_agent)
+    html = await client.fetch_html(
+        url,
+        cookies=cookies,
+        user_agent=user_agent,
+        rate_limit_rps=rate_limit_rps,
+        concurrency=concurrency,
+    )
+    if looks_like_challenge(html):
+        raise CloudflareChallengeError("检测到站点验证，请先上传可用状态文件")
+    return html
 
 
-def _extract_cover(item, base_url: str) -> str | None:
-    image = item.select_one("img")
-    if image:
-        for attr in ("src", "data-src", "data-original", "data-lazy-src", "data-srcset"):
-            value = image.get(attr)
-            if not value:
-                continue
-            if attr.endswith("srcset"):
-                first = str(value).split(",")[-1].strip().split(" ")[0]
-                if first:
-                    return _normalize_url(base_url, first)
-            else:
-                return _normalize_url(base_url, str(value))
-    return None
+def _optional_limits_kwargs(
+    *,
+    rate_limit_rps: float | None = None,
+    concurrency: int | None = None,
+) -> dict[str, float | int]:
+    kwargs: dict[str, float | int] = {}
+    if rate_limit_rps is not None:
+        kwargs["rate_limit_rps"] = rate_limit_rps
+    if concurrency is not None:
+        kwargs["concurrency"] = concurrency
+    return kwargs
 
 
 def parse_search(html: str, base_url: str) -> list[MangaItem]:
@@ -123,15 +109,15 @@ def parse_search(html: str, base_url: str) -> list[MangaItem]:
                 href = anchor.get("href") if anchor else None
             if not href:
                 continue
-            url = _canonical_series_url(base_url, str(href), allowed_sections=allowed_sections)
+            url = canonical_series_url(base_url, str(href), allowed_sections=allowed_sections)
             if not url:
                 continue
-            manga_id = _infer_slug(url)
+            manga_id = infer_slug(url)
             if url in seen:
                 continue
             title_node = node.select_one(".post-title, .h5 a, .manga-name, h3, h2, .entry-title")
             title = title_node.get_text(strip=True) if title_node else manga_id
-            items.append(MangaItem(id=manga_id, title=title or manga_id, url=url, cover_url=_extract_cover(node, base_url)))
+            items.append(MangaItem(id=manga_id, title=title or manga_id, url=url, cover_url=extract_cover(node, base_url)))
             seen.add(url)
     return items
 
@@ -152,8 +138,8 @@ def parse_chapters(html: str, base_url: str) -> list[ChapterItem]:
             href = node.get("href")
             if not href:
                 continue
-            url = _normalize_url(base_url, str(href))
-            chapter_id = _infer_slug(url)
+            url = normalize_url(base_url, str(href))
+            chapter_id = infer_slug(url)
             if chapter_id in seen:
                 continue
             title = node.get_text(strip=True) or chapter_id
@@ -183,7 +169,7 @@ def parse_reader_images(html: str, base_url: str) -> list[str]:
                     continue
                 if attr.endswith("srcset"):
                     value = str(value).split(",")[-1].strip().split(" ")[0]
-                full_url = _normalize_url(base_url, str(value))
+                full_url = normalize_url(base_url, str(value))
                 if full_url.startswith("data:") or full_url in seen:
                     continue
                 seen.add(full_url)
@@ -207,20 +193,24 @@ async def search_manga(
     user_agent: str,
     http_mode: bool = True,
     force_engine: str | None = None,
+    rate_limit_rps: float | None = None,
+    concurrency: int | None = None,
 ) -> list[MangaItem]:
     search_url = urljoin(base_url, f"/?s={quote_plus(keyword)}")
+    limits_kwargs = _optional_limits_kwargs(rate_limit_rps=rate_limit_rps, concurrency=concurrency)
     html = await _fetch_html(
         search_url,
         cookies=cookies,
         user_agent=user_agent,
         http_mode=http_mode,
         force_engine=force_engine,
+        **limits_kwargs,
     )
     items = parse_search(html, base_url)
     slug = re.sub(r"[^a-z0-9]+", "-", keyword.lower()).strip("-")
     if slug and not items:
         items.append(MangaItem(id=slug, title=keyword, url=urljoin(base_url, f"/manga/{slug}/"), cover_url=None))
-    if _looks_like_challenge(html) and not items:
+    if looks_like_challenge(html) and not items:
         raise CloudflareChallengeError("检测到站点验证，请先上传可用状态文件")
     return items
 
@@ -235,6 +225,8 @@ async def list_catalog(
     user_agent: str,
     http_mode: bool = True,
     force_engine: str | None = None,
+    rate_limit_rps: float | None = None,
+    concurrency: int | None = None,
 ) -> tuple[list[MangaItem], bool]:
     page = max(1, page)
     base_path = (path or "/manga/").strip()
@@ -249,16 +241,18 @@ async def list_catalog(
         separator = "&" if "?" in url else "?"
         url = f"{url}{separator}m_orderby={quote_plus(orderby)}"
 
+    limits_kwargs = _optional_limits_kwargs(rate_limit_rps=rate_limit_rps, concurrency=concurrency)
     html = await _fetch_html(
         url,
         cookies=cookies,
         user_agent=user_agent,
         http_mode=http_mode,
         force_engine=force_engine,
+        **limits_kwargs,
     )
     items = parse_search(html, base_url)
     has_more = parse_catalog_has_more(html)
-    if _looks_like_challenge(html) and not items:
+    if looks_like_challenge(html) and not items:
         raise CloudflareChallengeError("检测到站点验证，请先上传可用状态文件")
     return items, has_more
 
@@ -271,16 +265,20 @@ async def list_chapters(
     user_agent: str,
     http_mode: bool = True,
     force_engine: str | None = None,
+    rate_limit_rps: float | None = None,
+    concurrency: int | None = None,
 ) -> list[ChapterItem]:
+    limits_kwargs = _optional_limits_kwargs(rate_limit_rps=rate_limit_rps, concurrency=concurrency)
     html = await _fetch_html(
         manga_url,
         cookies=cookies,
         user_agent=user_agent,
         http_mode=http_mode,
         force_engine=force_engine,
+        **limits_kwargs,
     )
     chapters = parse_chapters(html, base_url)
-    if _looks_like_challenge(html) and not chapters:
+    if looks_like_challenge(html) and not chapters:
         raise CloudflareChallengeError("检测到站点验证，请先上传可用状态文件")
     return chapters
 
@@ -293,15 +291,19 @@ async def fetch_reader_images(
     user_agent: str,
     http_mode: bool = True,
     force_engine: str | None = None,
+    rate_limit_rps: float | None = None,
+    concurrency: int | None = None,
 ) -> list[str]:
+    limits_kwargs = _optional_limits_kwargs(rate_limit_rps=rate_limit_rps, concurrency=concurrency)
     html = await _fetch_html(
         chapter_url,
         cookies=cookies,
         user_agent=user_agent,
         http_mode=http_mode,
         force_engine=force_engine,
+        **limits_kwargs,
     )
     images = parse_reader_images(html, base_url)
-    if _looks_like_challenge(html) and not images:
+    if looks_like_challenge(html) and not images:
         raise CloudflareChallengeError("检测到站点验证，请先上传可用状态文件")
     return images

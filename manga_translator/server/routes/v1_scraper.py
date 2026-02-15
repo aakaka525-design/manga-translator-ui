@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import logging
 import os
 import re
 from datetime import datetime, timedelta, timezone
@@ -24,13 +25,14 @@ from manga_translator.server.scraper_v1 import (
     BrowserUnavailableError,
     CloudflareChallengeError,
     DEFAULT_ALERT_SETTINGS,
+    ProviderContext,
     ProviderAdapter,
     ProviderUnavailableError,
     ScraperAlertEngine,
     ScraperTaskStore,
-    collect_cookies,
     get_state_info,
-    load_state_payload,
+    get_http_client,
+    merge_cookies,
     normalize_alert_settings,
     normalize_base_url,
     provider_allows_image_host,
@@ -40,6 +42,7 @@ from manga_translator.server.scraper_v1 import (
     save_state_payload,
     send_test_webhook,
 )
+from manga_translator.server.scraper_v1.download_service import DownloadService
 
 
 router = APIRouter(prefix="/api/v1/scraper", tags=["v1-scraper"])
@@ -62,6 +65,7 @@ ACTIVE_TASK_STATUSES = {"pending", "running", "retrying"}
 _scraper_tasks: dict[str, dict[str, object]] = {}
 _scraper_tasks_lock = asyncio.Lock()
 _task_store: ScraperTaskStore | None = None
+_download_service: DownloadService | None = None
 _alert_scheduler_task: asyncio.Task | None = None
 _alert_scheduler_lock = asyncio.Lock()
 _alert_runtime: dict[str, Any] = {
@@ -75,6 +79,7 @@ _alert_runtime: dict[str, Any] = {
     "stopped_at": None,
 }
 _UNSET = object()
+logger = logging.getLogger(__name__)
 
 
 class MangaPayload(BaseModel):
@@ -158,6 +163,8 @@ class ScraperTaskStatus(BaseModel):
     enqueued_at: Optional[str] = None
     dequeued_at: Optional[str] = None
     worker_id: Optional[str] = None
+    progress_completed: Optional[int] = None
+    progress_total: Optional[int] = None
 
 
 class ScraperCatalogResponse(BaseModel):
@@ -207,6 +214,20 @@ def _get_task_store() -> ScraperTaskStore:
     if _task_store is None:
         return init_task_store()
     return _task_store
+
+
+def _get_download_service() -> DownloadService:
+    global _download_service
+    if _download_service is None:
+        _download_service = DownloadService(
+            raw_dir=RAW_DIR,
+            http_client=get_http_client(default_user_agent=_default_user_agent()),
+            set_task_state=_set_task_state,
+            image_retry_delays=IMAGE_RETRY_DELAYS,
+            task_retry_delay_sec=int(TASK_RETRY_DELAY_SEC),
+            max_task_retries=TASK_MAX_RETRIES,
+        )
+    return _download_service
 
 
 def _task_status_to_queue_status(status: str) -> str:
@@ -423,17 +444,7 @@ def _request_payload(model: BaseModel) -> dict[str, object]:
 
 
 def _merge_cookies(base_url: str, storage_state_path: str | None, extra: dict[str, str] | None) -> dict[str, str]:
-    cookies: dict[str, str] = {}
-    if storage_state_path:
-        path = Path(storage_state_path)
-        if path.exists() and path.is_file():
-            try:
-                payload = load_state_payload(path)
-                host = (urlparse(normalize_base_url(base_url)).hostname or "").lower()
-                for item in collect_cookies(payload, host or None):
-                    cookies[item.name] = item.value
-            except Exception:
-                pass
+    cookies: dict[str, str] = merge_cookies(base_url, storage_state_path, None)
     if extra:
         cookies.update(extra)
     return cookies
@@ -450,6 +461,8 @@ def _task_payload(task_id: str) -> dict[str, object]:
         "next_retry_at": None,
         "error_code": None,
         "last_error": None,
+        "progress_completed": 0,
+        "progress_total": 0,
     }
 
 
@@ -497,6 +510,74 @@ def _request_fingerprint(
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _is_call_signature_error(exc: TypeError) -> bool:
+    text = str(exc)
+    return any(
+        marker in text
+        for marker in (
+            "required positional argument",
+            "positional arguments but",
+            "unexpected keyword argument",
+        )
+    )
+
+
+async def _provider_search_compat(provider: ProviderAdapter, context: ProviderContext, keyword: str):
+    try:
+        return await provider.search(context, keyword)
+    except TypeError as exc:
+        if not _is_call_signature_error(exc):
+            raise
+        return await provider.search(
+            context.base_url,
+            keyword,
+            context.cookies,
+            context.user_agent,
+            context.http_mode,
+            context.force_engine,
+        )
+
+
+async def _provider_catalog_compat(
+    provider: ProviderAdapter,
+    context: ProviderContext,
+    page: int,
+    orderby: str | None,
+    path: str | None,
+):
+    try:
+        return await provider.catalog(context, page, orderby, path)
+    except TypeError as exc:
+        if not _is_call_signature_error(exc):
+            raise
+        return await provider.catalog(
+            context.base_url,
+            page,
+            orderby,
+            path,
+            context.cookies,
+            context.user_agent,
+            context.http_mode,
+            context.force_engine,
+        )
+
+
+async def _provider_chapters_compat(provider: ProviderAdapter, context: ProviderContext, manga_url: str):
+    try:
+        return await provider.chapters(context, manga_url)
+    except TypeError as exc:
+        if not _is_call_signature_error(exc):
+            raise
+        return await provider.chapters(
+            context.base_url,
+            manga_url,
+            context.cookies,
+            context.user_agent,
+            context.http_mode,
+            context.force_engine,
+        )
+
+
 async def _set_task_state(
     task_id: str,
     *,
@@ -510,6 +591,8 @@ async def _set_task_state(
     next_retry_at: str | None | object = _UNSET,
     last_error: str | None | object = _UNSET,
     started_at: str | None | object = _UNSET,
+    progress_completed: int | None = None,
+    progress_total: int | None = None,
 ) -> None:
     now_iso = _now_iso()
     async with _scraper_tasks_lock:
@@ -529,6 +612,10 @@ async def _set_task_state(
             payload["last_error"] = last_error
         if started_at is not _UNSET:
             payload["started_at"] = started_at
+        if progress_completed is not None:
+            payload["progress_completed"] = max(0, int(progress_completed))
+        if progress_total is not None:
+            payload["progress_total"] = max(0, int(progress_total))
         if error_code is not None:
             payload["error_code"] = error_code
         if finished:
@@ -544,6 +631,10 @@ async def _set_task_state(
             update_kwargs["last_error"] = last_error
         if started_at is not _UNSET:
             update_kwargs["started_at"] = started_at
+        if progress_completed is not None:
+            update_kwargs["progress_completed"] = max(0, int(progress_completed))
+        if progress_total is not None:
+            update_kwargs["progress_total"] = max(0, int(progress_total))
 
         store = _get_task_store()
         store.update_task(
@@ -557,9 +648,8 @@ async def _set_task_state(
             max_retries=max_retries,
             **update_kwargs,
         )
-    except Exception:
-        # Do not interrupt request/task flow for storage errors.
-        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.error("scraper task store update failed: task_id=%s status=%s error=%s", task_id, status, exc)
 
 
 def recover_stale_tasks(stale_minutes: int = STALE_TASK_MINUTES) -> int:
@@ -667,6 +757,8 @@ async def _run_download_task(
         max_retries=max_retries,
         next_retry_at=None,
         started_at=_now_iso() if retry_count == 0 else _UNSET,
+        progress_completed=0,
+        progress_total=0,
     )
 
     manga_id = _safe_name(req.manga.id or req.manga.title or "manga")
@@ -677,15 +769,30 @@ async def _run_download_task(
     output_dir = RAW_DIR / manga_id / chapter_id
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    context = ProviderContext(
+        base_url=base_url,
+        cookies=cookies,
+        user_agent=user_agent,
+        http_mode=bool(req.http_mode),
+        force_engine=force_engine,
+        rate_limit_rps=float(req.rate_limit_rps or 2.0),
+        concurrency=max(1, min(32, int(req.concurrency or 6))),
+    )
+
     try:
-        image_urls = await provider.reader_images(
-            base_url,
-            chapter_url,
-            cookies,
-            user_agent,
-            bool(req.http_mode),
-            force_engine,
-        )
+        try:
+            image_urls = await provider.reader_images(context, chapter_url)
+        except TypeError as exc:
+            if not _is_call_signature_error(exc):
+                raise
+            image_urls = await provider.reader_images(
+                base_url,
+                chapter_url,
+                cookies,
+                user_agent,
+                bool(req.http_mode),
+                force_engine,
+            )
     except BrowserUnavailableError as exc:
         await _set_task_state(
             task_id,
@@ -747,6 +854,7 @@ async def _run_download_task(
     async with aiohttp.ClientSession(timeout=timeout, cookies=cookies, connector=connector) as session:
         semaphore = asyncio.Semaphore(max(1, min(32, int(req.concurrency or 6))))
         results: list[tuple[bool, str | None, bool]] = []
+        total_count = len(image_urls)
 
         async def worker(index: int, image_url: str) -> None:
             ext = Path(urlparse(image_url).path).suffix.lower()
@@ -777,6 +885,13 @@ async def _run_download_task(
                     error_text = None
                     retryable = not ok
                 results.append((bool(ok), error_text, bool(retryable)))
+                await _set_task_state(
+                    task_id,
+                    status="running",
+                    message="下载中...",
+                    progress_completed=len(results),
+                    progress_total=total_count,
+                )
 
         await asyncio.gather(*[worker(idx, image_url) for idx, image_url in enumerate(image_urls, start=1)])
 
@@ -806,6 +921,8 @@ async def _run_download_task(
             max_retries=max_retries,
             next_retry_at=next_retry_at,
             last_error=last_error,
+            progress_completed=len(image_urls),
+            progress_total=len(image_urls),
         )
 
         async def _retry_later() -> None:
@@ -860,6 +977,8 @@ async def _run_download_task(
         error_code=error_code,
         last_error=last_error,
         next_retry_at=None,
+        progress_completed=len(image_urls),
+        progress_total=len(image_urls),
     )
 
 
@@ -877,9 +996,18 @@ async def search(req: ScraperSearchRequest, _session: Session = Depends(require_
 
     cookies = _merge_cookies(base_url, req.storage_state_path, req.cookies)
     user_agent = req.user_agent or _default_user_agent()
+    context = ProviderContext(
+        base_url=base_url,
+        cookies=cookies,
+        user_agent=user_agent,
+        http_mode=bool(req.http_mode),
+        force_engine=force_engine,
+        rate_limit_rps=float(req.rate_limit_rps or 2.0),
+        concurrency=max(1, min(32, int(req.concurrency or 6))),
+    )
 
     try:
-        items = await provider.search(base_url, req.keyword, cookies, user_agent, bool(req.http_mode), force_engine)
+        items = await _provider_search_compat(provider, context, req.keyword)
     except BrowserUnavailableError as exc:
         raise _scraper_http_error(400, "SCRAPER_BROWSER_UNAVAILABLE", str(exc)) from exc
     except CloudflareChallengeError as exc:
@@ -901,17 +1029,23 @@ async def catalog(req: ScraperCatalogRequest, _session: Session = Depends(requir
 
     cookies = _merge_cookies(base_url, req.storage_state_path, req.cookies)
     user_agent = req.user_agent or _default_user_agent()
+    context = ProviderContext(
+        base_url=base_url,
+        cookies=cookies,
+        user_agent=user_agent,
+        http_mode=bool(req.http_mode),
+        force_engine=force_engine,
+        rate_limit_rps=float(req.rate_limit_rps or 2.0),
+        concurrency=max(1, min(32, int(req.concurrency or 6))),
+    )
 
     try:
-        items, has_more = await provider.catalog(
-            base_url,
+        items, has_more = await _provider_catalog_compat(
+            provider,
+            context,
             max(1, req.page),
             req.orderby,
             _normalize_catalog_path(req.path) or provider.default_catalog_path,
-            cookies,
-            user_agent,
-            bool(req.http_mode),
-            force_engine,
         )
     except BrowserUnavailableError as exc:
         raise _scraper_http_error(400, "SCRAPER_BROWSER_UNAVAILABLE", str(exc)) from exc
@@ -934,19 +1068,21 @@ async def chapters(req: ScraperChaptersRequest, _session: Session = Depends(requ
 
     cookies = _merge_cookies(base_url, req.storage_state_path, req.cookies)
     user_agent = req.user_agent or _default_user_agent()
+    context = ProviderContext(
+        base_url=base_url,
+        cookies=cookies,
+        user_agent=user_agent,
+        http_mode=bool(req.http_mode),
+        force_engine=force_engine,
+        rate_limit_rps=float(req.rate_limit_rps or 2.0),
+        concurrency=max(1, min(32, int(req.concurrency or 6))),
+    )
 
     fallback_path = provider.default_catalog_path.rstrip("/") or "/manga"
     manga_url = req.manga.url or urljoin(base_url, f"{fallback_path}/{req.manga.id}/")
 
     try:
-        items = await provider.chapters(
-            base_url,
-            manga_url,
-            cookies,
-            user_agent,
-            bool(req.http_mode),
-            force_engine,
-        )
+        items = await _provider_chapters_compat(provider, context, manga_url)
     except BrowserUnavailableError as exc:
         raise _scraper_http_error(400, "SCRAPER_BROWSER_UNAVAILABLE", str(exc)) from exc
     except CloudflareChallengeError as exc:
@@ -1030,6 +1166,8 @@ async def download(req: ScraperDownloadRequest, _session: Session = Depends(requ
             "next_retry_at": None,
             "error_code": None,
             "last_error": None,
+            "progress_completed": 0,
+            "progress_total": 0,
         }
 
     try:
@@ -1041,6 +1179,8 @@ async def download(req: ScraperDownloadRequest, _session: Session = Depends(requ
             provider=provider.key,
             retry_count=0,
             max_retries=TASK_MAX_RETRIES,
+            progress_completed=0,
+            progress_total=0,
             request_fingerprint=request_fingerprint,
         )
     except Exception as exc:  # noqa: BLE001
@@ -1094,6 +1234,8 @@ async def get_scraper_task(task_id: str, _session: Session = Depends(require_aut
             enqueued_at=created_at,
             dequeued_at=started_at,
             worker_id="local-worker",
+            progress_completed=int(task.get("progress_completed", 0) or 0),
+            progress_total=int(task.get("progress_total", 0) or 0),
         )
 
     try:
@@ -1121,6 +1263,8 @@ async def get_scraper_task(task_id: str, _session: Session = Depends(require_aut
         enqueued_at=record.created_at,
         dequeued_at=record.started_at,
         worker_id="local-worker",
+        progress_completed=int(getattr(record, "progress_completed", 0) or 0),
+        progress_total=int(getattr(record, "progress_total", 0) or 0),
     )
 
 
@@ -1244,15 +1388,18 @@ async def scraper_image(
         "Referer": normalized_base,
     }
 
-    timeout = aiohttp.ClientTimeout(total=20)
     try:
-        async with aiohttp.ClientSession(timeout=timeout, cookies=cookies) as session:
-            async with session.get(url, headers=headers) as response:
-                if response.status >= 400:
-                    raise _scraper_http_error(403, "SCRAPER_IMAGE_FETCH_FORBIDDEN", "图片获取失败")
-                body = await response.read()
-                media_type = response.headers.get("content-type") or "image/jpeg"
-                return Response(content=body, media_type=media_type)
+        client = get_http_client(default_user_agent=headers["User-Agent"])
+        image = await client.fetch_binary(
+            url,
+            cookies=cookies,
+            user_agent=headers["User-Agent"],
+            referer=normalized_base,
+            timeout_sec=20,
+        )
+        if not image.payload:
+            raise _scraper_http_error(403, "SCRAPER_IMAGE_FETCH_FORBIDDEN", "图片获取失败")
+        return Response(content=image.payload, media_type=image.media_type or "image/jpeg")
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001

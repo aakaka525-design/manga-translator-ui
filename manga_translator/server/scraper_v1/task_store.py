@@ -48,6 +48,8 @@ class TaskStoreRecord:
     last_error: str | None = None
     request_fingerprint: str | None = None
     started_at: str | None = None
+    progress_completed: int = 0
+    progress_total: int = 0
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -67,6 +69,8 @@ class TaskStoreRecord:
             "last_error": self.last_error,
             "request_fingerprint": self.request_fingerprint,
             "started_at": self.started_at,
+            "progress_completed": self.progress_completed,
+            "progress_total": self.progress_total,
         }
 
 
@@ -106,6 +110,8 @@ class ScraperTaskStore:
         "last_error": "TEXT",
         "request_fingerprint": "TEXT",
         "started_at": "TEXT",
+        "progress_completed": "INTEGER NOT NULL DEFAULT 0",
+        "progress_total": "INTEGER NOT NULL DEFAULT 0",
     }
 
     def __init__(self, db_path: Path):
@@ -149,7 +155,9 @@ class ScraperTaskStore:
                     next_retry_at TEXT,
                     last_error TEXT,
                     request_fingerprint TEXT,
-                    started_at TEXT
+                    started_at TEXT,
+                    progress_completed INTEGER NOT NULL DEFAULT 0,
+                    progress_total INTEGER NOT NULL DEFAULT 0
                 )
                 """
             )
@@ -210,6 +218,8 @@ class ScraperTaskStore:
             last_error=row["last_error"] if "last_error" in row.keys() else None,
             request_fingerprint=row["request_fingerprint"] if "request_fingerprint" in row.keys() else None,
             started_at=row["started_at"] if "started_at" in row.keys() else None,
+            progress_completed=int(row["progress_completed"] or 0) if "progress_completed" in row.keys() else 0,
+            progress_total=int(row["progress_total"] or 0) if "progress_total" in row.keys() else 0,
         )
 
     def _from_alert_row(self, row: sqlite3.Row) -> AlertStoreRecord:
@@ -233,7 +243,8 @@ class ScraperTaskStore:
             SELECT
                 task_id,status,message,report_json,request_json,provider,
                 created_at,updated_at,finished_at,error_code,
-                retry_count,max_retries,next_retry_at,last_error,request_fingerprint,started_at
+                retry_count,max_retries,next_retry_at,last_error,request_fingerprint,started_at,
+                progress_completed,progress_total
               FROM scraper_tasks
              WHERE task_id = ?
             """,
@@ -257,6 +268,8 @@ class ScraperTaskStore:
         last_error: str | None = None,
         request_fingerprint: str | None = None,
         started_at: str | None = None,
+        progress_completed: int = 0,
+        progress_total: int = 0,
         error_code: str | None = None,
     ) -> None:
         now = _utc_now()
@@ -267,8 +280,9 @@ class ScraperTaskStore:
                 INSERT OR REPLACE INTO scraper_tasks(
                     task_id,status,message,report_json,request_json,provider,
                     created_at,updated_at,finished_at,error_code,
-                    retry_count,max_retries,next_retry_at,last_error,request_fingerprint,started_at
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    retry_count,max_retries,next_retry_at,last_error,request_fingerprint,started_at,
+                    progress_completed,progress_total
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     task_id,
@@ -287,6 +301,8 @@ class ScraperTaskStore:
                     last_error,
                     request_fingerprint,
                     started_at,
+                    max(0, int(progress_completed)),
+                    max(0, int(progress_total)),
                 ),
             )
             conn.commit()
@@ -305,6 +321,8 @@ class ScraperTaskStore:
         next_retry_at: str | None | object = _UNSET,
         last_error: str | None | object = _UNSET,
         started_at: str | None | object = _UNSET,
+        progress_completed: int | None = None,
+        progress_total: int | None = None,
     ) -> None:
         now = _utc_now()
         with self._lock, self._connect() as conn:
@@ -317,6 +335,10 @@ class ScraperTaskStore:
 
             resolved_retry_count = int(retry_count) if retry_count is not None else int(existing.retry_count)
             resolved_max_retries = int(max_retries) if max_retries is not None else int(existing.max_retries)
+            resolved_progress_completed = (
+                int(progress_completed) if progress_completed is not None else int(existing.progress_completed)
+            )
+            resolved_progress_total = int(progress_total) if progress_total is not None else int(existing.progress_total)
 
             if next_retry_at is _UNSET:
                 resolved_next_retry = existing.next_retry_at
@@ -349,7 +371,9 @@ class ScraperTaskStore:
                        max_retries = ?,
                        next_retry_at = ?,
                        last_error = ?,
-                       started_at = ?
+                       started_at = ?,
+                       progress_completed = ?,
+                       progress_total = ?
                  WHERE task_id = ?
                 """,
                 (
@@ -364,6 +388,8 @@ class ScraperTaskStore:
                     resolved_next_retry,
                     resolved_last_error,
                     resolved_started_at,
+                    max(0, resolved_progress_completed),
+                    max(0, resolved_progress_total),
                     task_id,
                 ),
             )
@@ -394,7 +420,8 @@ class ScraperTaskStore:
             SELECT
                 task_id,status,message,report_json,request_json,provider,
                 created_at,updated_at,finished_at,error_code,
-                retry_count,max_retries,next_retry_at,last_error,request_fingerprint,started_at
+                retry_count,max_retries,next_retry_at,last_error,request_fingerprint,started_at,
+                progress_completed,progress_total
               FROM scraper_tasks
              WHERE request_fingerprint = ?
                AND status IN ({placeholders})
@@ -652,7 +679,8 @@ class ScraperTaskStore:
             SELECT
                 task_id,status,message,report_json,request_json,provider,
                 created_at,updated_at,finished_at,error_code,
-                retry_count,max_retries,next_retry_at,last_error,request_fingerprint,started_at
+                retry_count,max_retries,next_retry_at,last_error,request_fingerprint,started_at,
+                progress_completed,progress_total
               FROM scraper_tasks
               {where}
              ORDER BY updated_at DESC

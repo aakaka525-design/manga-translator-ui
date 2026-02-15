@@ -7,6 +7,7 @@ from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
 
 from . import generic, mangaforfree, toongod
+from .base import ProviderContext
 from .mangaforfree import ChapterItem, MangaItem
 from .state import normalize_base_url
 
@@ -18,13 +19,10 @@ class ProviderUnavailableError(ValueError):
 BrowserUnavailableError = generic.BrowserUnavailableError
 
 
-SearchFn = Callable[[str, str, dict[str, str], str, bool, str | None], Awaitable[list[MangaItem]]]
-CatalogFn = Callable[
-    [str, int, str | None, str | None, dict[str, str], str, bool, str | None],
-    Awaitable[tuple[list[MangaItem], bool]],
-]
-ChaptersFn = Callable[[str, str, dict[str, str], str, bool, str | None], Awaitable[list[ChapterItem]]]
-ReaderImagesFn = Callable[[str, str, dict[str, str], str, bool, str | None], Awaitable[list[str]]]
+SearchFn = Callable[[ProviderContext, str], Awaitable[list[MangaItem]]]
+CatalogFn = Callable[[ProviderContext, int, str | None, str | None], Awaitable[tuple[list[MangaItem], bool]]]
+ChaptersFn = Callable[[ProviderContext, str], Awaitable[list[ChapterItem]]]
+ReaderImagesFn = Callable[[ProviderContext, str], Awaitable[list[str]]]
 
 
 @dataclass(frozen=True)
@@ -47,185 +45,149 @@ def _host_match(host: str, expected: str) -> bool:
     return host == expected or host.endswith(f".{expected}")
 
 
-async def _mff_search(
-    base_url: str,
-    keyword: str,
-    cookies: dict[str, str],
-    user_agent: str,
-    _http_mode: bool,
-    _force_engine: str | None,
-) -> list[MangaItem]:
-    return await mangaforfree.search_manga(base_url, keyword, cookies=cookies, user_agent=user_agent)
-
-
-async def _mff_catalog(
-    base_url: str,
-    page: int,
-    orderby: str | None,
-    path: str | None,
-    cookies: dict[str, str],
-    user_agent: str,
-    _http_mode: bool,
-    _force_engine: str | None,
-) -> tuple[list[MangaItem], bool]:
-    return await mangaforfree.list_catalog(
-        base_url,
-        page=page,
-        orderby=orderby,
-        path=path,
-        cookies=cookies,
-        user_agent=user_agent,
-    )
-
-
-async def _mff_chapters(
-    base_url: str,
-    manga_url: str,
-    cookies: dict[str, str],
-    user_agent: str,
-    _http_mode: bool,
-    _force_engine: str | None,
-) -> list[ChapterItem]:
-    return await mangaforfree.list_chapters(base_url, manga_url, cookies=cookies, user_agent=user_agent)
-
-
-async def _mff_reader_images(
-    base_url: str,
-    chapter_url: str,
-    cookies: dict[str, str],
-    user_agent: str,
-    _http_mode: bool,
-    _force_engine: str | None,
-) -> list[str]:
-    return await mangaforfree.fetch_reader_images(base_url, chapter_url, cookies=cookies, user_agent=user_agent)
-
-
-async def _toongod_search(
-    base_url: str,
-    keyword: str,
-    cookies: dict[str, str],
-    user_agent: str,
-    _http_mode: bool,
-    _force_engine: str | None,
-) -> list[MangaItem]:
-    return await toongod.search_manga(base_url, keyword, cookies=cookies, user_agent=user_agent)
-
-
-async def _toongod_catalog(
-    base_url: str,
-    page: int,
-    orderby: str | None,
-    path: str | None,
-    cookies: dict[str, str],
-    user_agent: str,
-    _http_mode: bool,
-    _force_engine: str | None,
-) -> tuple[list[MangaItem], bool]:
-    return await toongod.list_catalog(
-        base_url,
-        page=page,
-        orderby=orderby,
-        path=path,
-        cookies=cookies,
-        user_agent=user_agent,
-    )
-
-
-async def _toongod_chapters(
-    base_url: str,
-    manga_url: str,
-    cookies: dict[str, str],
-    user_agent: str,
-    _http_mode: bool,
-    _force_engine: str | None,
-) -> list[ChapterItem]:
-    return await toongod.list_chapters(base_url, manga_url, cookies=cookies, user_agent=user_agent)
-
-
-async def _toongod_reader_images(
-    base_url: str,
-    chapter_url: str,
-    cookies: dict[str, str],
-    user_agent: str,
-    _http_mode: bool,
-    _force_engine: str | None,
-) -> list[str]:
-    return await toongod.fetch_reader_images(base_url, chapter_url, cookies=cookies, user_agent=user_agent)
-
-
-async def _generic_search(
-    base_url: str,
-    keyword: str,
-    cookies: dict[str, str],
-    user_agent: str,
-    http_mode: bool,
-    force_engine: str | None,
-) -> list[MangaItem]:
-    return await generic.search_manga(
-        base_url,
+async def _mff_search(ctx: ProviderContext, keyword: str) -> list[MangaItem]:
+    return await mangaforfree.search_manga(
+        ctx.base_url,
         keyword,
-        cookies=cookies,
-        user_agent=user_agent,
-        http_mode=http_mode,
-        force_engine=force_engine,
+        cookies=ctx.cookies,
+        user_agent=ctx.user_agent,
+        rate_limit_rps=ctx.rate_limit_rps,
+        concurrency=ctx.concurrency,
     )
 
 
-async def _generic_catalog(
-    base_url: str,
-    page: int,
-    orderby: str | None,
-    path: str | None,
-    cookies: dict[str, str],
-    user_agent: str,
-    http_mode: bool,
-    force_engine: str | None,
-) -> tuple[list[MangaItem], bool]:
-    return await generic.list_catalog(
-        base_url,
+async def _mff_catalog(ctx: ProviderContext, page: int, orderby: str | None, path: str | None) -> tuple[list[MangaItem], bool]:
+    return await mangaforfree.list_catalog(
+        ctx.base_url,
         page=page,
         orderby=orderby,
         path=path,
-        cookies=cookies,
-        user_agent=user_agent,
-        http_mode=http_mode,
-        force_engine=force_engine,
+        cookies=ctx.cookies,
+        user_agent=ctx.user_agent,
+        rate_limit_rps=ctx.rate_limit_rps,
+        concurrency=ctx.concurrency,
     )
 
 
-async def _generic_chapters(
-    base_url: str,
-    manga_url: str,
-    cookies: dict[str, str],
-    user_agent: str,
-    http_mode: bool,
-    force_engine: str | None,
-) -> list[ChapterItem]:
-    return await generic.list_chapters(
-        base_url,
+async def _mff_chapters(ctx: ProviderContext, manga_url: str) -> list[ChapterItem]:
+    return await mangaforfree.list_chapters(
+        ctx.base_url,
         manga_url,
-        cookies=cookies,
-        user_agent=user_agent,
-        http_mode=http_mode,
-        force_engine=force_engine,
+        cookies=ctx.cookies,
+        user_agent=ctx.user_agent,
+        rate_limit_rps=ctx.rate_limit_rps,
+        concurrency=ctx.concurrency,
     )
 
 
-async def _generic_reader_images(
-    base_url: str,
-    chapter_url: str,
-    cookies: dict[str, str],
-    user_agent: str,
-    http_mode: bool,
-    force_engine: str | None,
-) -> list[str]:
-    return await generic.fetch_reader_images(
-        base_url,
+async def _mff_reader_images(ctx: ProviderContext, chapter_url: str) -> list[str]:
+    return await mangaforfree.fetch_reader_images(
+        ctx.base_url,
         chapter_url,
-        cookies=cookies,
-        user_agent=user_agent,
-        http_mode=http_mode,
-        force_engine=force_engine,
+        cookies=ctx.cookies,
+        user_agent=ctx.user_agent,
+        rate_limit_rps=ctx.rate_limit_rps,
+        concurrency=ctx.concurrency,
+    )
+
+
+async def _toongod_search(ctx: ProviderContext, keyword: str) -> list[MangaItem]:
+    return await toongod.search_manga(
+        ctx.base_url,
+        keyword,
+        cookies=ctx.cookies,
+        user_agent=ctx.user_agent,
+        rate_limit_rps=ctx.rate_limit_rps,
+        concurrency=ctx.concurrency,
+    )
+
+
+async def _toongod_catalog(ctx: ProviderContext, page: int, orderby: str | None, path: str | None) -> tuple[list[MangaItem], bool]:
+    return await toongod.list_catalog(
+        ctx.base_url,
+        page=page,
+        orderby=orderby,
+        path=path,
+        cookies=ctx.cookies,
+        user_agent=ctx.user_agent,
+        rate_limit_rps=ctx.rate_limit_rps,
+        concurrency=ctx.concurrency,
+    )
+
+
+async def _toongod_chapters(ctx: ProviderContext, manga_url: str) -> list[ChapterItem]:
+    return await toongod.list_chapters(
+        ctx.base_url,
+        manga_url,
+        cookies=ctx.cookies,
+        user_agent=ctx.user_agent,
+        rate_limit_rps=ctx.rate_limit_rps,
+        concurrency=ctx.concurrency,
+    )
+
+
+async def _toongod_reader_images(ctx: ProviderContext, chapter_url: str) -> list[str]:
+    return await toongod.fetch_reader_images(
+        ctx.base_url,
+        chapter_url,
+        cookies=ctx.cookies,
+        user_agent=ctx.user_agent,
+        rate_limit_rps=ctx.rate_limit_rps,
+        concurrency=ctx.concurrency,
+    )
+
+
+async def _generic_search(ctx: ProviderContext, keyword: str) -> list[MangaItem]:
+    return await generic.search_manga(
+        ctx.base_url,
+        keyword,
+        cookies=ctx.cookies,
+        user_agent=ctx.user_agent,
+        http_mode=ctx.http_mode,
+        force_engine=ctx.force_engine,
+        rate_limit_rps=ctx.rate_limit_rps,
+        concurrency=ctx.concurrency,
+    )
+
+
+async def _generic_catalog(ctx: ProviderContext, page: int, orderby: str | None, path: str | None) -> tuple[list[MangaItem], bool]:
+    return await generic.list_catalog(
+        ctx.base_url,
+        page=page,
+        orderby=orderby,
+        path=path,
+        cookies=ctx.cookies,
+        user_agent=ctx.user_agent,
+        http_mode=ctx.http_mode,
+        force_engine=ctx.force_engine,
+        rate_limit_rps=ctx.rate_limit_rps,
+        concurrency=ctx.concurrency,
+    )
+
+
+async def _generic_chapters(ctx: ProviderContext, manga_url: str) -> list[ChapterItem]:
+    return await generic.list_chapters(
+        ctx.base_url,
+        manga_url,
+        cookies=ctx.cookies,
+        user_agent=ctx.user_agent,
+        http_mode=ctx.http_mode,
+        force_engine=ctx.force_engine,
+        rate_limit_rps=ctx.rate_limit_rps,
+        concurrency=ctx.concurrency,
+    )
+
+
+async def _generic_reader_images(ctx: ProviderContext, chapter_url: str) -> list[str]:
+    return await generic.fetch_reader_images(
+        ctx.base_url,
+        chapter_url,
+        cookies=ctx.cookies,
+        user_agent=ctx.user_agent,
+        http_mode=ctx.http_mode,
+        force_engine=ctx.force_engine,
+        rate_limit_rps=ctx.rate_limit_rps,
+        concurrency=ctx.concurrency,
     )
 
 
@@ -322,7 +284,6 @@ def provider_allows_image_host(provider: ProviderAdapter, target_url: str, norma
             allowlist.add(base_host)
         return any(_host_match(host, domain) for domain in allowlist)
 
-    # generic
     if not base_host:
         return False
     return _host_match(host, base_host)

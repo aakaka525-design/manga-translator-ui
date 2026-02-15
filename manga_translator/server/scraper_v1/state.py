@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 from typing import Any, Optional
 from urllib.parse import urlparse
 
@@ -18,6 +19,65 @@ class CookieInfo:
     name: str
     value: str
     expires: Optional[float]
+
+
+class CookieStore:
+    """In-memory cookie cache shared across scraper requests."""
+
+    def __init__(self):
+        self._lock = Lock()
+        self._cookies: dict[str, dict[str, str]] = {}
+        self._expires_at: dict[str, float | None] = {}
+        self._state_mtime: dict[str, float] = {}
+
+    def get_cookies(self, domain: str) -> dict[str, str]:
+        key = _normalize_domain(domain)
+        if not key:
+            return {}
+        with self._lock:
+            expires = self._expires_at.get(key)
+            if expires is not None and expires > 0 and expires <= datetime.now(timezone.utc).timestamp():
+                self._cookies.pop(key, None)
+                self._expires_at.pop(key, None)
+                return {}
+            return dict(self._cookies.get(key, {}))
+
+    def update_cookies(self, domain: str, cookies: dict[str, str], expires_at: float | None) -> None:
+        key = _normalize_domain(domain)
+        if not key:
+            return
+        with self._lock:
+            self._cookies[key] = dict(cookies)
+            self._expires_at[key] = expires_at
+
+    def invalidate(self, domain: str) -> None:
+        key = _normalize_domain(domain)
+        if not key:
+            return
+        with self._lock:
+            self._cookies.pop(key, None)
+            self._expires_at.pop(key, None)
+
+    def should_reload_state(self, state_path: Path) -> bool:
+        path_key = str(state_path.resolve())
+        mtime = float(state_path.stat().st_mtime)
+        with self._lock:
+            previous = self._state_mtime.get(path_key)
+            if previous is None or previous != mtime:
+                self._state_mtime[path_key] = mtime
+                return True
+            return False
+
+
+_COOKIE_STORE = CookieStore()
+
+
+def get_cookie_store() -> CookieStore:
+    return _COOKIE_STORE
+
+
+def _normalize_domain(base_url: str) -> str:
+    return (urlparse(normalize_base_url(base_url)).hostname or "").lower()
 
 
 def normalize_base_url(base_url: str) -> str:
@@ -76,6 +136,42 @@ def cookies_to_header(cookies: list[CookieInfo]) -> str:
     if not cookies:
         return ""
     return "; ".join(f"{cookie.name}={cookie.value}" for cookie in cookies)
+
+
+def merge_cookies(
+    base_url: str,
+    storage_state_path: str | None,
+    request_cookies: dict[str, str] | None,
+) -> dict[str, str]:
+    merged: dict[str, str] = {}
+    host = _normalize_domain(base_url)
+    if host:
+        merged.update(_COOKIE_STORE.get_cookies(host))
+
+    state_path_value = (storage_state_path or "").strip()
+    if state_path_value:
+        state_path = Path(state_path_value)
+        if state_path.exists() and state_path.is_file():
+            try:
+                if _COOKIE_STORE.should_reload_state(state_path):
+                    payload = load_state_payload(state_path)
+                    cookie_infos = collect_cookies(payload, host or None)
+                    if not cookie_infos:
+                        cookie_infos = collect_cookies(payload, None)
+                    state_cookies = {cookie.name: cookie.value for cookie in cookie_infos}
+                    expires_values = [cookie.expires for cookie in cookie_infos if cookie.expires and cookie.expires > 0]
+                    expires_at = max(expires_values) if expires_values else None
+                    _COOKIE_STORE.update_cookies(host, state_cookies, expires_at)
+                merged.update(_COOKIE_STORE.get_cookies(host))
+            except Exception:
+                pass
+
+    if isinstance(request_cookies, dict):
+        for key, value in request_cookies.items():
+            if key:
+                merged[str(key)] = str(value)
+
+    return merged
 
 
 def get_state_info(base_url: str, storage_state_path: str | None) -> dict[str, Any]:
@@ -174,4 +270,10 @@ def save_state_payload(base_url: str, payload: bytes, root_dir: Path) -> Path:
     root_dir.mkdir(parents=True, exist_ok=True)
     out_path = default_state_path(base_url, root_dir)
     out_path.write_text(json.dumps(parsed, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    cookie_map = {cookie.name: cookie.value for cookie in cookies}
+    expires_values = [cookie.expires for cookie in cookies if cookie.expires and cookie.expires > 0]
+    expires_at = max(expires_values) if expires_values else None
+    _COOKIE_STORE.update_cookies(host, cookie_map, expires_at)
+
     return out_path

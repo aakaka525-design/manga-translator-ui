@@ -11,14 +11,20 @@ from .mangaforfree import (
 )
 from .state import (
     CookieInfo,
+    CookieStore,
     collect_cookies,
     cookies_to_header,
     default_state_path,
+    get_cookie_store,
     get_state_info,
     load_state_payload,
+    merge_cookies,
     normalize_base_url,
     save_state_payload,
 )
+from .base import ProviderContext
+from .http_client import ScraperHttpClient, DownloadResult, BinaryResponse, get_http_client
+from .cf_solver import CloudflareSolver, SolveResult
 from .providers import (
     BrowserUnavailableError,
     ProviderAdapter,
@@ -46,13 +52,23 @@ __all__ = [
     "list_chapters",
     "search_manga",
     "CookieInfo",
+    "CookieStore",
     "collect_cookies",
     "cookies_to_header",
     "default_state_path",
+    "get_cookie_store",
     "get_state_info",
     "load_state_payload",
+    "merge_cookies",
     "normalize_base_url",
     "save_state_payload",
+    "ProviderContext",
+    "ScraperHttpClient",
+    "DownloadResult",
+    "BinaryResponse",
+    "get_http_client",
+    "CloudflareSolver",
+    "SolveResult",
     "BrowserUnavailableError",
     "ProviderAdapter",
     "ProviderUnavailableError",
