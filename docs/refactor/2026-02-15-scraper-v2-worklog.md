@@ -88,4 +88,4 @@
 - 接口影响: 无；文档示例、执行路径与测试证据收敛
 - 验证命令: `rg -n 'allow_error_body|_fetch_with_cf_solve|X-Session-Token|FlareSolverr|TASK-SV2-FS' docs/refactoring/flaresolverr-integration-plan.md docs/refactoring/scraper-v2-refactor-plan.md docs/refactor/2026-02-15-scraper-v2-worklog.md docs/refactor/INDEX.md docs/INDEX.md`
 - 验证结果: pass
-- 提交哈希: 待回填
+- 提交哈希: 0e5c6c6
