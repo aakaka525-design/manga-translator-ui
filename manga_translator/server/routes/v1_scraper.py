@@ -629,6 +629,14 @@ async def _fetch_with_cf_solve(
         # When FlareSolverr returns a solved UA we must use it for the retry
         # so that Cloudflare accepts the cf_clearance cookie.
         retry_ua = solved.user_agent or context.user_agent
+        # Bridge cookies into http_client's internal CF cache so that
+        # subsequent fetch_binary calls (image proxy) can reuse them
+        # without triggering a separate FlareSolverr solve per image.
+        if solved.cookies:
+            from ..scraper_v1.http_client import get_http_client
+            get_http_client().inject_cf_cookies(
+                solve_target, solved.cookies, solved.user_agent,
+            )
         retry_ctx = replace(context, cookies=merged_cookies, user_agent=retry_ua)
         return await provider_fn(retry_ctx, *args)
 

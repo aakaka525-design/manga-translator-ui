@@ -63,6 +63,38 @@ class ScraperHttpClient:
         self._cf_user_agent: dict[str, tuple[str, float]] = {}           # domain -> (ua, timestamp)
         self._CF_COOKIE_TTL: float = 1800.0  # 30 minutes
 
+    def inject_cf_cookies(
+        self,
+        url: str,
+        cookies: dict[str, str],
+        user_agent: str | None = None,
+    ) -> None:
+        """Inject externally-obtained CF cookies into the internal cache.
+
+        This bridges the gap between cf_solver (which stores cookies in
+        CookieStore) and fetch_binary (which reads _cf_cookies).  After
+        a successful FlareSolverr solve for an HTML page, the caller
+        should inject the resulting cookies here so that subsequent
+        binary requests (images) on the same domain can reuse them
+        without triggering another FlareSolverr call.
+        """
+        if not cookies:
+            return
+        domain = self._domain_key(url)
+        now = time.monotonic()
+        existing = self._cf_cookies.get(domain)
+        if existing:
+            merged = {**existing[0], **cookies}
+        else:
+            merged = dict(cookies)
+        self._cf_cookies[domain] = (merged, now)
+        if user_agent:
+            self._cf_user_agent[domain] = (user_agent, now)
+        logger.info(
+            "[http_client] injected %d CF cookies for %s (ua=%s)",
+            len(cookies), domain, bool(user_agent),
+        )
+
     def set_engine(self, engine: str | None) -> None:
         candidate = (engine or "").strip().lower()
         if candidate in {"aiohttp", "curl_cffi"}:
