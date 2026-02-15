@@ -2,7 +2,7 @@
 Locales API Routes
 
 提供国际化语言文件的API端点。
-从 desktop_qt_ui/locales/ 目录读取语言文件。
+从 manga_translator/server/locales/ 目录读取语言文件。
 
 需求: 38.1, 38.6, 38.9
 """
@@ -16,8 +16,7 @@ from fastapi.responses import JSONResponse
 router = APIRouter(prefix='/api/locales', tags=['locales'])
 
 # 获取locales目录路径
-# 从server目录向上两级到项目根目录，然后进入desktop_qt_ui/locales
-LOCALES_DIR = Path(__file__).parent.parent.parent.parent / 'desktop_qt_ui' / 'locales'
+LOCALES_DIR = Path(__file__).resolve().parent.parent / 'locales'
 
 # 支持的语言列表
 SUPPORTED_LANGUAGES = ['zh_CN', 'zh_TW', 'en_US', 'ja_JP', 'ko_KR', 'es_ES']

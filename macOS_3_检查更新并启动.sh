@@ -70,4 +70,4 @@ echo ""
 echo "========================================"
 echo -e "${GREEN}[*] 启动应用程序...${NC}"
 echo ""
-python desktop_qt_ui/main.py
+python -m manga_translator web

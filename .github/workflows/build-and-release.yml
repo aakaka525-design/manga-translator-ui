@@ -205,9 +205,8 @@ jobs:
         cp -r models_cpu dist/manga-translator-cpu/_internal/models
         cp -r dict dist/manga-translator-cpu/_internal/
         cp -r doc dist/manga-translator-cpu/_internal/
-        mkdir -p dist/manga-translator-cpu/_internal/desktop_qt_ui
-        cp -r desktop_qt_ui/styles dist/manga-translator-cpu/_internal/desktop_qt_ui/styles
-        cp -r desktop_qt_ui/locales dist/manga-translator-cpu/_internal/desktop_qt_ui/locales
+        mkdir -p dist/manga-translator-cpu/_internal/manga_translator/server
+        cp -r manga_translator/server/locales dist/manga-translator-cpu/_internal/manga_translator/server/locales
         cp packaging/VERSION dist/manga-translator-cpu/_internal/
         
         cp -r examples dist/manga-translator-gpu/_internal/
@@ -215,9 +214,8 @@ jobs:
         cp -r models_gpu dist/manga-translator-gpu/_internal/models
         cp -r dict dist/manga-translator-gpu/_internal/
         cp -r doc dist/manga-translator-gpu/_internal/
-        mkdir -p dist/manga-translator-gpu/_internal/desktop_qt_ui
-        cp -r desktop_qt_ui/styles dist/manga-translator-gpu/_internal/desktop_qt_ui/styles
-        cp -r desktop_qt_ui/locales dist/manga-translator-gpu/_internal/desktop_qt_ui/locales
+        mkdir -p dist/manga-translator-gpu/_internal/manga_translator/server
+        cp -r manga_translator/server/locales dist/manga-translator-gpu/_internal/manga_translator/server/locales
         cp packaging/VERSION dist/manga-translator-gpu/_internal/
 
     - name: Create Release Archives using 7-Zip with Splitting

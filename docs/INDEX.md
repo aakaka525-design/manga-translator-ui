@@ -23,6 +23,7 @@
 - Split Pipeline 基线：[`docs/gpu-translation-split-plan.md`](gpu-translation-split-plan.md)
 - Split Pipeline 实施：[`docs/plans/2026-02-14-gpu-translation-split-implementation.md`](plans/2026-02-14-gpu-translation-split-implementation.md)
 - Split Pipeline 收口日志：[`docs/refactor/2026-02-14-split-pipeline-worklog.md`](refactor/2026-02-14-split-pipeline-worklog.md)
+- Qt 分离计划：[`docs/refactoring/qt-separation-plan.md`](refactoring/qt-separation-plan.md)
 
 ## 契约与决策
 

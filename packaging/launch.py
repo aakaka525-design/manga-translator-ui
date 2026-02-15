@@ -1501,7 +1501,6 @@ def update_code_force(skip_confirm=False):
             # Windows 环境清理 macOS 文件
             files_to_remove = [
                 'macOS_1_首次安装.sh',
-                'macOS_2_启动Qt界面.sh',
                 'macOS_3_检查更新并启动.sh',
                 'macOS_4_更新维护.sh',
                 '.gitattributes',
@@ -1513,7 +1512,6 @@ def update_code_force(skip_confirm=False):
             # macOS 环境清理 Windows 文件
             files_to_remove = [
                 '步骤1-首次安装.bat',
-                '步骤2-启动Qt界面.bat',
                 '步骤3-检查更新并启动.bat',
                 '步骤4-更新维护.bat',
                 '.gitattributes',
@@ -2124,19 +2122,14 @@ def maintenance_menu():
 
 def launch_ui(args):
     """启动UI界面"""
-    if args.ui == 'qt':
-        # 新版 Qt UI (推荐)
-        from desktop_qt_ui.main import main as qt_main
-        qt_main()
-    elif args.ui == 'customtkinter':
-        # 旧版 CustomTkinter UI
-        import importlib
-        desktop_ui = importlib.import_module('desktop-ui.main')
-        desktop_ui.main_ui()
-    else:
-        # 默认使用新版 Qt UI
-        from desktop_qt_ui.main import main as qt_main
-        qt_main()
+    # Qt UI 已退役，统一启动 Web 服务
+    import manga_translator.__main__ as cli_main
+    original_argv = sys.argv[:]
+    try:
+        sys.argv = [sys.argv[0], "web"]
+        cli_main.main()
+    finally:
+        sys.argv = original_argv
 
 
 def launch_cli(args):
@@ -2160,7 +2153,7 @@ def main():
     parser.add_argument("--reinstall-torch", action='store_true', help="重新安装PyTorch")
     parser.add_argument("--update-deps", action='store_true', help="更新依赖到最新版本(步骤4使用)")
     parser.add_argument("--requirements", default='auto', help="依赖文件路径 (auto=自动选择, 或指定 requirements_gpu.txt/requirements_cpu.txt)")
-    parser.add_argument("--ui", choices=['qt', 'tk'], default='tk', help="选择UI框架: qt(PyQt6) 或 tk(CustomTkinter)")
+    parser.add_argument("--ui", choices=['web'], default='web', help="仅支持 web 前端启动路径")
     parser.add_argument("--cli", action='store_true', help="使用命令行模式")
     parser.add_argument("--verbose", action='store_true', help="显示详细日志")
     parser.add_argument("--maintenance", action='store_true', help="启动更新维护菜单")
@@ -2229,5 +2222,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-

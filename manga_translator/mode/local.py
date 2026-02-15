@@ -14,7 +14,6 @@ from pathlib import Path
 # 添加项目根目录到 Python 路径
 ROOT_DIR = Path(__file__).parent.parent.parent  # 上两级目录
 sys.path.insert(0, str(ROOT_DIR))
-sys.path.insert(0, str(ROOT_DIR / 'desktop_qt_ui'))
 
 # 内存管理默认值
 DEFAULT_MEMORY_THRESHOLD_MB = 8000  # 默认8GB
@@ -85,7 +84,7 @@ async def translate_files(input_paths, output_dir, config_service, verbose=False
     """翻译文件（使用 UI 层的逻辑）"""
     
     # 延迟导入，避免 --help 时加载所有模块
-    from desktop_qt_ui.services.file_service import FileService
+    from manga_translator.utils.local_runtime_services import FileService
     from manga_translator import MangaTranslator, Config
     from manga_translator.utils import init_logging, set_log_level, get_logger
     from PIL import Image
@@ -651,8 +650,7 @@ async def translate_files(input_paths, output_dir, config_service, verbose=False
 async def run_local_mode(args):
     """运行 local 模式的入口函数"""
     # 延迟导入配置服务
-    from desktop_qt_ui.services.config_service import ConfigService
-    from desktop_qt_ui.services.file_service import FileService
+    from manga_translator.utils.local_runtime_services import ConfigService, FileService
     
     # 初始化配置服务
     config_service = ConfigService(str(ROOT_DIR))

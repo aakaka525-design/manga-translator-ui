@@ -71,7 +71,6 @@ def worker_translate_batch(
     async def _do_translate():
         # 添加路径
         sys.path.insert(0, str(ROOT_DIR))
-        sys.path.insert(0, str(ROOT_DIR / 'desktop_qt_ui'))
         
         from manga_translator import MangaTranslator, Config
         from manga_translator.utils import init_logging, set_log_level, get_logger

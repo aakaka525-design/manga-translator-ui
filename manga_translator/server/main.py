@@ -45,6 +45,7 @@ from manga_translator.server.routes import (
     init_quota_routes,
     config_management_router,
     logs_router,
+    locales_router,
     v1_manga_router,
     v1_translate_router,
     internal_translate_router,
@@ -379,8 +380,8 @@ async def frontend_workbox_js(workbox_hash: str):
     raise HTTPException(status_code=404)
 
 
-# Mount Qt UI locales for i18n (共享翻译文件)
-locales_dir = os.path.join(os.path.dirname(__file__), "../../desktop_qt_ui/locales")
+# Mount server locales for i18n
+locales_dir = os.path.join(os.path.dirname(__file__), "locales")
 if os.path.exists(locales_dir):
     app.mount("/locales", StaticFiles(directory=locales_dir), name="locales")
 
@@ -404,6 +405,7 @@ app.include_router(history_router)
 app.include_router(quota_router)
 app.include_router(config_management_router)
 app.include_router(logs_router)
+app.include_router(locales_router)
 app.include_router(v1_manga_router)
 app.include_router(v1_translate_router)
 app.include_router(internal_translate_router)

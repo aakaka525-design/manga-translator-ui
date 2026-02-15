@@ -27,6 +27,12 @@ from manga_translator.server.routes.translation_auth import (
     track_task_start,
     track_task_end
 )
+from manga_translator.utils.text_export import (
+    ensure_default_template_exists,
+    generate_original_text,
+    generate_translated_text,
+    safe_update_large_json_from_text,
+)
 
 router = APIRouter(prefix="/translate", tags=["translation"])
 
@@ -699,23 +705,12 @@ async def export_original(req: Request, image: UploadFile = File(...), config: s
         with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as tmp_txt:
             tmp_txt_path = tmp_txt.name
         
-        # Import module directly, avoid triggering other imports in __init__.py
-        import importlib.util
-        workflow_service_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', 
-                                            'desktop_qt_ui', 'services', 'workflow_service.py')
-        workflow_service_path = os.path.abspath(workflow_service_path)
-        
-        spec = importlib.util.spec_from_file_location("workflow_service", workflow_service_path)
-        workflow_service = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(workflow_service)
-        
         # Get default template
-        template_path = workflow_service.ensure_default_template_exists()
+        template_path = ensure_default_template_exists()
         if not template_path:
             raise HTTPException(500, detail="无法创建或找到默认模板文件")
         
-        ui_generate_original_text = workflow_service.generate_original_text
-        txt_path = ui_generate_original_text(tmp_json_path, template_path=template_path, output_path=tmp_txt_path)
+        txt_path = generate_original_text(tmp_json_path, template_path=template_path, output_path=tmp_txt_path)
         
         if txt_path.startswith("Error"):
             raise HTTPException(500, detail=txt_path)
@@ -789,23 +784,12 @@ async def export_translated(req: Request, image: UploadFile = File(...), config:
         with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as tmp_txt:
             tmp_txt_path = tmp_txt.name
         
-        # Import module directly, avoid triggering other imports in __init__.py
-        import importlib.util
-        workflow_service_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', 
-                                            'desktop_qt_ui', 'services', 'workflow_service.py')
-        workflow_service_path = os.path.abspath(workflow_service_path)
-        
-        spec = importlib.util.spec_from_file_location("workflow_service", workflow_service_path)
-        workflow_service = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(workflow_service)
-        
         # Get default template
-        template_path = workflow_service.ensure_default_template_exists()
+        template_path = ensure_default_template_exists()
         if not template_path:
             raise HTTPException(500, detail="无法创建或找到默认模板文件")
         
-        ui_generate_translated_text = workflow_service.generate_translated_text
-        txt_path = ui_generate_translated_text(tmp_json_path, template_path=template_path, output_path=tmp_txt_path)
+        txt_path = generate_translated_text(tmp_json_path, template_path=template_path, output_path=tmp_txt_path)
         
         if txt_path.startswith("Error"):
             raise HTTPException(500, detail=txt_path)
@@ -1086,20 +1070,8 @@ async def import_txt_and_render(req: Request, image: UploadFile = File(...), txt
                                json_file: UploadFile = File(...), config: str = Form("{}"), 
                                template: UploadFile = File(None), user_env_vars: str = Form("{}")):
     """Import TXT + JSON + image, return rendered image (using UI layer import logic)"""
-    import importlib.util
     from manga_translator.utils.path_manager import get_work_dir
     from PIL import Image as PILImage
-    
-    # Import workflow_service module directly, avoid triggering __init__.py
-    workflow_service_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', 
-                                        'desktop_qt_ui', 'services', 'workflow_service.py')
-    workflow_service_path = os.path.abspath(workflow_service_path)
-    spec = importlib.util.spec_from_file_location("workflow_service", workflow_service_path)
-    workflow_service = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(workflow_service)
-    
-    safe_update_large_json_from_text = workflow_service.safe_update_large_json_from_text
-    ensure_default_template_exists = workflow_service.ensure_default_template_exists
     
     img_bytes = await image.read()
     txt_content = await txt_file.read()
@@ -1262,20 +1234,8 @@ async def import_txt_and_render_stream(req: Request, image: UploadFile = File(..
                                       json_file: UploadFile = File(...), config: str = Form("{}"), 
                                       template: UploadFile = File(None), user_env_vars: str = Form("{}")):
     """Import TXT + JSON + image, return rendered image (streaming, with progress, using UI layer import logic)"""
-    import importlib.util
     from manga_translator.utils.path_manager import get_work_dir
     from PIL import Image
-    
-    # Import workflow_service module directly, avoid triggering __init__.py
-    workflow_service_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', 
-                                        'desktop_qt_ui', 'services', 'workflow_service.py')
-    workflow_service_path = os.path.abspath(workflow_service_path)
-    spec = importlib.util.spec_from_file_location("workflow_service", workflow_service_path)
-    workflow_service = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(workflow_service)
-    
-    safe_update_large_json_from_text = workflow_service.safe_update_large_json_from_text
-    ensure_default_template_exists = workflow_service.ensure_default_template_exists
     
     img = await image.read()
     txt_content = await txt_file.read()
