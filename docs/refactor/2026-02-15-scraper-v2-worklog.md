@@ -18,7 +18,7 @@
 - 接口影响: 对外 `/api/v1/scraper/*` 与 `/admin/scraper/*` 契约保持兼容；内部 provider/http/task 实现重构并保留旧签名回退
 - 验证命令: `pytest -q tests/test_v1_scraper_phase2.py tests/test_v1_scraper_phase3.py tests/test_v1_scraper_phase4.py`
 - 验证结果: pass（38 passed）
-- 提交哈希: TO_BE_FILLED_COMMIT_1
+- 提交哈希: 7726901
 
 ## TASK-SV2-CLOSE-002
 
@@ -28,7 +28,7 @@
 - 接口影响: 无运行时接口变更；补齐 Scraper v2 文档闭环与索引导航
 - 验证命令: `ls docs/plans/2026-02-15-scraper-v2-implementation.md docs/refactor/2026-02-15-scraper-v2-worklog.md docs/api/2026-02-15-v1-scraper-v2-contract.md`
 - 验证结果: pass
-- 提交哈希: TO_BE_FILLED_COMMIT_2
+- 提交哈希: 5e999eb
 
 ## TASK-SV2-CLOSE-003
 
@@ -53,7 +53,7 @@
 ## TASK-SV2-CLOSE-005
 
 - TASK-ID: TASK-SV2-CLOSE-005
-- 状态: pending
+- 状态: in_progress
 - 改动文件: `remote:personal`, `remote:origin`
 - 接口影响: 无；仅远端同步
 - 验证命令: `git push personal codex/scraper-v2-refactor-20260215 && git push origin codex/scraper-v2-refactor-20260215`
