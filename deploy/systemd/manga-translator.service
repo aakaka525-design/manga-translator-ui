@@ -8,8 +8,12 @@ User=deploy
 Group=deploy
 WorkingDirectory=/opt/manga-translator
 Environment=PYTHONUNBUFFERED=1
+# -- 翻译后端: local(82本地GPU/CPU) 或 cloudrun(远端计算) --
 Environment=MANGA_TRANSLATE_EXECUTION_BACKEND=local
+# -- 以下三项仅 backend=cloudrun 时必填，否则翻译会失败 --
+# MANGA_CLOUDRUN_EXEC_URL=https://<cloud-run-service-url>
 Environment=MANGA_CLOUDRUN_EXEC_URL=
+# MANGA_INTERNAL_API_TOKEN=<与 Cloud Run 端一致的内部令牌>
 Environment=MANGA_INTERNAL_API_TOKEN=
 Environment=MANGA_TRANSLATE_EXECUTOR_MAX_RETRIES=2
 Environment=MANGA_CLOUDRUN_TIMEOUT_SEC=120

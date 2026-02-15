@@ -1,9 +1,12 @@
 # 82 + Cloud Run 混合部署指南
 
+> ⚠️ **当前生产环境以 [`deployment-registry.md`](2026-02-14-deployment-registry.md) 为准。**
+> 本文为架构参考和历史记录。
+
 ## 目标
 
 - 前端与状态后端部署在 `82.22.36.81`
-- Cloud Run 仅承载翻译计算接口：`POST /internal/translate/page`
+- Cloud Run 仅承载翻译计算接口：`POST /internal/translate/page`、`/detect`、`/render`
 - 对外接口继续走 `82` 同源入口，不改变 `/api/v1/*` 使用方式
 
 ## 架构
@@ -31,11 +34,11 @@ Cloud Run 计算服务（compute-only，不加载 scraper）：
 
 Cloud Run 推荐资源（已实测）：
 
-- `memory=8Gi`（`2Gi` 与 `4Gi` 在真实漫画页都出现 OOM）
+- `memory=16Gi`（GPU L4 强制最低 16Gi；早期 `2Gi/4Gi/8Gi` 均出现 OOM）
 - `cpu=4`
 - `concurrency=1`
-- `timeout=900s`（单页重型推理+远端模型调用需要更长超时窗口）
-- `maxScale=2`（按配额与峰值再调）
+- `timeout=900s`（单页重型推理+远端模型调用，线上可缩短到 600s）
+- `maxScale=1`（按配额与峰值再调）
 - 镜像打包必须包含：
   - `dict/**`（HQ prompt 与系统提示词）
   - `fonts/**`（渲染字体）
@@ -89,8 +92,9 @@ Cloud Run 推荐资源（已实测）：
   - 新建最小权限部署用户（例如 `deploy`），服务用该用户运行。
   - 开启主机防火墙，仅放行 `22/80/443` 必需端口。
 - Cloud Run：
-  - 保持 `--no-allow-unauthenticated`，只允许受信服务账号调用。
-  - `MANGA_INTERNAL_API_TOKEN` 不写死在镜像，放 Secret Manager 注入。
+  - 部署脚本已设置 `--no-allow-unauthenticated`（线上历史部署仍为 `allow`，下次部署后生效）。
+  - `GEMINI_API_KEY` 已迁移到 Secret Manager (`--set-secrets`)，不再通过明文 env var 注入。
+  - `MANGA_INTERNAL_API_TOKEN` 通过 `--set-env-vars` 注入，建议后续也迁移到 Secret Manager。
   - 82 到 Cloud Run 的调用携带 `X-Internal-Token`；token 轮换按月执行。
 - 运维审计：
   - 记录管理员操作日志与部署变更日志。
@@ -103,15 +107,16 @@ Cloud Run 推荐资源（已实测）：
 3. 灰度切换 `MANGA_TRANSLATE_EXECUTION_BACKEND=cloudrun`。
 4. 观察 24h 指标与失败率，再决定是否扩容或常驻实例。
 
-## 2026-02-11 实操记录（最新）
+## 2026-02-11 实操记录（历史 — 已由 `deployment-registry.md` 替代）
+
+> ⚠️ 以下记录保留为历史参考。**当前生产环境以 [`deployment-registry.md`](2026-02-14-deployment-registry.md) 为准。**
 
 - Cloud Run 区域：`europe-west1`
 - 计算服务：`manga-translator-compute`
-- 当前稳定 revision：`manga-translator-compute-00011-wqp`
-- 服务 URL：`https://manga-translator-compute-177058129447.europe-west1.run.app`
-- 82 systemd 已固定：
-  - `MANGA_TRANSLATE_EXECUTION_BACKEND=cloudrun`
-  - `MANGA_CLOUDRUN_EXEC_URL=https://manga-translator-compute-177058129447.europe-west1.run.app`
+- 当时稳定 revision：`manga-translator-compute-00011-wqp` ← 已替代
+- 当时服务 URL：`https://manga-translator-compute-177058129447.europe-west1.run.app` ← 已替代
+- 当时82 systemd：
+  - `MANGA_TRANSLATE_EXECUTION_BACKEND=cloudrun` ← 当前为 `local`（止血）
 - 实测结果（82 -> Cloud Run `POST /internal/translate/page`）：
   - `2Gi` 内存时：返回 `500`，Cloud Run 日志报 `Memory limit exceeded`
   - `4Gi` 内存时：真实漫画页仍可能 OOM（日志峰值约 `4384MiB`）

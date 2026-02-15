@@ -15,6 +15,7 @@
 - 已落地：`/render` 错误状态机 `401 -> 503 -> 404 -> 410 -> 422 -> 400`。
 - 已落地：前端降级提示（`pipeline_mode=fallback_to_unified`）Toast 告警。
 - 已完成：本地小样本灰度证据（1 图 split/unified 一致；10 页章节 `success_count=10`、`failed_count=0`、文件数=10）。
+- 架构边界（2026-02-15 决议）：当前规模不引入 `Redis/Celery`。先保持 `82 API 网关 + GPU Worker(split/unified)` 模式，避免过度工程化；仅在出现持续排队/SLA 不达标时再立项队列化。
 
 ---
 
@@ -285,7 +286,7 @@ from threading import Lock
 class CtxCache:
     """GPU Worker 内的 ctx 缓存, 线程安全, 仅限单进程部署"""
     
-    def __init__(self, max_size: int = 10, default_ttl: int = 300):
+    def __init__(self, max_size: int = 32, default_ttl: int = 300):
         self._store: Dict[str, Tuple[float, str, 'Context']] = {}  # task_id -> (expire_at, image_hash, ctx)
         self._lock = Lock()
         self._max_size = max_size
@@ -339,7 +340,7 @@ class CtxCache:
         for k in expired:
             del self._store[k]
 
-_ctx_cache = CtxCache(max_size=10, default_ttl=300)
+_ctx_cache = CtxCache(max_size=24, default_ttl=300)  # 可通过 MANGA_SPLIT_CTX_CACHE_MAX_SIZE 环境变量覆盖
 ```
 
 ### 4.2 Cache Miss 降级协议
@@ -540,6 +541,27 @@ assert success_count + failed_count == total_count   # 完整性: 每页必须�
 | 可观测性头透传 | 同上 | 0.5h |
 
 ### 阶段 C: 验证 (P0, ~4h)
+
+---
+
+## 10. 架构边界与触发条件（2026-02-15）
+
+### 当前明确不做
+
+- ❌ 不引入 `Redis`/`Celery`/`RQ` 等独立消息队列中间件。
+- ❌ 不拆分为“独立队列服务 + 多 worker 消费”形态。
+
+### 原因
+
+- 当前已上线 split 管线，且在小样本与联调场景中可满足稳定性目标。
+- 现阶段主要收益来自执行链路收敛与容量控制，不在于再引入队列基础设施。
+- 引入队列会增加运维面、故障面和一致性复杂度（任务状态、幂等、重试、死信）。
+
+### 未来触发条件（满足任一再评估）
+
+- 连续 3 个发布周期出现“排队导致 SLA 违约”且无法通过现有并发/容量参数修复。
+- 章节翻译峰值导致长期 backlog，`success_count == total_count` 无法稳定达标。
+- 单实例策略不再满足吞吐目标，需要多 worker 横向扩展。
 
 | 任务 | 说明 | 工时 |
 |------|------|------|

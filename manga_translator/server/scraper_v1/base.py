@@ -50,9 +50,35 @@ def canonical_series_url(base_url: str, maybe_url: str, *, allowed_sections: tup
 
 
 def looks_like_challenge(html: str) -> bool:
+    """Detect Cloudflare challenge / interstitial pages.
+
+    Real pages often contain "cloudflare" in CDN URLs
+    (e.g. cdnjs.cloudflare.com) so we deliberately exclude that
+    generic substring and use more specific indicators instead.
+    Pages > 50 KB are very unlikely to be challenges, so we
+    raise the threshold to 2 hits to further reduce false positives.
+    """
     sample = (html or "").lower()
-    indicators = ("cloudflare", "cf-challenge", "attention required", "just a moment")
-    return any(mark in sample for mark in indicators)
+
+    # More specific CF challenge indicators that do NOT appear in
+    # normal pages (unlike the generic "cloudflare" substring).
+    cf_indicators = (
+        "just a moment",
+        "cf-challenge-running",
+        "cf_challenge",
+        "attention required",
+        "cf-please-wait",
+        "challenge-form",
+        "jschl_vc",
+        "jschl-answer",
+    )
+
+    hits = sum(1 for mark in cf_indicators if mark in sample)
+
+    # Large pages (>50 KB) are very unlikely to be challenge pages;
+    # require at least 2 indicator hits before flagging them.
+    threshold = 2 if len(html or "") > 50_000 else 1
+    return hits >= threshold
 
 
 def parse_catalog_has_more(html: str) -> bool:

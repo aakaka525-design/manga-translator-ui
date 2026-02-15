@@ -4,6 +4,11 @@
 .gcloudignore
 .git
 
+# CRITICAL: .env contains secrets — must NOT be uploaded to Cloud Build
+# python-dotenv (load_dotenv(override=True)) would override Cloud Run env vars / Secret Manager
+.env
+.env.*
+
 #!include:.gitignore
 
 # Keep source upload small for Cloud Build.

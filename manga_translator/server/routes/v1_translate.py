@@ -1404,6 +1404,10 @@ async def _translate_single_image(
 
             ctx = await _await_translate_context(context_awaitable, TRANSLATE_CONTEXT_TIMEOUT_SEC)
             stage_elapsed_ms["context"] = (time.perf_counter() - context_started_at) * 1000.0
+            # Merge HQ sub-stage timings if available (preprocess/translate/hq_render)
+            hq_sub = getattr(ctx, "_hq_stage_elapsed_ms", None)
+            if isinstance(hq_sub, dict):
+                stage_elapsed_ms.update(hq_sub)
             if not getattr(ctx, "result", None):
                 raise RuntimeError("Translation produced no output image")
 

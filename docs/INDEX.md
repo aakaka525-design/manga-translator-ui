@@ -37,6 +37,7 @@
 - Split 内部契约：[`docs/api/2026-02-14-internal-split-pipeline-contract.md`](api/2026-02-14-internal-split-pipeline-contract.md)
 - Scraper v2 契约：[`docs/api/2026-02-15-v1-scraper-v2-contract.md`](api/2026-02-15-v1-scraper-v2-contract.md)
 - Phase4 决策：[`docs/decisions/2026-02-10-phase4-go-no-go.md`](decisions/2026-02-10-phase4-go-no-go.md)
+- 架构决策：[`docs/decisions/2026-02-15-architecture-decisions.md`](decisions/2026-02-15-architecture-decisions.md)
 
 ## 部署与性能
 

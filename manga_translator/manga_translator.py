@@ -4556,6 +4556,7 @@ class MangaTranslator:
             await self._report_progress(f"batch:{global_batch_start}:{global_batch_end}:{display_total}")
 
             # 阶段一：预处理当前批次
+            _hq_preprocess_t0 = time.perf_counter()
             preprocessed_contexts = []
             for i, (image, config) in enumerate(current_batch_images):
                 # 检查是否被取消
@@ -4580,7 +4581,10 @@ class MangaTranslator:
                         ctx.image_name = image.name
                     preprocessed_contexts.append((ctx, config))
 
+            _hq_preprocess_ms = (time.perf_counter() - _hq_preprocess_t0) * 1000.0
+
             # 阶段二：翻译当前批次
+            _hq_translate_t0 = time.perf_counter()
             batch_data = []
             global_text_index = 1  # 全局文本编号从1开始（与提示词中的编号一致）
             for ctx, config in preprocessed_contexts:
@@ -4726,7 +4730,10 @@ class MangaTranslator:
                 
                 continue # BUG FIX: Continue to the next batch instead of returning
 
+            _hq_translate_ms = (time.perf_counter() - _hq_translate_t0) * 1000.0
+
             # 阶段三：渲染并保存当前批次
+            _hq_render_t0 = time.perf_counter()
             for ctx, config in preprocessed_contexts:
                 # 检查是否被取消
                 await asyncio.sleep(0)
@@ -4764,10 +4771,21 @@ class MangaTranslator:
                     self._cleanup_context_memory(ctx, keep_result=True)
 
                     results.append(ctx)
+
                 except Exception as e:
                     logger.error(f"Error rendering image: {e}")
                     # 渲染失败时抛出异常，而不是继续处理
                     raise RuntimeError(f"Rendering failed for {os.path.basename(ctx.image_name) if hasattr(ctx, 'image_name') else 'Unknown'}: {e}") from e
+
+            _hq_render_ms = (time.perf_counter() - _hq_render_t0) * 1000.0
+
+            # 将子阶段耗时附加到最后一个 Context 上（供响应头输出）
+            if results:
+                results[-1]._hq_stage_elapsed_ms = {
+                    "preprocess": round(_hq_preprocess_ms, 1),
+                    "translate": round(_hq_translate_ms, 1),
+                    "hq_render": round(_hq_render_ms, 1),
+                }
             
             # ✅ 批次完成后立即清理内存（但保留翻译历史供下一批次使用）
 #             import gc

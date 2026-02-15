@@ -32,3 +32,28 @@ gcloud run deploy "${SERVICE_NAME}" \
   --set-secrets "GEMINI_API_KEY=${GEMINI_API_KEY_SECRET}:${GEMINI_API_KEY_SECRET_VERSION}"
 
 echo "Cloud Run compute service deployed: ${SERVICE_NAME}"
+
+# --- 部署后冒烟测试 ---
+SERVICE_URL=$(gcloud run services describe "${SERVICE_NAME}" \
+  --project "${PROJECT_ID}" --region "${REGION}" \
+  --format='value(status.url)')
+
+echo "Running smoke test against ${SERVICE_URL} ..."
+
+# 1) 健康检查
+HTTP_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' "${SERVICE_URL}/")
+if [ "${HTTP_STATUS}" != "200" ]; then
+  echo "❌ Health check failed: HTTP ${HTTP_STATUS}"
+  exit 1
+fi
+echo "✅ Health check passed (HTTP 200)"
+
+# 2) 内部 token 鉴权验证（无 token 应返回 401/403）
+HTTP_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "${SERVICE_URL}/internal/translate/page")
+if [ "${HTTP_STATUS}" = "200" ]; then
+  echo "❌ Token auth bypass detected: POST /internal/translate/page returned 200 without token"
+  exit 1
+fi
+echo "✅ Token auth verified (no-token returns HTTP ${HTTP_STATUS})"
+
+echo "🎉 Smoke test passed"
