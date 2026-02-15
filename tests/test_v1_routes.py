@@ -78,6 +78,7 @@ def patch_services(monkeypatch: pytest.MonkeyPatch, sample_data):
     v1_scraper.TASK_DB_PATH = sample_data["data_root"] / "scraper_tasks.db"
     v1_scraper.init_task_store(v1_scraper.TASK_DB_PATH)
     v1_scraper._scraper_tasks.clear()
+    v1_scraper._cf_solver = None
 
     # Patch v1 settings storage path.
     v1_settings.SETTINGS_FILE = sample_data["data_root"] / "user_settings.json"
@@ -1343,6 +1344,132 @@ def test_scraper_routes_map_upstream_http_status(monkeypatch: pytest.MonkeyPatch
         )
         assert chapters_resp.status_code == 404
         assert chapters_resp.json()["detail"]["code"] == "SCRAPER_CHAPTERS_FAILED"
+
+
+def test_scraper_search_auto_solves_cf_challenge(monkeypatch: pytest.MonkeyPatch, authed_app):
+    calls = {"count": 0}
+
+    async def _search(base_url, keyword, cookies, user_agent, http_mode, force_engine):
+        _ = (base_url, keyword, user_agent, http_mode, force_engine)
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise v1_scraper.CloudflareChallengeError("challenge")
+        assert cookies.get("cf_clearance") == "ok-token"
+        return [v1_scraper.MangaPayload(id="demo", title="Demo", url="https://example.com/manga/demo/")]
+
+    async def _catalog(base_url, page, orderby, path, cookies, user_agent, http_mode, force_engine):
+        _ = (base_url, page, orderby, path, cookies, user_agent, http_mode, force_engine)
+        return [], False
+
+    async def _chapters(base_url, manga_url, cookies, user_agent, http_mode, force_engine):
+        _ = (base_url, manga_url, cookies, user_agent, http_mode, force_engine)
+        return []
+
+    async def _reader_images(base_url, chapter_url, cookies, user_agent, http_mode, force_engine):
+        _ = (base_url, chapter_url, cookies, user_agent, http_mode, force_engine)
+        return []
+
+    provider = v1_scraper.ProviderAdapter(
+        key="generic",
+        label="Generic",
+        hosts=(),
+        supports_http=True,
+        supports_playwright=True,
+        supports_custom_host=True,
+        default_catalog_path="/manga/",
+        search=_search,
+        catalog=_catalog,
+        chapters=_chapters,
+        reader_images=_reader_images,
+        auth_url="https://example.com",
+    )
+
+    class _SolverResult:
+        def __init__(self, cookies):
+            self.cookies = cookies
+
+    class _FakeSolver:
+        async def solve(self, url, *, current_cookies, user_agent, referer=None):
+            _ = (url, current_cookies, user_agent, referer)
+            return _SolverResult({"cf_clearance": "ok-token"})
+
+    monkeypatch.setattr(v1_scraper, "resolve_provider", lambda base_url, site_hint: provider)
+    monkeypatch.setattr(v1_scraper, "_get_cf_solver", lambda: _FakeSolver())
+
+    with TestClient(authed_app) as client:
+        search_resp = client.post(
+            "/api/v1/scraper/search",
+            json={"base_url": "https://example.com", "keyword": "demo"},
+        )
+        assert search_resp.status_code == 200
+        assert search_resp.json()[0]["id"] == "demo"
+        assert calls["count"] == 2
+
+
+def test_scraper_search_auto_solves_upstream_403(monkeypatch: pytest.MonkeyPatch, authed_app):
+    calls = {"count": 0}
+
+    async def _search(base_url, keyword, cookies, user_agent, http_mode, force_engine):
+        _ = (base_url, keyword, user_agent, http_mode, force_engine)
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise aiohttp.ClientResponseError(
+                request_info=SimpleNamespace(real_url="https://example.com/search"),
+                history=(),
+                status=403,
+                message="Forbidden",
+                headers=None,
+            )
+        assert cookies.get("cf_clearance") == "ok-token"
+        return [v1_scraper.MangaPayload(id="demo", title="Demo", url="https://example.com/manga/demo/")]
+
+    async def _catalog(base_url, page, orderby, path, cookies, user_agent, http_mode, force_engine):
+        _ = (base_url, page, orderby, path, cookies, user_agent, http_mode, force_engine)
+        return [], False
+
+    async def _chapters(base_url, manga_url, cookies, user_agent, http_mode, force_engine):
+        _ = (base_url, manga_url, cookies, user_agent, http_mode, force_engine)
+        return []
+
+    async def _reader_images(base_url, chapter_url, cookies, user_agent, http_mode, force_engine):
+        _ = (base_url, chapter_url, cookies, user_agent, http_mode, force_engine)
+        return []
+
+    provider = v1_scraper.ProviderAdapter(
+        key="generic",
+        label="Generic",
+        hosts=(),
+        supports_http=True,
+        supports_playwright=True,
+        supports_custom_host=True,
+        default_catalog_path="/manga/",
+        search=_search,
+        catalog=_catalog,
+        chapters=_chapters,
+        reader_images=_reader_images,
+        auth_url="https://example.com",
+    )
+
+    class _SolverResult:
+        def __init__(self, cookies):
+            self.cookies = cookies
+
+    class _FakeSolver:
+        async def solve(self, url, *, current_cookies, user_agent, referer=None):
+            _ = (url, current_cookies, user_agent, referer)
+            return _SolverResult({"cf_clearance": "ok-token"})
+
+    monkeypatch.setattr(v1_scraper, "resolve_provider", lambda base_url, site_hint: provider)
+    monkeypatch.setattr(v1_scraper, "_get_cf_solver", lambda: _FakeSolver())
+
+    with TestClient(authed_app) as client:
+        search_resp = client.post(
+            "/api/v1/scraper/search",
+            json={"base_url": "https://example.com", "keyword": "demo"},
+        )
+        assert search_resp.status_code == 200
+        assert search_resp.json()[0]["id"] == "demo"
+        assert calls["count"] == 2
 
 
 def test_v1_settings_routes(authed_app):
