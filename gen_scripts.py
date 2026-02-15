@@ -388,7 +388,7 @@ echo.
 
 REM 检查是否从压缩包解压（有代码但没有.git）
 if not exist ".git" (
-    if exist "manga_translator" if exist "desktop_qt_ui" if exist "packaging\VERSION" (
+    if exist "manga_translator" if exist "packaging\VERSION" (
         echo [INFO] 检测到从压缩包解压的代码文件
         echo.
         echo 请选择:
@@ -498,7 +498,7 @@ if exist ".git" (
                     echo.
                     echo 正在清理 macOS 脚本和 Git 配置文件...
                     if exist "macOS_1_首次安装.sh" del /f /q "macOS_1_首次安装.sh" >nul 2>&1
-                    if exist "macOS_2_启动Qt界面.sh" del /f /q "macOS_2_启动Qt界面.sh" >nul 2>&1
+                    if exist "macOS_2_启动Web服务.sh" del /f /q "macOS_2_启动Web服务.sh" >nul 2>&1
                     if exist "macOS_3_检查更新并启动.sh" del /f /q "macOS_3_检查更新并启动.sh" >nul 2>&1
                     if exist "macOS_4_更新维护.sh" del /f /q "macOS_4_更新维护.sh" >nul 2>&1
                     if exist ".gitattributes" del /f /q ".gitattributes" >nul 2>&1
@@ -516,7 +516,7 @@ if exist ".git" (
                         echo.
                         echo 正在清理 macOS 脚本和 Git 配置文件...
                         if exist "macOS_1_首次安装.sh" del /f /q "macOS_1_首次安装.sh" >nul 2>&1
-                        if exist "macOS_2_启动Qt界面.sh" del /f /q "macOS_2_启动Qt界面.sh" >nul 2>&1
+                        if exist "macOS_2_启动Web服务.sh" del /f /q "macOS_2_启动Web服务.sh" >nul 2>&1
                         if exist "macOS_3_检查更新并启动.sh" del /f /q "macOS_3_检查更新并启动.sh" >nul 2>&1
                         if exist "macOS_4_更新维护.sh" del /f /q "macOS_4_更新维护.sh" >nul 2>&1
                         if exist ".gitattributes" del /f /q ".gitattributes" >nul 2>&1
@@ -717,7 +717,7 @@ if exist "%TEMP_DIR%\.gitignore" (
 echo.
 echo 正在清理 macOS 脚本和 Git 配置文件...
 if exist "macOS_1_首次安装.sh" del /f /q "macOS_1_首次安装.sh" >nul 2>&1
-if exist "macOS_2_启动Qt界面.sh" del /f /q "macOS_2_启动Qt界面.sh" >nul 2>&1
+if exist "macOS_2_启动Web服务.sh" del /f /q "macOS_2_启动Web服务.sh" >nul 2>&1
 if exist "macOS_3_检查更新并启动.sh" del /f /q "macOS_3_检查更新并启动.sh" >nul 2>&1
 if exist "macOS_4_更新维护.sh" del /f /q "macOS_4_更新维护.sh" >nul 2>&1
 if exist ".gitattributes" del /f /q ".gitattributes" >nul 2>&1
@@ -1019,7 +1019,7 @@ echo.
 echo 安装位置: %SCRIPT_DIR%
 echo.
 echo 下一步操作:
-echo   双击 步骤2-启动Qt界面.bat (Qt版本)
+echo   双击 步骤2-启动Web服务.bat (Web版本)
 echo   或 步骤3-检查更新并启动.bat (自动检查更新)
 echo.
 echo 定期更新:
@@ -1056,7 +1056,7 @@ set /p run_now="是否立即运行? (y/n): "
 if /i "%run_now%"=="y" (
     echo.
     echo 正在启动...
-    start 步骤2-启动Qt界面.bat
+    start 步骤2-启动Web服务.bat
 )
 
 echo.
@@ -1238,7 +1238,7 @@ REM 切换到项目根目录(确保Python能正确找到模块)
 cd /d "%~dp0"
 
 REM 直接启动 Qt 界面
-python desktop_qt_ui\main.py
+python -m manga_translator web
 pause
 """
 
@@ -1425,7 +1425,7 @@ REM 启动 Qt 界面
 echo 正在启动...
 echo ========================================
 echo.
-python desktop_qt_ui\main.py
+python -m manga_translator web
 pause
 """
 
@@ -1599,9 +1599,9 @@ with open("步骤1-首次安装.bat", "w", encoding="gbk", errors="replace") as 
     f.write(script1)
 print("Created: 步骤1-首次安装.bat")
 
-with open("步骤2-启动Qt界面.bat", "w", encoding="gbk", errors="replace") as f:
+with open("步骤2-启动Web服务.bat", "w", encoding="gbk", errors="replace") as f:
     f.write(script2)
-print("Created: 步骤2-启动Qt界面.bat")
+print("Created: 步骤2-启动Web服务.bat")
 
 with open("步骤3-检查更新并启动.bat", "w", encoding="gbk", errors="replace") as f:
     f.write(script3)

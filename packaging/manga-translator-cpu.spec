@@ -31,16 +31,13 @@ except Exception:
     pass
 
 a = Analysis(
-    ['../desktop_qt_ui/main.py'],  # 相对于packaging目录
+    ['launch.py'],
     pathex=[],
     binaries=onnx_binaries,
     datas=py3langid_datas + unidic_datas + onnx_datas,  # 添加所有数据文件
     hiddenimports=[
         'pydensecrf.eigen', 
         'bsdiff4.core', 
-        'PyQt6.QtCore', 
-        'PyQt6.QtGui', 
-        'PyQt6.QtWidgets', 
         'matplotlib', 
         'matplotlib.pyplot',
         # PaddleOCR-VL 相关模块

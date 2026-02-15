@@ -16,9 +16,6 @@
 ```bash
 # Web 后端
 python -m manga_translator web
-
-# Qt 桌面（可选）
-python -m desktop_qt_ui.main
 ```
 
 ### 前端

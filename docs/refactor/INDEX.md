@@ -32,6 +32,7 @@
 - Split Pipeline Implementation Plan: `docs/plans/2026-02-14-gpu-translation-split-implementation.md`
 - Split Pipeline Worklog: `docs/refactor/2026-02-14-split-pipeline-worklog.md`
 - Split Pipeline API Contract: `docs/api/2026-02-14-internal-split-pipeline-contract.md`
+- Qt Separation Plan: `docs/refactoring/qt-separation-plan.md`
 
 ## 验证快照
 

@@ -628,7 +628,7 @@ class MangaTranslator:
                         continue
                     
                     # 执行TXT到JSON的导入
-                    from desktop_qt_ui.services.workflow_service import safe_update_large_json_from_text
+                    from manga_translator.utils.text_export import safe_update_large_json_from_text
                     result = safe_update_large_json_from_text(txt_path, json_path, template_path)
                     
                     if not result.startswith("错误"):
@@ -1864,7 +1864,7 @@ class MangaTranslator:
                 try:
                     json_path = find_json_path(ctx.image_name)
                     if json_path and os.path.exists(json_path):
-                        from desktop_qt_ui.services.workflow_service import generate_translated_text, get_template_path_from_config
+                        from manga_translator.utils.text_export import generate_translated_text, get_template_path_from_config
                         template_path = get_template_path_from_config()
                         if template_path and os.path.exists(template_path):
                             # 导出翻译（即使没有文本也会创建空文件）
@@ -2844,7 +2844,7 @@ class MangaTranslator:
                             try:
                                 json_path = find_json_path(ctx.image_name)
                                 if json_path and os.path.exists(json_path):
-                                    from desktop_qt_ui.services.workflow_service import generate_original_text, get_template_path_from_config
+                                    from manga_translator.utils.text_export import generate_original_text, get_template_path_from_config
                                     template_path = get_template_path_from_config()
                                     if template_path and os.path.exists(template_path):
                                         # 导出原文
@@ -2892,7 +2892,7 @@ class MangaTranslator:
                             try:
                                 json_path = find_json_path(ctx.image_name)
                                 if json_path and os.path.exists(json_path):
-                                    from desktop_qt_ui.services.workflow_service import generate_translated_text, get_template_path_from_config
+                                    from manga_translator.utils.text_export import generate_translated_text, get_template_path_from_config
                                     template_path = get_template_path_from_config()
                                     if template_path and os.path.exists(template_path):
                                         # 导出翻译
@@ -4700,7 +4700,7 @@ class MangaTranslator:
                         try:
                             json_path = find_json_path(ctx.image_name)
                             if json_path and os.path.exists(json_path):
-                                from desktop_qt_ui.services.workflow_service import generate_translated_text, get_template_path_from_config
+                                from manga_translator.utils.text_export import generate_translated_text, get_template_path_from_config
                                 template_path = get_template_path_from_config()
                                 if template_path and os.path.exists(template_path):
                                     # 导出翻译

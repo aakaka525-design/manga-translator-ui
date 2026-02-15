@@ -100,7 +100,7 @@ setup_repository() {
     echo -e "${BLUE}[*] 检查代码仓库...${NC}"
     
     # 检查是否已有代码（从压缩包解压或已克隆）
-    if [ -d "manga_translator" ] && [ -d "desktop_qt_ui" ] && [ -f "packaging/VERSION" ]; then
+    if [ -d "manga_translator" ] && [ -f "packaging/VERSION" ]; then
         if [ -d ".git" ]; then
             echo -e "${GREEN}[OK] 检测到 Git 仓库${NC}"
             
@@ -120,7 +120,7 @@ setup_repository() {
                     echo -e "${GREEN}[OK] 代码已更新${NC}"
                     
                     # 清理 Windows 文件
-                    rm -f "步骤1-首次安装.bat" "步骤2-启动Qt界面.bat" "步骤3-检查更新并启动.bat" "步骤4-更新维护.bat" 2>/dev/null
+                    rm -f "步骤1-首次安装.bat" "步骤2-启动Web服务.bat" "步骤3-检查更新并启动.bat" "步骤4-更新维护.bat" 2>/dev/null
                     rm -f ".gitattributes" ".gitignore" "LICENSE.txt" 2>/dev/null
                     echo -e "${GREEN}[OK] 已清理 Windows 脚本和 Git 配置文件${NC}"
                 fi
@@ -187,7 +187,7 @@ setup_repository() {
         rm -rf "$TEMP_DIR"
         
         # 清理 Windows 文件
-        rm -f "步骤1-首次安装.bat" "步骤2-启动Qt界面.bat" "步骤3-检查更新并启动.bat" "步骤4-更新维护.bat" 2>/dev/null
+        rm -f "步骤1-首次安装.bat" "步骤2-启动Web服务.bat" "步骤3-检查更新并启动.bat" "步骤4-更新维护.bat" 2>/dev/null
         rm -f ".gitattributes" ".gitignore" "LICENSE.txt" 2>/dev/null
         
         echo -e "${GREEN}[OK] 代码克隆完成${NC}"
@@ -363,11 +363,11 @@ main() {
     echo "使用方法:"
     echo ""
     echo "  直接运行启动脚本:"
-    echo "    ./macOS_2_启动Qt界面.sh"
+    echo "    ./macOS_2_启动Web服务.sh"
     echo ""
     echo "  或手动激活环境后运行:"
     echo "    source $MINICONDA_DIR/bin/activate $CONDA_ENV_NAME"
-    echo "    python desktop_qt_ui/main.py"
+    echo "    python -m manga_translator web"
     echo ""
 }
 

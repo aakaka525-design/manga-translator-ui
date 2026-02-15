@@ -54,7 +54,6 @@ pydensecrf @ https://github.com/hgmzhn/manga-translator-ui/releases/download/v1.
 # 或从源码安装(需要 C++ 编译工具):
 # pydensecrf @ git+https://github.com/lucasb-eyer/pydensecrf.git
 PyHyphen==4.0.4
-PyQt6==6.9.1
 python-dotenv==1.1.1
 rich==14.1.0
 safetensors==0.6.2

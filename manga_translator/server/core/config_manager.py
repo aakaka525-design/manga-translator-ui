@@ -30,13 +30,13 @@ os.makedirs(FONTS_DIR, exist_ok=True)
 os.makedirs(PROMPTS_DIR, exist_ok=True)
 
 # i18n 相关路径
-desktop_locales_dir = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'desktop_qt_ui', 'locales')
-desktop_locales_dir = os.path.abspath(desktop_locales_dir)
+server_locales_dir = os.path.join(os.path.dirname(__file__), '..', 'locales')
+server_locales_dir = os.path.abspath(server_locales_dir)
 
 # 全局翻译字典缓存
 translations_cache = {}
 
-print(f"[INFO] i18n locales directory: {desktop_locales_dir}")
+print(f"[INFO] i18n locales directory: {server_locales_dir}")
 print(f"[INFO] Fonts directory: {FONTS_DIR}")
 print(f"[INFO] Prompts directory: {PROMPTS_DIR}")
 
@@ -387,7 +387,7 @@ def load_translation(locale: str) -> dict:
     if locale in translations_cache:
         return translations_cache[locale]
     
-    locale_file = os.path.join(desktop_locales_dir, f"{locale}.json")
+    locale_file = os.path.join(server_locales_dir, f"{locale}.json")
     if os.path.exists(locale_file):
         try:
             with open(locale_file, 'r', encoding='utf-8') as f:
@@ -406,8 +406,8 @@ def load_translation(locale: str) -> dict:
 def get_available_locales() -> dict:
     """获取可用的语言列表"""
     locales = {}
-    if os.path.exists(desktop_locales_dir):
-        for filename in os.listdir(desktop_locales_dir):
+    if os.path.exists(server_locales_dir):
+        for filename in os.listdir(server_locales_dir):
             if filename.endswith('.json'):
                 locale_code = filename[:-5]  # 移除 .json
                 locales[locale_code] = locale_code

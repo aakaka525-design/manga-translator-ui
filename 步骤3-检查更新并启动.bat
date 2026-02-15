@@ -180,5 +180,5 @@ REM 启动 Qt 界面
 echo 正在启动...
 echo ========================================
 echo.
-python desktop_qt_ui\main.py
+python -m manga_translator web
 pause

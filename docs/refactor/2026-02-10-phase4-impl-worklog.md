@@ -1286,3 +1286,69 @@
 - 验证命令: `pytest -q tests/test_diagnostics_scripts.py tests/test_split_ops_hardening.py`、`pytest --collect-only -q test_cloudrun_benchmark.py test_split_pipeline_integration.py test_qt_cli_path_timed.py`、`git check-ignore -v packaging/Dockerfile.test report/jscpd-report.json`
 - 验证结果: pass（诊断脚本防回归通过，root wrapper 不再被 pytest 收集，噪声文件命中忽略策略）
 - 提交哈希: N/A
+
+## Qt Separation Execution (2026-02-15)
+
+### TASK-ID: TASK-QT-001
+- 状态: completed
+- 改动文件: `/Users/xa/Desktop/projiect/worktrees/manga-translator-ui_qt-separation-20260215` (new worktree), branch `codex/qt-separation-20260215`
+- 接口影响: 无
+- 验证命令: `git worktree list && git branch --show-current`
+- 验证结果: 新 worktree 与分支创建成功
+- 提交哈希: N/A
+
+### TASK-ID: TASK-QT-002
+- 状态: completed
+- 改动文件: `manga_translator/utils/text_export.py`, `manga_translator/manga_translator.py`, `manga_translator/server/routes/translation.py`
+- 接口影响: 无（仅内部实现迁移）
+- 验证命令: `python -m py_compile manga_translator/utils/text_export.py manga_translator/server/routes/translation.py manga_translator/manga_translator.py`
+- 验证结果: 通过
+- 提交哈希: N/A
+
+### TASK-ID: TASK-QT-003
+- 状态: completed
+- 改动文件: `manga_translator/server/locales/*.json`, `manga_translator/server/main.py`, `manga_translator/server/routes/locales.py`, `manga_translator/server/core/config_manager.py`
+- 接口影响: 无（`/locales` 与 `/api/locales` 路径不变）
+- 验证命令: `python -m py_compile manga_translator/server/main.py manga_translator/server/routes/locales.py manga_translator/server/core/config_manager.py`
+- 验证结果: 通过
+- 提交哈希: N/A
+
+### TASK-ID: TASK-QT-004
+- 状态: completed
+- 改动文件: `manga_translator/utils/local_runtime_services.py`, `manga_translator/mode/local.py`, `manga_translator/mode/subprocess_manager.py`
+- 接口影响: 无
+- 验证命令: `python -m py_compile manga_translator/utils/local_runtime_services.py manga_translator/mode/local.py manga_translator/mode/subprocess_manager.py`
+- 验证结果: 通过
+- 提交哈希: N/A
+
+### TASK-ID: TASK-QT-005
+- 状态: completed
+- 改动文件: `packaging/launch.py`, `packaging/manga-translator-cpu.spec`, `packaging/manga-translator-gpu.spec`, (deleted) `packaging/manga-chapter-splitter.spec`, (deleted) `packaging/create-manga-pdfs.spec`, (removed) `desktop_qt_ui/`
+- 接口影响: 无（仅打包与入口收敛）
+- 验证命令: `rg -n "desktop_qt_ui|manga_chapter_splitter|qt_main" packaging manga_translator --glob '!docs/**'`
+- 验证结果: 代码与打包链路已无 Qt/chapter_splitter 依赖
+- 提交哈希: N/A
+
+### TASK-ID: TASK-QT-006
+- 状态: completed
+- 改动文件: `requirements_cpu.txt`, `requirements_gpu.txt`, `requirements_metal.txt`, `requirements_amd.txt`, `.github/workflows/build-and-release.yml`, `gen_scripts.py`, `macOS_1_首次安装.sh`, `macOS_2_启动Web服务.sh`, `macOS_3_检查更新并启动.sh`, `步骤1-首次安装.bat`, `步骤2-启动Web服务.bat`, `步骤3-检查更新并启动.bat`
+- 接口影响: 无
+- 验证命令: `rg -n "desktop_qt_ui|PyQt6|启动Qt" --glob '!doc/**' --glob '!docs/**'`
+- 验证结果: 非文档代码路径已清理
+- 提交哈希: N/A
+
+### TASK-ID: TASK-QT-007
+- 状态: completed
+- 改动文件: `README.md`, `doc/INSTALLATION.md`, `doc/DEVELOPMENT.md`, `doc/USAGE.md`, `docs/refactoring/qt-separation-plan.md`, `docs/INDEX.md`, `docs/refactor/INDEX.md`, `docs/refactor/2026-02-10-phase4-impl-worklog.md`
+- 接口影响: 无
+- 验证命令: `rg -n "desktop_qt_ui|PyQt6|启动Qt界面" README.md doc/INSTALLATION.md doc/DEVELOPMENT.md doc/USAGE.md docs/INDEX.md docs/refactor/INDEX.md docs/refactoring/qt-separation-plan.md`
+- 验证结果: Qt 路径文档已收敛
+- 提交哈希: N/A
+
+### TASK-ID: TASK-QT-008
+- 状态: completed
+- 改动文件: 回归验证（无新增代码文件）
+- 接口影响: 无
+- 验证命令: `pytest -q tests/test_v1_routes.py tests/test_runtime_deps_check.py`; `pytest -q`; `python packaging/launch.py --help`; `python -m manga_translator local -i doc/images/0012.png --config examples/config-example.json --verbose`; `python - <<'PY' ... /api/locales/list ...`
+- 验证结果: 关键回归通过（`tests/test_v1_routes.py` + `tests/test_runtime_deps_check.py` 全绿、`/api/locales/list` 和 `/locales/zh_CN.json` 返回 200、`local` 模式可运行且不依赖 Qt）；全量 `pytest -q` 仅剩 2 个历史失败（`tests/test_runtime_gpu_lazy_init.py::test_load_default_config_dict_falls_back_to_config_example`、`tests/test_v1_translate_perf_quick.py::test_example_config_contains_chapter_page_concurrency`），均与 `examples/config-example.json` 基线预期差异相关。
+- 提交哈希: N/A

@@ -236,6 +236,7 @@ MangaJaNaiConverterGui/
 # Scripts directory (脚本目录)
 # Keep historical local scripts ignored by default, but track curated diagnostics and runtime checks.
 scripts/*
+!scripts/check_runtime_deps.py
 !scripts/diagnostics/
 !scripts/diagnostics/**
 scripts/diagnostics/__pycache__/

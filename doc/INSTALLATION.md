@@ -105,13 +105,10 @@ curl -s -X POST http://localhost:8000/auth/login \
 
 4. 访问受保护接口时携带：`X-Session-Token`
 
-## 方式二：Qt 桌面启动（可选）
+## 脚本启动（可选）
 
-```bash
-python -m desktop_qt_ui.main
-```
-
-> Qt 路径保留用于兼容与参考，不影响当前 Web 主线文档。
+- macOS: `./macOS_2_启动Web服务.sh`
+- Windows: `步骤2-启动Web服务.bat`
 
 ## Docker（可选）
 

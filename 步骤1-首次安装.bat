@@ -379,7 +379,7 @@ echo.
 
 REM 检查是否从压缩包解压（有代码但没有.git）
 if not exist ".git" (
-    if exist "manga_translator" if exist "desktop_qt_ui" if exist "packaging\VERSION" (
+    if exist "manga_translator" if exist "packaging\VERSION" (
         echo [INFO] 检测到从压缩包解压的代码文件
         echo.
         echo 请选择:
