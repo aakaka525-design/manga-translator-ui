@@ -104,6 +104,7 @@ class ScraperHttpClient:
         user_agent: str | None = None,
         referer: str | None = None,
         headers: dict[str, str] | None = None,
+        allow_error_body: bool = False,
         timeout_sec: float = DEFAULT_TIMEOUT_SEC,
         rate_limit_rps: float | None = None,
         concurrency: int | None = None,
@@ -115,6 +116,7 @@ class ScraperHttpClient:
             user_agent=user_agent,
             referer=referer,
             headers=headers,
+            allow_error_body=allow_error_body,
             timeout_sec=timeout_sec,
             rate_limit_rps=rate_limit_rps,
             concurrency=concurrency,
@@ -156,6 +158,7 @@ class ScraperHttpClient:
         user_agent: str | None = None,
         referer: str | None = None,
         headers: dict[str, str] | None = None,
+        allow_error_body: bool = False,
         timeout_sec: float = DEFAULT_TIMEOUT_SEC,
         rate_limit_rps: float | None = None,
         concurrency: int | None = None,
@@ -167,8 +170,24 @@ class ScraperHttpClient:
 
         async with sem:
             if self.engine == "curl_cffi" and curl_requests is not None:
-                return await self._request_text_curl_cffi(method, url, data=data, cookies=cookies, headers=req_headers, timeout_sec=timeout_sec)
-            return await self._request_text_aiohttp(method, url, data=data, cookies=cookies, headers=req_headers, timeout_sec=timeout_sec)
+                return await self._request_text_curl_cffi(
+                    method,
+                    url,
+                    data=data,
+                    cookies=cookies,
+                    headers=req_headers,
+                    allow_error_body=allow_error_body,
+                    timeout_sec=timeout_sec,
+                )
+            return await self._request_text_aiohttp(
+                method,
+                url,
+                data=data,
+                cookies=cookies,
+                headers=req_headers,
+                allow_error_body=allow_error_body,
+                timeout_sec=timeout_sec,
+            )
 
     async def _request_text_aiohttp(
         self,
@@ -178,13 +197,17 @@ class ScraperHttpClient:
         data: dict[str, str] | None,
         cookies: dict[str, str] | None,
         headers: dict[str, str],
+        allow_error_body: bool,
         timeout_sec: float,
     ) -> str:
         timeout = aiohttp.ClientTimeout(total=timeout_sec)
         async with aiohttp.ClientSession(timeout=timeout, cookies=cookies or {}) as session:
             async with session.request(method.upper(), url, headers=headers, data=data) as response:
                 text = await response.text()
-                response.raise_for_status()
+                if response.status >= 400:
+                    if allow_error_body:
+                        return text
+                    raise self._client_error(url, response.status, response.headers)
                 return text
 
     async def _request_text_curl_cffi(
@@ -195,6 +218,7 @@ class ScraperHttpClient:
         data: dict[str, str] | None,
         cookies: dict[str, str] | None,
         headers: dict[str, str],
+        allow_error_body: bool,
         timeout_sec: float,
     ) -> str:
         assert curl_requests is not None
@@ -203,6 +227,8 @@ class ScraperHttpClient:
             status = int(response.status_code)
             text = response.text
             if status >= 400:
+                if allow_error_body:
+                    return text
                 raise self._client_error(url, status, response.headers)
             return text
 

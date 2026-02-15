@@ -8,9 +8,10 @@ import hashlib
 import logging
 import os
 import re
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 from urllib.parse import urlparse, urljoin
 from uuid import uuid4
 
@@ -24,12 +25,14 @@ from manga_translator.server.core.models import Session
 from manga_translator.server.scraper_v1 import (
     BrowserUnavailableError,
     CloudflareChallengeError,
+    CloudflareSolver,
     DEFAULT_ALERT_SETTINGS,
     ProviderContext,
     ProviderAdapter,
     ProviderUnavailableError,
     ScraperAlertEngine,
     ScraperTaskStore,
+    get_cookie_store,
     get_state_info,
     get_http_client,
     merge_cookies,
@@ -66,6 +69,7 @@ _scraper_tasks: dict[str, dict[str, object]] = {}
 _scraper_tasks_lock = asyncio.Lock()
 _task_store: ScraperTaskStore | None = None
 _download_service: DownloadService | None = None
+_cf_solver: CloudflareSolver | None = None
 _alert_scheduler_task: asyncio.Task | None = None
 _alert_scheduler_lock = asyncio.Lock()
 _alert_runtime: dict[str, Any] = {
@@ -228,6 +232,16 @@ def _get_download_service() -> DownloadService:
             max_task_retries=TASK_MAX_RETRIES,
         )
     return _download_service
+
+
+def _get_cf_solver() -> CloudflareSolver:
+    global _cf_solver
+    if _cf_solver is None:
+        _cf_solver = CloudflareSolver(
+            get_http_client(default_user_agent=_default_user_agent()),
+            cookie_store=get_cookie_store(),
+        )
+    return _cf_solver
 
 
 def _task_status_to_queue_status(status: str) -> str:
@@ -522,7 +536,7 @@ def _is_call_signature_error(exc: TypeError) -> bool:
     )
 
 
-async def _provider_search_compat(provider: ProviderAdapter, context: ProviderContext, keyword: str):
+async def _provider_search_compat(context: ProviderContext, provider: ProviderAdapter, keyword: str):
     try:
         return await provider.search(context, keyword)
     except TypeError as exc:
@@ -539,8 +553,8 @@ async def _provider_search_compat(provider: ProviderAdapter, context: ProviderCo
 
 
 async def _provider_catalog_compat(
-    provider: ProviderAdapter,
     context: ProviderContext,
+    provider: ProviderAdapter,
     page: int,
     orderby: str | None,
     path: str | None,
@@ -562,7 +576,7 @@ async def _provider_catalog_compat(
         )
 
 
-async def _provider_chapters_compat(provider: ProviderAdapter, context: ProviderContext, manga_url: str):
+async def _provider_chapters_compat(context: ProviderContext, provider: ProviderAdapter, manga_url: str):
     try:
         return await provider.chapters(context, manga_url)
     except TypeError as exc:
@@ -576,6 +590,52 @@ async def _provider_chapters_compat(provider: ProviderAdapter, context: Provider
             context.http_mode,
             context.force_engine,
         )
+
+
+async def _provider_reader_images_compat(context: ProviderContext, provider: ProviderAdapter, chapter_url: str):
+    try:
+        return await provider.reader_images(context, chapter_url)
+    except TypeError as exc:
+        if not _is_call_signature_error(exc):
+            raise
+        return await provider.reader_images(
+            context.base_url,
+            chapter_url,
+            context.cookies,
+            context.user_agent,
+            context.http_mode,
+            context.force_engine,
+        )
+
+
+async def _fetch_with_cf_solve(
+    provider_fn: Callable[..., Awaitable[Any]],
+    context: ProviderContext,
+    target_url: str,
+    *args: Any,
+) -> Any:
+    solve_target = target_url or context.base_url
+
+    async def _retry_with_solver() -> Any:
+        solver = _get_cf_solver()
+        solved = await solver.solve(
+            solve_target,
+            current_cookies=context.cookies,
+            user_agent=context.user_agent,
+            referer=context.base_url,
+        )
+        merged_cookies = {**context.cookies, **(solved.cookies or {})}
+        retry_ctx = replace(context, cookies=merged_cookies)
+        return await provider_fn(retry_ctx, *args)
+
+    try:
+        return await provider_fn(context, *args)
+    except aiohttp.ClientResponseError as exc:
+        if int(exc.status or 0) not in {401, 403}:
+            raise
+        return await _retry_with_solver()
+    except CloudflareChallengeError:
+        return await _retry_with_solver()
 
 
 async def _set_task_state(
@@ -780,19 +840,13 @@ async def _run_download_task(
     )
 
     try:
-        try:
-            image_urls = await provider.reader_images(context, chapter_url)
-        except TypeError as exc:
-            if not _is_call_signature_error(exc):
-                raise
-            image_urls = await provider.reader_images(
-                base_url,
-                chapter_url,
-                cookies,
-                user_agent,
-                bool(req.http_mode),
-                force_engine,
-            )
+        image_urls = await _fetch_with_cf_solve(
+            _provider_reader_images_compat,
+            context,
+            chapter_url,
+            provider,
+            chapter_url,
+        )
     except BrowserUnavailableError as exc:
         await _set_task_state(
             task_id,
@@ -1007,7 +1061,13 @@ async def search(req: ScraperSearchRequest, _session: Session = Depends(require_
     )
 
     try:
-        items = await _provider_search_compat(provider, context, req.keyword)
+        items = await _fetch_with_cf_solve(
+            _provider_search_compat,
+            context,
+            base_url,
+            provider,
+            req.keyword,
+        )
     except BrowserUnavailableError as exc:
         raise _scraper_http_error(400, "SCRAPER_BROWSER_UNAVAILABLE", str(exc)) from exc
     except CloudflareChallengeError as exc:
@@ -1038,14 +1098,18 @@ async def catalog(req: ScraperCatalogRequest, _session: Session = Depends(requir
         rate_limit_rps=float(req.rate_limit_rps or 2.0),
         concurrency=max(1, min(32, int(req.concurrency or 6))),
     )
+    catalog_path = _normalize_catalog_path(req.path) or provider.default_catalog_path
+    target_url = urljoin(base_url, catalog_path)
 
     try:
-        items, has_more = await _provider_catalog_compat(
-            provider,
+        items, has_more = await _fetch_with_cf_solve(
+            _provider_catalog_compat,
             context,
+            target_url,
+            provider,
             max(1, req.page),
             req.orderby,
-            _normalize_catalog_path(req.path) or provider.default_catalog_path,
+            catalog_path,
         )
     except BrowserUnavailableError as exc:
         raise _scraper_http_error(400, "SCRAPER_BROWSER_UNAVAILABLE", str(exc)) from exc
@@ -1082,7 +1146,13 @@ async def chapters(req: ScraperChaptersRequest, _session: Session = Depends(requ
     manga_url = req.manga.url or urljoin(base_url, f"{fallback_path}/{req.manga.id}/")
 
     try:
-        items = await _provider_chapters_compat(provider, context, manga_url)
+        items = await _fetch_with_cf_solve(
+            _provider_chapters_compat,
+            context,
+            manga_url,
+            provider,
+            manga_url,
+        )
     except BrowserUnavailableError as exc:
         raise _scraper_http_error(400, "SCRAPER_BROWSER_UNAVAILABLE", str(exc)) from exc
     except CloudflareChallengeError as exc:
