@@ -101,7 +101,12 @@ class ScraperHttpClient:
             self.engine = candidate
 
     def _domain_key(self, url: str) -> str:
-        return (urlparse(url).hostname or "").lower() or "_default"
+        host = (urlparse(url).hostname or "").lower() or "_default"
+        # Normalize www.example.com → example.com so that cookies
+        # cached for one variant apply to the other (common for CF).
+        if host.startswith("www."):
+            host = host[4:]
+        return host
 
     def _domain_semaphore(self, domain: str, limit: int | None = None) -> asyncio.Semaphore:
         max_conn = max(1, int(limit or DEFAULT_DOMAIN_CONCURRENCY))
