@@ -1366,5 +1366,5 @@
 - 改动文件: `docs/refactor/2026-02-10-phase4-impl-worklog.md`
 - 接口影响: 无
 - 验证命令: `git push personal codex/qt-separation-20260215`
-- 验证结果: 待推送执行
-- 提交哈希: N/A
+- 验证结果: 已推送成功，远端分支 `personal/codex/qt-separation-20260215` 创建完成
+- 提交哈希: 877ce21
