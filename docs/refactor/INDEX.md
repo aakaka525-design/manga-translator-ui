@@ -32,6 +32,9 @@
 - Split Pipeline Implementation Plan: `docs/plans/2026-02-14-gpu-translation-split-implementation.md`
 - Split Pipeline Worklog: `docs/refactor/2026-02-14-split-pipeline-worklog.md`
 - Split Pipeline API Contract: `docs/api/2026-02-14-internal-split-pipeline-contract.md`
+- Scraper v2 Implementation Plan: `docs/plans/2026-02-15-scraper-v2-implementation.md`
+- Scraper v2 Worklog: `docs/refactor/2026-02-15-scraper-v2-worklog.md`
+- Scraper v2 API Contract: `docs/api/2026-02-15-v1-scraper-v2-contract.md`
 - Qt Separation Plan: `docs/refactoring/qt-separation-plan.md`
 
 ## 验证快照

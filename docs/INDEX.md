@@ -23,6 +23,8 @@
 - Split Pipeline 基线：[`docs/gpu-translation-split-plan.md`](gpu-translation-split-plan.md)
 - Split Pipeline 实施：[`docs/plans/2026-02-14-gpu-translation-split-implementation.md`](plans/2026-02-14-gpu-translation-split-implementation.md)
 - Split Pipeline 收口日志：[`docs/refactor/2026-02-14-split-pipeline-worklog.md`](refactor/2026-02-14-split-pipeline-worklog.md)
+- Scraper v2 实施：[`docs/plans/2026-02-15-scraper-v2-implementation.md`](plans/2026-02-15-scraper-v2-implementation.md)
+- Scraper v2 收口日志：[`docs/refactor/2026-02-15-scraper-v2-worklog.md`](refactor/2026-02-15-scraper-v2-worklog.md)
 - Qt 分离计划：[`docs/refactoring/qt-separation-plan.md`](refactoring/qt-separation-plan.md)
 
 ## 契约与决策
@@ -32,6 +34,7 @@
 - Scraper Phase3 契约：[`docs/api/2026-02-10-v1-scraper-phase3-contract.md`](api/2026-02-10-v1-scraper-phase3-contract.md)
 - Scraper Phase4 S1 契约：[`docs/api/2026-02-10-v1-scraper-phase4-s1-contract.md`](api/2026-02-10-v1-scraper-phase4-s1-contract.md)
 - Split 内部契约：[`docs/api/2026-02-14-internal-split-pipeline-contract.md`](api/2026-02-14-internal-split-pipeline-contract.md)
+- Scraper v2 契约：[`docs/api/2026-02-15-v1-scraper-v2-contract.md`](api/2026-02-15-v1-scraper-v2-contract.md)
 - Phase4 决策：[`docs/decisions/2026-02-10-phase4-go-no-go.md`](decisions/2026-02-10-phase4-go-no-go.md)
 
 ## 部署与性能
