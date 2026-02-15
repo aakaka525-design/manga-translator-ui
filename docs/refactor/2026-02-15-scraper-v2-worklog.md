@@ -59,3 +59,33 @@
 - 验证命令: `git push personal codex/scraper-v2-refactor-20260215 && git push origin codex/scraper-v2-refactor-20260215`
 - 验证结果: `personal` 成功；`origin` 失败（`403 Permission denied`），已按规则记录阻塞事件
 - 提交哈希: 2d63e62
+
+## TASK-SV2-FS-001
+
+- TASK-ID: TASK-SV2-FS-001
+- 状态: completed
+- 改动文件: `manga_translator/server/scraper_v1/http_client.py`, `manga_translator/server/scraper_v1/cf_solver.py`, `manga_translator/server/routes/v1_scraper.py`, `deploy/flaresolverr/docker-compose.yml`
+- 接口影响: 对外 `/api/v1/scraper/*` 与 `/admin/scraper/*` 路径不变；内部新增 `allow_error_body` 行为、CF 自动解盾重试链路与 FlareSolverr sidecar 部署模板
+- 验证命令: `pytest -q tests/test_scraper_cf_solver.py tests/test_v1_routes.py -k 'scraper_search_auto_solves or scraper_routes_map_upstream_http_status or fetch_html_allow_error_body_returns_html_on_403 or fetch_html_default_raises_on_403 or cf_solver'`
+- 验证结果: pass（8 passed）
+- 提交哈希: 5456dea
+
+## TASK-SV2-FS-002
+
+- TASK-ID: TASK-SV2-FS-002
+- 状态: completed
+- 改动文件: `tests/test_scraper_cf_solver.py`, `tests/test_v1_routes.py`
+- 接口影响: 无对外接口变化；补充 FlareSolverr 与自动解盾回归护栏
+- 验证命令: `pytest -q tests/test_v1_routes.py tests/test_v1_scraper_phase2.py tests/test_v1_scraper_phase3.py tests/test_v1_scraper_phase4.py tests/test_scraper_cf_solver.py`
+- 验证结果: pass（85 passed）
+- 提交哈希: 49228e9
+
+## TASK-SV2-FS-003
+
+- TASK-ID: TASK-SV2-FS-003
+- 状态: completed
+- 改动文件: `docs/refactoring/flaresolverr-integration-plan.md`, `docs/refactoring/scraper-v2-refactor-plan.md`, `docs/refactor/INDEX.md`, `docs/INDEX.md`, `docs/refactor/2026-02-15-scraper-v2-worklog.md`
+- 接口影响: 无；文档示例、执行路径与测试证据收敛
+- 验证命令: `rg -n 'allow_error_body|_fetch_with_cf_solve|X-Session-Token|FlareSolverr|TASK-SV2-FS' docs/refactoring/flaresolverr-integration-plan.md docs/refactoring/scraper-v2-refactor-plan.md docs/refactor/2026-02-15-scraper-v2-worklog.md docs/refactor/INDEX.md docs/INDEX.md`
+- 验证结果: pass
+- 提交哈希: 待回填
