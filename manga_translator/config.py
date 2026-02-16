@@ -149,8 +149,8 @@ class RenderConfig(BaseModel):
     disable_auto_wrap: bool = False
     font_size_offset: int = 0
     """Offset font size by a given amount, positive number increase font size and vice versa"""
-    font_size_minimum: int = -1
-    """Minimum output font size. Default is image_sides_sum/200"""
+    font_size_minimum: int = 16
+    """Minimum output font size. Default is 16px to ensure readability. Set to -1 for auto (image_sides_sum/200)."""
     max_font_size: int = 0
     """Maximum output font size. 0 means no limit"""
     font_scale_ratio: float = 1.0
@@ -427,7 +427,7 @@ class Config(BaseModel):
     # ?
     force_simple_sort: bool = False
     """Don't use panel detection for sorting, use a simpler fallback logic instead"""
-    kernel_size: int = 3
+    kernel_size: int = 5
     """Set the convolution kernel size of the text erasure area to completely clean up text residues"""
-    mask_dilation_offset: int = 20
+    mask_dilation_offset: int = 30
     """By how much to extend the text mask to remove left-over text pixels of the original image."""
